@@ -3,21 +3,21 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>792265434750-89nbov7gm72k3iuon2carku6pj2u9629.apps.googleusercontent.com</string>
+	<string>171924230707-fg4r1bpv81e42p8uh28u6e89obbdc5uk.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.792265434750-89nbov7gm72k3iuon2carku6pj2u9629</string>
+	<string>com.googleusercontent.apps.171924230707-fg4r1bpv81e42p8uh28u6e89obbdc5uk</string>
 	<key>API_KEY</key>
-	<string>AIzaSyB6RT6lH1QDUvB8ps0YnDvPtt6CUJd6hpE</string>
+	<string>AIzaSyCzy0I1EPXbaeVfHl8vSJuggyjtSeAWgOc</string>
 	<key>GCM_SENDER_ID</key>
-	<string>792265434750</string>
+	<string>171924230707</string>
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>test</string>
+	<string>Tremaine.FoodJournal</string>
 	<key>PROJECT_ID</key>
-	<string>test-91780</string>
+	<string>foodjournal-d40d9</string>
 	<key>STORAGE_BUCKET</key>
-	<string>test-91780.appspot.com</string>
+	<string>foodjournal-d40d9.appspot.com</string>
 	<key>IS_ADS_ENABLED</key>
 	<false></false>
 	<key>IS_ANALYTICS_ENABLED</key>
@@ -29,6 +29,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:792265434750:ios:a26b9683eeeb30296c9a2f</string>
+	<string>1:171924230707:ios:9fcb781907d0d06a5f0946</string>
 </dict>
 </plist>

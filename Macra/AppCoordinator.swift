@@ -23,6 +23,8 @@ class AppCoordinator: ObservableObject {
         case calendar(viewModel: CalendarViewModel)
         case alert(viewModel: NotificationPanelViewModel)
         case payWall
+        // App specific
+        case foodFeedback(feedback: FoodJournalFeedbackViewModel)
     }
     
     enum ToastNotification {
@@ -161,6 +163,10 @@ class AppCoordinator: ObservableObject {
         currentScreen = .appIntro
     }
     
+    func showFoodJournalFeedback(feedback: FoodJournalFeedbackViewModel) {
+        currentScreen = .foodFeedback(feedback: feedback)
+    }
+    
     //Modals
     func closeModals() {
         modalScreen = nil
@@ -282,6 +288,8 @@ extension AppCoordinator.Screen: Screen {
         case .log:
             return AnyView(EmptyView())
         case .alert(viewModel: let viewModel):
+            return AnyView(EmptyView())
+        case .foodFeedback(feedback: let feedback):
             return AnyView(EmptyView())
         }
     }

@@ -10,6 +10,9 @@ class ServiceManager: ObservableObject {
     let userService = UserService.sharedInstance
     let notificationService = NotificationService.sharedInstance
     let purchaseService = PurchaseService.sharedInstance
+    let gptService = GPTService.sharedInstance
+    let entryService = EntryService.sharedInstance
+
     
     @Published var isConfigured = false
     
