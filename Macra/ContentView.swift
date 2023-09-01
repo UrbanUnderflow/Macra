@@ -77,8 +77,6 @@ struct ContentView: View {
                         CalendarView(viewModel: viewModel)
                     case .payWall:
                         PayWallView(viewModel: PayWallViewModel(appCoordinator: AppCoordinator(serviceManager: ServiceManager())))
-                    case .alert(let viewModel):
-                        NotificationPanelView(viewModel: viewModel)
                     case .settings:
                         SettingsView(viewModel: SettingsViewModel(appCoordinator: appCoordinator))
                     default:

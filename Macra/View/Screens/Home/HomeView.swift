@@ -16,7 +16,7 @@ struct HomeView: View {
     @ObservedObject var viewModel: HomeViewModel
 
     var body: some View {
-        Text(/*@START_MENU_TOKEN@*/"Hello, World!"/*@END_MENU_TOKEN@*/)
+        FoodJournalView(viewModel: FoodJournalViewModel(serviceManager: viewModel.serviceManager, appCoordinator: viewModel.appCoordinator))
     }
 }
 

@@ -44,8 +44,10 @@ struct FoodJournalView: View {
     var body: some View {
         ZStack {
             Color.primaryBlue
-            if viewModel.introComplete {
+//            if viewModel.introComplete {
                 VStack {
+                    Text("What did you eat today?")
+                        .foregroundColor(.secondaryCharcoal)
                     Spacer()
                     EntryPanelView(viewModel: EntryPanelViewModel(serviceManager: viewModel.serviceManager, isLoading: viewModel.showLoader), onSubmittedAnswer: { answer in
                             updateLoader(true)
@@ -56,9 +58,9 @@ struct FoodJournalView: View {
                     Spacer()
                 }
                 .padding(25)
-            } else {
-                FoodJournalIntroView(viewModel: viewModel)
-            }
+//            } else {
+//                FoodJournalIntroView(viewModel: viewModel)
+//            }
         }
         .ignoresSafeArea(.all)
         .overlay(

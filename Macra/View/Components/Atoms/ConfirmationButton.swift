@@ -3,7 +3,6 @@ import SwiftUI
 enum ButtonType {
     case primaryLargeConfirmation
     case animatedCircleButton(icon: Icon)
-    case backButton
     case loading
 }
 
@@ -91,21 +90,7 @@ struct ConfirmationButton: View {
                 }
             }
                                 
-        case .backButton:
-            Button(action: action) {
-                ZStack(alignment: .center) {
-                    RoundedRectangle(cornerRadius: 25)
-                        .fill(Color.clear)
-                        .frame(width: 46, height: 46)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 25)
-                                .stroke(Color.secondaryWhite, lineWidth: 1)
-                        )
-                    IconImage(.custom(.miniChevLeft))
-                        .frame(width: 24, height: 24)
-                }
-                .frame(width: 46, height: 46)
-            }
+    
         case .loading:
             ZStack {
                 Circle()

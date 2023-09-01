@@ -64,11 +64,11 @@ struct LoginView: View {
                     .foregroundColor(.white)
                     .padding()
                 
-                TextFieldWithIcon(text: $viewModel.email, placeholder: "Email address", icon: .custom(.oval), isSecure: false)
+                TextFieldWithIcon(text: $viewModel.email, placeholder: "Email address", icon: .sfSymbol(.message, color: .secondaryWhite), isSecure: false)
                     .padding(.horizontal, 20)
                 Spacer()
                     .frame(height:20)
-                TextFieldWithIcon(text: $viewModel.password, placeholder: "Password", icon: .custom(.oval), isSecure: true)
+                TextFieldWithIcon(text: $viewModel.password, placeholder: "Password", icon: .sfSymbol(.lock, color: .secondaryWhite), isSecure: true)
                     .padding(.horizontal, 20)
                 
                 HStack {

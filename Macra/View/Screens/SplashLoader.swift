@@ -27,7 +27,7 @@ struct SplashLoader: View {
         ZStack {
             VStack {
                 Spacer()
-                Text("Puppy School")
+                Text("Macra")
                     .font(.system(size: 62, weight: .bold))
                     .foregroundColor(.black)
                     .padding()

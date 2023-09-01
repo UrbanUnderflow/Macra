@@ -49,7 +49,6 @@
 		21E8FBE82A9EE0D100671B49 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB902A9EE0D100671B49 /* ProfileView.swift */; };
 		21E8FBE92A9EE0D100671B49 /* ChangePasswordView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB912A9EE0D100671B49 /* ChangePasswordView.swift */; };
 		21E8FBEA2A9EE0D100671B49 /* SplashLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB922A9EE0D100671B49 /* SplashLoader.swift */; };
-		21E8FBEB2A9EE0D100671B49 /* NotificationPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB942A9EE0D100671B49 /* NotificationPanelView.swift */; };
 		21E8FBEC2A9EE0D100671B49 /* NewIntroducationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB952A9EE0D100671B49 /* NewIntroducationView.swift */; };
 		21E8FBED2A9EE0D100671B49 /* PayWallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB972A9EE0D100671B49 /* PayWallView.swift */; };
 		21E8FBEE2A9EE0D100671B49 /* OfferingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB982A9EE0D100671B49 /* OfferingViewModel.swift */; };
@@ -113,7 +112,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		21E8FA8D2A9EDB0B00671B49 /* Macra.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Macra.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		21E8FA8D2A9EDB0B00671B49 /* MacraFoodJournal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacraFoodJournal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		21E8FA902A9EDB0B00671B49 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		21E8FA922A9EDB0B00671B49 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		21E8FA942A9EDB0B00671B49 /* MacraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacraApp.swift; sourceTree = "<group>"; };
@@ -149,7 +148,6 @@
 		21E8FB902A9EE0D100671B49 /* ProfileView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		21E8FB912A9EE0D100671B49 /* ChangePasswordView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ChangePasswordView.swift; sourceTree = "<group>"; };
 		21E8FB922A9EE0D100671B49 /* SplashLoader.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = SplashLoader.swift; sourceTree = "<group>"; };
-		21E8FB942A9EE0D100671B49 /* NotificationPanelView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NotificationPanelView.swift; sourceTree = "<group>"; };
 		21E8FB952A9EE0D100671B49 /* NewIntroducationView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NewIntroducationView.swift; sourceTree = "<group>"; };
 		21E8FB972A9EE0D100671B49 /* PayWallView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PayWallView.swift; sourceTree = "<group>"; };
 		21E8FB982A9EE0D100671B49 /* OfferingViewModel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OfferingViewModel.swift; sourceTree = "<group>"; };
@@ -229,6 +227,13 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		219390042A9FC157006EF2A9 /* New Group */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = "New Group";
+			sourceTree = "<group>";
+		};
 		21E8FA842A9EDB0B00671B49 = {
 			isa = PBXGroup;
 			children = (
@@ -242,7 +247,7 @@
 		21E8FA8E2A9EDB0B00671B49 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				21E8FA8D2A9EDB0B00671B49 /* Macra.app */,
+				21E8FA8D2A9EDB0B00671B49 /* MacraFoodJournal.app */,
 				21E8FAAD2A9EDB0C00671B49 /* MacraTests.xctest */,
 				21E8FAB72A9EDB0C00671B49 /* MacraUITests.xctest */,
 			);
@@ -347,6 +352,7 @@
 		21E8FB862A9EE0D100671B49 /* Screens */ = {
 			isa = PBXGroup;
 			children = (
+				219390042A9FC157006EF2A9 /* New Group */,
 				21E8FB872A9EE0D100671B49 /* AboutView.swift */,
 				21E8FB882A9EE0D100671B49 /* Settings */,
 				21E8FB8A2A9EE0D100671B49 /* Home */,
@@ -355,7 +361,6 @@
 				21E8FB902A9EE0D100671B49 /* ProfileView.swift */,
 				21E8FB912A9EE0D100671B49 /* ChangePasswordView.swift */,
 				21E8FB922A9EE0D100671B49 /* SplashLoader.swift */,
-				21E8FB932A9EE0D100671B49 /* NotificationPanel */,
 				21E8FB952A9EE0D100671B49 /* NewIntroducationView.swift */,
 				21E8FB962A9EE0D100671B49 /* Subscription */,
 				21E8FB9C2A9EE0D100671B49 /* LoginScreens */,
@@ -380,14 +385,6 @@
 				21E8FB8D2A9EE0D100671B49 /* FoodJournalView.swift */,
 			);
 			path = Home;
-			sourceTree = "<group>";
-		};
-		21E8FB932A9EE0D100671B49 /* NotificationPanel */ = {
-			isa = PBXGroup;
-			children = (
-				21E8FB942A9EE0D100671B49 /* NotificationPanelView.swift */,
-			);
-			path = NotificationPanel;
 			sourceTree = "<group>";
 		};
 		21E8FB962A9EE0D100671B49 /* Subscription */ = {
@@ -607,7 +604,7 @@
 				21E8FB722A9EDC2400671B49 /* Lottie */,
 			);
 			productName = Macra;
-			productReference = 21E8FA8D2A9EDB0B00671B49 /* Macra.app */;
+			productReference = 21E8FA8D2A9EDB0B00671B49 /* MacraFoodJournal.app */;
 			productType = "com.apple.product-type.application";
 		};
 		21E8FAAC2A9EDB0C00671B49 /* MacraTests */ = {
@@ -779,7 +776,6 @@
 				21E8FBDC2A9EE0D100671B49 /* LottieView.swift in Sources */,
 				21E8FBFC2A9EE0D100671B49 /* UploadImageView.swift in Sources */,
 				21E8FBDD2A9EE0D100671B49 /* PlayerView.swift in Sources */,
-				21E8FBEB2A9EE0D100671B49 /* NotificationPanelView.swift in Sources */,
 				21E8FBEC2A9EE0D100671B49 /* NewIntroducationView.swift in Sources */,
 				21E8FC052A9EE0D100671B49 /* IconImage.swift in Sources */,
 				21E8FC062A9EE0D100671B49 /* Icon.swift in Sources */,
@@ -970,7 +966,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = MacraFoodJournal;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -999,7 +995,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = MacraFoodJournal;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

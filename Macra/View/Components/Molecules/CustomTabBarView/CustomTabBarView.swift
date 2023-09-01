@@ -19,59 +19,59 @@ struct CustomTabBarView: View {
     var body: some View {
         VStack {
             HStack {
-                TabButton(
-                    icon: IconImage(.custom(selectedTab == .home ? .oval : .oval)),
-                        text: "Training",
-                        isSelected: selectedTab == .home,
-                        action: {
-                            selectedTab = .home
-                            viewModel.appCoordinator.showHomeScreen()
-                        },
-                        color: .secondaryPink
-                )
-                .padding(.horizontal)
-                
-                Spacer()
-                
-                TabButton(
-                    icon: IconImage(.custom(selectedTab == .log ? .oval : .oval)),
-                        text: "Log",
-                        isSelected: selectedTab == .log,
-                        action: {
-                            selectedTab = .log
-                            viewModel.appCoordinator.showLogScreen()
-                        },
-                        color: .secondaryPink
-                )
-                .padding(.horizontal)
-                
-                Spacer()
-                
-                TabButton(
-                    icon: IconImage(.custom(selectedTab == .list ? .oval : .oval)),
-                        text: "List",
-                        isSelected: selectedTab == .list,
-                        action: {
-                            selectedTab = .list
-                            viewModel.appCoordinator.showSplashScreen()
-                        },
-                        color: .secondaryPink
-                )
-                .padding(.horizontal)
-                
-                Spacer()
-                
-                TabButton(
-                    icon: IconImage(.custom(selectedTab == .profile ? .oval : .oval)),
-                        text: "Profile",
-                        isSelected: selectedTab == .profile,
-                        action: {
-                            selectedTab = .profile
-                            viewModel.appCoordinator.showProfile()
-                        },
-                        color: .secondaryPink
-                )
-                .padding(.horizontal)
+//                TabButton(
+//                    icon: IconImage(.custom(selectedTab == .home ? .oval : .oval)),
+//                        text: "Training",
+//                        isSelected: selectedTab == .home,
+//                        action: {
+//                            selectedTab = .home
+//                            viewModel.appCoordinator.showHomeScreen()
+//                        },
+//                        color: .secondaryPink
+//                )
+//                .padding(.horizontal)
+//                
+//                Spacer()
+//                
+//                TabButton(
+//                    icon: IconImage(.custom(selectedTab == .log ? .oval : .oval)),
+//                        text: "Log",
+//                        isSelected: selectedTab == .log,
+//                        action: {
+//                            selectedTab = .log
+//                            viewModel.appCoordinator.showLogScreen()
+//                        },
+//                        color: .secondaryPink
+//                )
+//                .padding(.horizontal)
+//                
+//                Spacer()
+//                
+//                TabButton(
+//                    icon: IconImage(.custom(selectedTab == .list ? . : .oval)),
+//                        text: "List",
+//                        isSelected: selectedTab == .list,
+//                        action: {
+//                            selectedTab = .list
+//                            viewModel.appCoordinator.showSplashScreen()
+//                        },
+//                        color: .secondaryPink
+//                )
+//                .padding(.horizontal)
+//                
+//                Spacer()
+//                
+//                TabButton(
+//                    icon: IconImage(.custom(selectedTab == .profile ? .person : .person)),
+//                        text: "Profile",
+//                        isSelected: selectedTab == .profile,
+//                        action: {
+//                            selectedTab = .profile
+//                            viewModel.appCoordinator.showProfile()
+//                        },
+//                        color: .secondaryPink
+//                )
+//                .padding(.horizontal)
                 
             }
             .padding()

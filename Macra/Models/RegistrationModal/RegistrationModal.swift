@@ -137,7 +137,7 @@ struct RegistrationModal: View {
                 .foregroundColor(.secondaryWhite)
             
             ZStack {
-                TextFieldWithIcon(text: $viewModel.puppyName, placeholder: "", icon: .custom(.oval), isSecure: false)
+                TextFieldWithIcon(text: $viewModel.puppyName, placeholder: "", icon: .sfSymbol(.camera, color: .white), isSecure: false)
             }
             .background(RoundedRectangle(cornerRadius: 10)
                 .stroke(Color.gray, lineWidth: 1))
@@ -283,9 +283,9 @@ struct RegistrationModal: View {
             VStack(alignment: .leading) {
                 HStack {
                     Spacer()
-                    IconImage(Icon.custom(.oval))
-                        .padding(30)
-                    Spacer()
+//                    IconImage(.sfSymbol(.heart, color: .secondaryWhite)
+//                        .padding(30)
+//                              width: Spacer()
                 }
                 .padding()
                 

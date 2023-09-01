@@ -21,7 +21,6 @@ class AppCoordinator: ObservableObject {
         case privacyPolicy
         case settings
         case calendar(viewModel: CalendarViewModel)
-        case alert(viewModel: NotificationPanelViewModel)
         case payWall
         // App specific
         case foodFeedback(feedback: FoodJournalFeedbackViewModel)
@@ -93,17 +92,17 @@ class AppCoordinator: ObservableObject {
     }
     
     func handleLoginSuccess() {
-        guard let user = UserService.sharedInstance.user else {
-            print("Weird user issue. User is not detected")
-            return
-        }
+//        guard let user = UserService.sharedInstance.user else {
+//            print("Weird user issue. User is not detected")
+//            return
+//        }
         // Move to the question screen after successful login
         self.serviceManager.showTabBar = true
         
-        Purchases.shared.logIn(user.id) { (purchaserInfo, error, publicError) in
-            // handle any error.
-            print(error)
-        }
+//        Purchases.shared.logIn(user.id) { (purchaserInfo, error, publicError) in
+//            // handle any error.
+//            print(error)
+//        }
         
         Task {
             await PurchaseService.sharedInstance.offering.start()
@@ -111,11 +110,11 @@ class AppCoordinator: ObservableObject {
             PurchaseService.sharedInstance.checkSubscriptionStatus { [weak self] (result) in
                 switch result {
                 case .success(let isSubscribed):
-                    if isSubscribed {
+//                    if isSubscribed {
                         self?.showHomeScreen()
-                    } else {
-                        self?.showPayWallModal()
-                    }
+//                    } else {
+//                        self?.showPayWallModal()
+//                    }
                 case .failure(let error):
                     // Handle the error here
                     print("Error checking subscription status: \(error)")
@@ -199,11 +198,6 @@ class AppCoordinator: ObservableObject {
     func showPrivacyScreenModal() {
          modalScreen = .privacyPolicy
      }
-
-    func showAlertPanelModal(viewModel: NotificationPanelViewModel) {
-        modalScreen = .alert(viewModel: viewModel)
-    }
-    
     
     func showRegisterModal() {
         modalScreen = .registration
@@ -286,8 +280,6 @@ extension AppCoordinator.Screen: Screen {
         case .settings:
             return AnyView(EmptyView())
         case .log:
-            return AnyView(EmptyView())
-        case .alert(viewModel: let viewModel):
             return AnyView(EmptyView())
         case .foodFeedback(feedback: let feedback):
             return AnyView(EmptyView())

@@ -36,7 +36,7 @@ struct IntroView: View {
             if !viewModel.loginPressed {
                 Group {
                     VStack {
-                        Text("Puppy School")
+                        Text("Macra")
                             .font(.largeTitle)
                             .bold()
                             .foregroundColor(.white)
@@ -45,9 +45,9 @@ struct IntroView: View {
                         
                         TabView(selection: $selection) {
                             // Onboarding texts
-                            OnboardingView(title: "Train", description: "Puppy training modules")
-                            OnboardingView(title: "Logs", description: "Log your puppies activities")
-                            OnboardingView(title: "Supplies", description: "Get everything you need for your new puppy.")
+                            OnboardingView(title: "Food Journal", description: "Just write what you ate, AI will do the rest.")
+                            OnboardingView(title: "Macro Breakdown", description: "Know the full nutritional breakdown of everything you ate")
+                            OnboardingView(title: "Insights", description: "Recieve AI insights about your eating habits.")
                         }
                         .tabViewStyle(PageTabViewStyle(indexDisplayMode: .automatic))
                         .indexViewStyle(PageIndexViewStyle(backgroundDisplayMode: .always))
@@ -89,8 +89,7 @@ struct IntroView: View {
             }
         }
         .background(
-                Image("puppy")
-                    .resizable()
+            IconImage(.custom(.background))
                     .aspectRatio(contentMode: .fill)
         )
         .clipped()

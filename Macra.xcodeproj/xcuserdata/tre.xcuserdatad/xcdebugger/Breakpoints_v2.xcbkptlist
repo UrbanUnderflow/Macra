@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Bucket
+   uuid = "CB48AE18-22C7-4D4D-B753-71012E5C0FA0"
+   type = "1"
+   version = "2.0">
+   <Breakpoints>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "472BDBD1-7CDF-441C-9398-2B994FDF495B"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "Macra/AppCoordinator.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "51"
+            endingLineNumber = "51"
+            landmarkName = "handleLogin()"
+            landmarkType = "7">
+         </BreakpointContent>
+      </BreakpointProxy>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "0FCBF8CB-E641-4E61-8AE0-F5AD7D0DE798"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "Macra/AppCoordinator.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "107"
+            endingLineNumber = "107"
+            landmarkName = "handleLoginSuccess()"
+            landmarkType = "7">
+            <Locations>
+               <Location
+                  uuid = "0FCBF8CB-E641-4E61-8AE0-F5AD7D0DE798 - 4d705bd6c63ad09f"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "MacraFoodJournal.AppCoordinator.handleLoginSuccess() -&gt; ()"
+                  moduleName = "MacraFoodJournal"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/tre/Macra/Macra/AppCoordinator.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "107"
+                  endingLineNumber = "107"
+                  offsetFromSymbolStart = "460">
+               </Location>
+               <Location
+                  uuid = "0FCBF8CB-E641-4E61-8AE0-F5AD7D0DE798 - 7afa309fb474f1e5"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "closure #2 @Sendable () async -&gt; () in MacraFoodJournal.AppCoordinator.handleLoginSuccess() -&gt; ()"
+                  moduleName = "MacraFoodJournal"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/tre/Macra/Macra/AppCoordinator.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "107"
+                  endingLineNumber = "107"
+                  offsetFromSymbolStart = "72">
+               </Location>
+               <Location
+                  uuid = "0FCBF8CB-E641-4E61-8AE0-F5AD7D0DE798 - fc36f86a7d23515e"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "(1) suspend resume partial function for closure #2 @Sendable () async -&gt; () in MacraFoodJournal.AppCoordinator.handleLoginSuccess() -&gt; ()"
+                  moduleName = "MacraFoodJournal"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/tre/Macra/Macra/AppCoordinator.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "107"
+                  endingLineNumber = "107"
+                  offsetFromSymbolStart = "36">
+               </Location>
+               <Location
+                  uuid = "0FCBF8CB-E641-4E61-8AE0-F5AD7D0DE798 - 4d705bd6c63ad09f"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "MacraFoodJournal.AppCoordinator.handleLoginSuccess() -&gt; ()"
+                  moduleName = "MacraFoodJournal"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/tre/Macra/Macra/AppCoordinator.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "107"
+                  endingLineNumber = "107"
+                  offsetFromSymbolStart = "136">
+               </Location>
+               <Location
+                  uuid = "0FCBF8CB-E641-4E61-8AE0-F5AD7D0DE798 - 81f47d792d1af7e6"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "closure #1 @Sendable () async -&gt; () in MacraFoodJournal.AppCoordinator.handleLoginSuccess() -&gt; ()"
+                  moduleName = "MacraFoodJournal"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/tre/Macra/Macra/AppCoordinator.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "107"
+                  endingLineNumber = "107"
+                  offsetFromSymbolStart = "72">
+               </Location>
+               <Location
+                  uuid = "0FCBF8CB-E641-4E61-8AE0-F5AD7D0DE798 - fc36f86a7d23515e"
+                  shouldBeEnabled = "Yes"
+                  ignoreCount = "0"
+                  continueAfterRunningActions = "No"
+                  symbolName = "(1) suspend resume partial function for closure #1 @Sendable () async -&gt; () in MacraFoodJournal.AppCoordinator.handleLoginSuccess() -&gt; ()"
+                  moduleName = "MacraFoodJournal"
+                  usesParentBreakpointCondition = "Yes"
+                  urlString = "file:///Users/tre/Macra/Macra/AppCoordinator.swift"
+                  startingColumnNumber = "9223372036854775807"
+                  endingColumnNumber = "9223372036854775807"
+                  startingLineNumber = "107"
+                  endingLineNumber = "107"
+                  offsetFromSymbolStart = "36">
+               </Location>
+            </Locations>
+         </BreakpointContent>
+      </BreakpointProxy>
+      <BreakpointProxy
+         BreakpointExtensionID = "Xcode.Breakpoint.FileBreakpoint">
+         <BreakpointContent
+            uuid = "10DD60E0-470B-4864-A4BF-3F1C214EAF7A"
+            shouldBeEnabled = "Yes"
+            ignoreCount = "0"
+            continueAfterRunningActions = "No"
+            filePath = "Macra/View/Screens/Subscription/PayWallView.swift"
+            startingColumnNumber = "9223372036854775807"
+            endingColumnNumber = "9223372036854775807"
+            startingLineNumber = "176"
+            endingLineNumber = "176"
+            landmarkName = "body"
+            landmarkType = "24">
+         </BreakpointContent>
+      </BreakpointProxy>
+   </Breakpoints>
+</Bucket>

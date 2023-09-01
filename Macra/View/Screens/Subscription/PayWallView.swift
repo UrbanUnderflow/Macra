@@ -124,35 +124,59 @@ struct PayWallView: View {
                     
                     HStack {
                         VStack(alignment: .leading, spacing: 10) {
-                            HStack {
-                                Text("Back to plans")
-                                    .foregroundColor(.black)
+    //                                    HStack {
+    //                                        IconImage(.sfSymbol(.upArrow, color: .primaryPurple))
+    //                                        Text("Back to plans")
+    //                                            .foregroundColor(.primaryPurple)
+    //                                    }
+    //                                    .onTapGesture {
+    //                                        withAnimation {
+    //                                            scrollProxy.scrollTo(0, anchor: .top)
+    //                                        }
+    //                                    }
+                                HStack {
+                                    IconImage(.sfSymbol(.reload, color: .gray))
+                                    Text("Restore Purchases")
+                                        .foregroundColor(.gray)
+                                }
+    //                                                                .onTapGesture {
+    //                                                                    PurchaseService.sharedInstance.restorePurchases { result in
+    //                                                                        switch result {
+    //                                                                        case .success:
+    //                                                                            viewModel.appCoordinator.showHomeScreen()
+    //                                                                        case .failure(let error):
+    //                                                                            print(error)
+    //                                                                            viewModel.appCoordinator.showToast(viewModel: ToastViewModel(message: "We were unable to restore your purchase. Please contact support at puppyschoolapp@gmail.com", backgroundColor: .secondaryCharcoal, textColor: .secondaryWhite))
+    //                                                                        }
+    //                                                                    }
+    //                                                                }
+                                HStack {
+                                    IconImage(.sfSymbol(.privacy, color: .gray))
+                                    Text("Privacy Policy")
+                                        .foregroundColor(.gray)
+                                }
+                                .onTapGesture {
+                                    viewModel.appCoordinator.showPrivacyScreenModal()
+                                }
+                                HStack {
+                                    IconImage(.sfSymbol(.doc, color: .gray))
+                                    Text("Terms of Service")
+                                        .foregroundColor(.gray)
+                                }
+                                .onTapGesture {
+    //                                                                    viewModel.appCoordinator.showTermsScreenModal()
+                                }
+                              //  if BetaService.sharedInstance.betaEligibleUsers.contains(UserService.sharedInstance.user?.email ?? "nothing") {
+                                    HStack {
+                                        IconImage(.sfSymbol(.doc, color: .gray))
+                                        Text("Enroll in Beta")
+                                            .foregroundColor(.gray)
+                                    }
+                                    .onTapGesture {
+                                        viewModel.appCoordinator.showHomeScreen()
+                                    }
+                              //  }
                             }
-                            .onTapGesture {
-                                //scroll to the top
-                            }
-                            HStack {
-                                Text("Restore Purchases")
-                                    .foregroundColor(.gray)
-                            }
-                            .onTapGesture {
-                                //restore
-                            }
-                            HStack {
-                                Text("Privacy Policy")
-                                    .foregroundColor(.gray)
-                            }
-                            .onTapGesture {
-                                //open privacy policy
-                            }
-                            HStack {
-                                Text("Terms of Service")
-                                    .foregroundColor(.gray)
-                            }
-                            .onTapGesture {
-                                //open terms
-                            }
-                        }
                         .padding(.leading, 20)
                         .padding(.bottom, 50)
                         Spacer()

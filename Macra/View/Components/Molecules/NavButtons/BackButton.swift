@@ -12,7 +12,7 @@ struct BackButton: View {
                 )
             
             
-            IconImage(.custom(.miniChevLeft))
+            IconImage(.sfSymbol(.chevLeft, color: .secondaryWhite))
                 .frame(width: 24, height: 24)
             
         }

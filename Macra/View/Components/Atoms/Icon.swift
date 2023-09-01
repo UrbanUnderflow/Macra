@@ -10,7 +10,7 @@ import SwiftUI
 
 enum Icon: Equatable {
     case sfSymbol(_ icon:SFSymbols, color: Color?)
-    case custom(CustomIcons)
+    case custom(CustomImages)
 
 }
 
@@ -51,14 +51,6 @@ enum SFSymbols: String {
     case doc = "doc"
 }
 
-enum CustomIcons: String {
-    case oval = "oval"
-    case play = "play"
-    case miniChevLeft = "miniChevLeft"
-    case flame = "flame"
-    case whiteFlame = "whiteFlame"
-    case solarShare = "share"
-    case maximize = "maximize"
-    case calendar = "Calendar"
-    
+enum CustomImages: String {
+    case background = "macraBackground"
 }
