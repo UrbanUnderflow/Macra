@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 extension Color {
+    static let primaryGreen = Color("primaryGreen")
     static let primaryPurple = Color("primaryPurple")
     static let primaryBlue = Color("primaryBlue")
     static let secondaryCharcoal = Color("secondaryCharcoal")

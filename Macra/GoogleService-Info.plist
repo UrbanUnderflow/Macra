@@ -3,21 +3,21 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>171924230707-fg4r1bpv81e42p8uh28u6e89obbdc5uk.apps.googleusercontent.com</string>
+	<string>691046627244-mhqr0bau64lqouvp5ralgv0ehubsno3d.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.171924230707-fg4r1bpv81e42p8uh28u6e89obbdc5uk</string>
+	<string>com.googleusercontent.apps.691046627244-mhqr0bau64lqouvp5ralgv0ehubsno3d</string>
 	<key>API_KEY</key>
-	<string>AIzaSyCzy0I1EPXbaeVfHl8vSJuggyjtSeAWgOc</string>
+	<string>AIzaSyCBNr8WylRpi7IZ5M_COy1E3LaStQgLMvk</string>
 	<key>GCM_SENDER_ID</key>
-	<string>171924230707</string>
+	<string>691046627244</string>
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>Tremaine.FoodJournal</string>
+	<string>Tremaine.Macra</string>
 	<key>PROJECT_ID</key>
-	<string>foodjournal-d40d9</string>
+	<string>quicklifts-dd3f1</string>
 	<key>STORAGE_BUCKET</key>
-	<string>foodjournal-d40d9.appspot.com</string>
+	<string>quicklifts-dd3f1.appspot.com</string>
 	<key>IS_ADS_ENABLED</key>
 	<false></false>
 	<key>IS_ANALYTICS_ENABLED</key>
@@ -29,6 +29,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:171924230707:ios:9fcb781907d0d06a5f0946</string>
+	<string>1:691046627244:ios:821c53e53f20c736a9ec09</string>
 </dict>
 </plist>

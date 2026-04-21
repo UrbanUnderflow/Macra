@@ -82,11 +82,7 @@ class UploadImageViewModel: ObservableObject {
             case .success(let urlString):
                 print("Image uploaded successfully: \(urlString)")
                 self?.imageUrl = urlString // Update imageUrl with the new URL.
-                if let user = UserService.sharedInstance.user {
-                    var updatedUser = user
-                    updatedUser.profileImageURL = urlString
-                    UserService.sharedInstance.updateUser(user: updatedUser)
-                }
+                UserService.sharedInstance.updateProfileImageURL(urlString)
                 self?.onImageUploaded?(image)
 
             case .failure(let error):

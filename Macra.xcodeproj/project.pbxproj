@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		11B2B010619754E960B45DC4 /* MacraFoodJournalCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F9E6467914B898E0F66F010 /* MacraFoodJournalCore.swift */; };
+		16F5432EE3D175780A7793A1 /* SupplementService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2E1F83AF4CF6E2910F5541A /* SupplementService.swift */; };
+		1F4AB5051F4432571F19B212 /* MacraOnboardingComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14E3754760C219480E699CC /* MacraOnboardingComponents.swift */; };
+		20F0643DCBD930E7CC3C0796 /* LabelGradeResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AC591607953928EC733EEAE /* LabelGradeResult.swift */; };
 		21E8FA912A9EDB0B00671B49 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 21E8FA902A9EDB0B00671B49 /* GoogleService-Info.plist */; };
 		21E8FA932A9EDB0B00671B49 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FA922A9EDB0B00671B49 /* ContentView.swift */; };
 		21E8FA952A9EDB0B00671B49 /* MacraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FA942A9EDB0B00671B49 /* MacraApp.swift */; };
@@ -92,6 +96,40 @@
 		21E8FC142A9EE0D100671B49 /* GPTService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FBD02A9EE0D100671B49 /* GPTService.swift */; };
 		21E8FC152A9EE0D100671B49 /* FirebaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FBD12A9EE0D100671B49 /* FirebaseService.swift */; };
 		21E8FC162A9EE0D100671B49 /* PurchaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FBD22A9EE0D100671B49 /* PurchaseService.swift */; };
+		2621C0DA2CDDB4BE4188073A /* MacraFoodJournalCaptureViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = D348E064F69ACC18B2C2F98B /* MacraFoodJournalCaptureViews.swift */; };
+		284985BD5486D7FC5D859318 /* MacroRecommendations.swift in Sources */ = {isa = PBXBuildFile; fileRef = F32E903234E3D6E530A3A48D /* MacroRecommendations.swift */; };
+		2D65D9087FB901E240EEF018 /* MealPlanningComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = D46405C8BEBB1FBDD73A958D /* MealPlanningComponents.swift */; };
+		2F50A0A1984F3CBFF5F250F4 /* MealPlanEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 699F9F99E2624108399076E7 /* MealPlanEditorView.swift */; };
+		37730FF847DAD4AF16E2B86B /* MealService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800972D5438983A6181B0AA3 /* MealService.swift */; };
+		3A6DA97B4A31C971B8486E48 /* MacroTargetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04A55552BBF560C093C5D914 /* MacroTargetsView.swift */; };
+		3CC26F7CBCF958397DEEE3E2 /* MealPlanningRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9197BBAD8B3FF871D139EEDA /* MealPlanningRootView.swift */; };
+		40B781E058686A423CBB3BD3 /* MacraOnboardingSteps.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C154DEC44326B9B5E2346A /* MacraOnboardingSteps.swift */; };
+		420E050D6B3600ADD06B9192 /* AppShellCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C1F66B370D471871A36219 /* AppShellCoordinator.swift */; };
+		427AF89189916D010D88A956 /* MealPlanningViewModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7533014F5E968B1345E8BBF /* MealPlanningViewModels.swift */; };
+		6713011512062EA06F6FBF71 /* ScannedLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1DCA9555F7BEB2C5B01F33 /* ScannedLabel.swift */; };
+		73ED05C407D795171417EFFD /* MealSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C912D53FE24240D88E2A87 /* MealSelectionView.swift */; };
+		753E9E8DA4C68D6C4104EB37 /* ManageSubscriptionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FA8B30885C422F84A7DF8FE /* ManageSubscriptionView.swift */; };
+		79957F0624AB16E52019773B /* MacroRecommendationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A9318954916C0E8D8DB927F /* MacroRecommendationService.swift */; };
+		7F3D985BF7CE31A5EE6CA443 /* MacraAudioService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B806F81BC381E884F10C517 /* MacraAudioService.swift */; };
+		894F92E2E46DE253418F04DD /* NoraOrb.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63A076FC4659CCF2038EDD18 /* NoraOrb.swift */; };
+		8A0E3D240FFA5843007D8B5B /* MacraFoodJournalJournalViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D50F970FF8F48D8649CF58A /* MacraFoodJournalJournalViews.swift */; };
+		924A8828C64B67A716E6C7C9 /* MealPlanningStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81E2498270B4AA882CBF4BBF /* MealPlanningStore.swift */; };
+		933B39BB3A26501A31C49136 /* LabelDeepDiveModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55AAEF11387B24366875597E /* LabelDeepDiveModels.swift */; };
+		9355C16B097A6D193D2FC5F5 /* MacraNoraChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DE357C73C24127BDB14696A /* MacraNoraChatService.swift */; };
+		9965C426C038DA8EFE54C31C /* NutritionRouteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACF3BB8D4E63A8871EF992B /* NutritionRouteViews.swift */; };
+		AB235D297DE83DD11117E00A /* MealPlanDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCBA14C27291DEDA7C55767 /* MealPlanDetailView.swift */; };
+		ADCB22C5C48997C105D59C16 /* LabelScanService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD2531834C9985B5B9C686E2 /* LabelScanService.swift */; };
+		B3510BB462181B3109A10D85 /* NutritionCoreSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B1E5AA5A513A24EF2D7E845 /* NutritionCoreSupport.swift */; };
+		B5A8BBC6E22980644B12C94B /* MealLogDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5B9DB3FDF7700D9C6272E85 /* MealLogDetailView.swift */; };
+		B668979A4772CE4C616F6628 /* MacraOnboardingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3932C7BCCB07C9E94E47B98 /* MacraOnboardingCoordinator.swift */; };
+		BD29621DE4262B00A1938AE5 /* MealPlanningModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D0B439EC507E306E9AA436 /* MealPlanningModels.swift */; };
+		C86AAB347F83472293EB9F1F /* MacraNutritionInsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86BC286054F0765ED3EFBF80 /* MacraNutritionInsightsView.swift */; };
+		CEC2AADC05D0FCA0DEE19924 /* AppShellTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0223FEBABF46D81FEC0EEB /* AppShellTypes.swift */; };
+		D157E47FBCFEA98FFD09E461 /* MacraVersionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B89CD153F07287CF1E67B2E2 /* MacraVersionService.swift */; };
+		DDF7B6128A453C304FCAD5E0 /* LoggedSupplement.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6540DFF3EF77D4A371C2788 /* LoggedSupplement.swift */; };
+		E5E2497DA5EE5A88D4C2A039 /* MacraFoodJournalLabelViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23EC6FADC69951CE83A7073A /* MacraFoodJournalLabelViews.swift */; };
+		EC04C2D87632C3E2AC86AAB0 /* ConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E08F80A7CBA4F1904E0AF6 /* ConfigManager.swift */; };
+		FB7463B53C73075E5B78E558 /* MacraOnboardingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 762C6C6FC7ED11FD894532CD /* MacraOnboardingModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -112,6 +150,11 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		04A55552BBF560C093C5D914 /* MacroTargetsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacroTargetsView.swift; path = Features/MealPlanning/MacroTargetsView.swift; sourceTree = "<group>"; };
+		0B806F81BC381E884F10C517 /* MacraAudioService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraAudioService.swift; path = Services/MacraAudioService.swift; sourceTree = "<group>"; };
+		19D0B439EC507E306E9AA436 /* MealPlanningModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanningModels.swift; path = Features/MealPlanning/MealPlanningModels.swift; sourceTree = "<group>"; };
+		1AC591607953928EC733EEAE /* LabelGradeResult.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LabelGradeResult.swift; path = NutritionCore/Models/LabelGradeResult.swift; sourceTree = "<group>"; };
+		1DE357C73C24127BDB14696A /* MacraNoraChatService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraNoraChatService.swift; path = Services/MacraNoraChatService.swift; sourceTree = "<group>"; };
 		21E8FA8D2A9EDB0B00671B49 /* MacraFoodJournal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacraFoodJournal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		21E8FA902A9EDB0B00671B49 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		21E8FA922A9EDB0B00671B49 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -191,6 +234,39 @@
 		21E8FBD02A9EE0D100671B49 /* GPTService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GPTService.swift; sourceTree = "<group>"; };
 		21E8FBD12A9EE0D100671B49 /* FirebaseService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FirebaseService.swift; sourceTree = "<group>"; };
 		21E8FBD22A9EE0D100671B49 /* PurchaseService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PurchaseService.swift; sourceTree = "<group>"; };
+		23E08F80A7CBA4F1904E0AF6 /* ConfigManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConfigManager.swift; path = Services/ConfigManager.swift; sourceTree = "<group>"; };
+		23EC6FADC69951CE83A7073A /* MacraFoodJournalLabelViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalLabelViews.swift; path = Features/FoodJournal/MacraFoodJournalLabelViews.swift; sourceTree = "<group>"; };
+		2F9E6467914B898E0F66F010 /* MacraFoodJournalCore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalCore.swift; path = Features/FoodJournal/MacraFoodJournalCore.swift; sourceTree = "<group>"; };
+		3B0223FEBABF46D81FEC0EEB /* AppShellTypes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppShellTypes.swift; path = AppShell/AppShellTypes.swift; sourceTree = "<group>"; };
+		3B1E5AA5A513A24EF2D7E845 /* NutritionCoreSupport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NutritionCoreSupport.swift; path = NutritionCore/NutritionCoreSupport.swift; sourceTree = "<group>"; };
+		3FA8B30885C422F84A7DF8FE /* ManageSubscriptionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ManageSubscriptionView.swift; path = View/Screens/Subscription/ManageSubscriptionView.swift; sourceTree = "<group>"; };
+		4F1DCA9555F7BEB2C5B01F33 /* ScannedLabel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScannedLabel.swift; path = NutritionCore/Models/ScannedLabel.swift; sourceTree = "<group>"; };
+		55AAEF11387B24366875597E /* LabelDeepDiveModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LabelDeepDiveModels.swift; path = NutritionCore/Models/LabelDeepDiveModels.swift; sourceTree = "<group>"; };
+		59C154DEC44326B9B5E2346A /* MacraOnboardingSteps.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraOnboardingSteps.swift; path = Features/Onboarding/MacraOnboardingSteps.swift; sourceTree = "<group>"; };
+		5DCBA14C27291DEDA7C55767 /* MealPlanDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanDetailView.swift; path = Features/MealPlanning/MealPlanDetailView.swift; sourceTree = "<group>"; };
+		63A076FC4659CCF2038EDD18 /* NoraOrb.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NoraOrb.swift; path = View/Components/Atoms/NoraOrb.swift; sourceTree = "<group>"; };
+		699F9F99E2624108399076E7 /* MealPlanEditorView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanEditorView.swift; path = Features/MealPlanning/MealPlanEditorView.swift; sourceTree = "<group>"; };
+		762C6C6FC7ED11FD894532CD /* MacraOnboardingModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraOnboardingModels.swift; path = Features/Onboarding/MacraOnboardingModels.swift; sourceTree = "<group>"; };
+		7D50F970FF8F48D8649CF58A /* MacraFoodJournalJournalViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalJournalViews.swift; path = Features/FoodJournal/MacraFoodJournalJournalViews.swift; sourceTree = "<group>"; };
+		800972D5438983A6181B0AA3 /* MealService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealService.swift; path = NutritionCore/Services/MealService.swift; sourceTree = "<group>"; };
+		81E2498270B4AA882CBF4BBF /* MealPlanningStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanningStore.swift; path = Features/MealPlanning/MealPlanningStore.swift; sourceTree = "<group>"; };
+		86BC286054F0765ED3EFBF80 /* MacraNutritionInsightsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraNutritionInsightsView.swift; path = Features/FoodJournal/MacraNutritionInsightsView.swift; sourceTree = "<group>"; };
+		8A9318954916C0E8D8DB927F /* MacroRecommendationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacroRecommendationService.swift; path = NutritionCore/Services/MacroRecommendationService.swift; sourceTree = "<group>"; };
+		9197BBAD8B3FF871D139EEDA /* MealPlanningRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanningRootView.swift; path = Features/MealPlanning/MealPlanningRootView.swift; sourceTree = "<group>"; };
+		A7C1F66B370D471871A36219 /* AppShellCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppShellCoordinator.swift; path = AppShell/AppShellCoordinator.swift; sourceTree = "<group>"; };
+		AACF3BB8D4E63A8871EF992B /* NutritionRouteViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NutritionRouteViews.swift; path = AppShell/NutritionRouteViews.swift; sourceTree = "<group>"; };
+		AD2531834C9985B5B9C686E2 /* LabelScanService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LabelScanService.swift; path = NutritionCore/Services/LabelScanService.swift; sourceTree = "<group>"; };
+		B14E3754760C219480E699CC /* MacraOnboardingComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraOnboardingComponents.swift; path = Features/Onboarding/MacraOnboardingComponents.swift; sourceTree = "<group>"; };
+		B7533014F5E968B1345E8BBF /* MealPlanningViewModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanningViewModels.swift; path = Features/MealPlanning/MealPlanningViewModels.swift; sourceTree = "<group>"; };
+		B89CD153F07287CF1E67B2E2 /* MacraVersionService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraVersionService.swift; path = Services/MacraVersionService.swift; sourceTree = "<group>"; };
+		B8C912D53FE24240D88E2A87 /* MealSelectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealSelectionView.swift; path = Features/MealPlanning/MealSelectionView.swift; sourceTree = "<group>"; };
+		D348E064F69ACC18B2C2F98B /* MacraFoodJournalCaptureViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalCaptureViews.swift; path = Features/FoodJournal/MacraFoodJournalCaptureViews.swift; sourceTree = "<group>"; };
+		D46405C8BEBB1FBDD73A958D /* MealPlanningComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanningComponents.swift; path = Features/MealPlanning/MealPlanningComponents.swift; sourceTree = "<group>"; };
+		D6540DFF3EF77D4A371C2788 /* LoggedSupplement.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LoggedSupplement.swift; path = NutritionCore/Models/LoggedSupplement.swift; sourceTree = "<group>"; };
+		E3932C7BCCB07C9E94E47B98 /* MacraOnboardingCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraOnboardingCoordinator.swift; path = Features/Onboarding/MacraOnboardingCoordinator.swift; sourceTree = "<group>"; };
+		E5B9DB3FDF7700D9C6272E85 /* MealLogDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealLogDetailView.swift; path = Features/FoodJournal/MealLogDetailView.swift; sourceTree = "<group>"; };
+		F2E1F83AF4CF6E2910F5541A /* SupplementService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SupplementService.swift; path = NutritionCore/Services/SupplementService.swift; sourceTree = "<group>"; };
+		F32E903234E3D6E530A3A48D /* MacroRecommendations.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacroRecommendations.swift; path = NutritionCore/Models/MacroRecommendations.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -268,6 +344,44 @@
 				21E8FA962A9EDB0B00671B49 /* AppCoordinator.swift */,
 				21E8FAA42A9EDB0C00671B49 /* Assets.xcassets */,
 				21E8FAA62A9EDB0C00671B49 /* Preview Content */,
+				A7C1F66B370D471871A36219 /* AppShellCoordinator.swift */,
+				3B0223FEBABF46D81FEC0EEB /* AppShellTypes.swift */,
+				AACF3BB8D4E63A8871EF992B /* NutritionRouteViews.swift */,
+				D348E064F69ACC18B2C2F98B /* MacraFoodJournalCaptureViews.swift */,
+				2F9E6467914B898E0F66F010 /* MacraFoodJournalCore.swift */,
+				7D50F970FF8F48D8649CF58A /* MacraFoodJournalJournalViews.swift */,
+				23EC6FADC69951CE83A7073A /* MacraFoodJournalLabelViews.swift */,
+				86BC286054F0765ED3EFBF80 /* MacraNutritionInsightsView.swift */,
+				E5B9DB3FDF7700D9C6272E85 /* MealLogDetailView.swift */,
+				04A55552BBF560C093C5D914 /* MacroTargetsView.swift */,
+				5DCBA14C27291DEDA7C55767 /* MealPlanDetailView.swift */,
+				699F9F99E2624108399076E7 /* MealPlanEditorView.swift */,
+				D46405C8BEBB1FBDD73A958D /* MealPlanningComponents.swift */,
+				19D0B439EC507E306E9AA436 /* MealPlanningModels.swift */,
+				9197BBAD8B3FF871D139EEDA /* MealPlanningRootView.swift */,
+				81E2498270B4AA882CBF4BBF /* MealPlanningStore.swift */,
+				B7533014F5E968B1345E8BBF /* MealPlanningViewModels.swift */,
+				B8C912D53FE24240D88E2A87 /* MealSelectionView.swift */,
+				B14E3754760C219480E699CC /* MacraOnboardingComponents.swift */,
+				E3932C7BCCB07C9E94E47B98 /* MacraOnboardingCoordinator.swift */,
+				762C6C6FC7ED11FD894532CD /* MacraOnboardingModels.swift */,
+				59C154DEC44326B9B5E2346A /* MacraOnboardingSteps.swift */,
+				55AAEF11387B24366875597E /* LabelDeepDiveModels.swift */,
+				1AC591607953928EC733EEAE /* LabelGradeResult.swift */,
+				D6540DFF3EF77D4A371C2788 /* LoggedSupplement.swift */,
+				F32E903234E3D6E530A3A48D /* MacroRecommendations.swift */,
+				4F1DCA9555F7BEB2C5B01F33 /* ScannedLabel.swift */,
+				3B1E5AA5A513A24EF2D7E845 /* NutritionCoreSupport.swift */,
+				AD2531834C9985B5B9C686E2 /* LabelScanService.swift */,
+				8A9318954916C0E8D8DB927F /* MacroRecommendationService.swift */,
+				800972D5438983A6181B0AA3 /* MealService.swift */,
+				F2E1F83AF4CF6E2910F5541A /* SupplementService.swift */,
+				23E08F80A7CBA4F1904E0AF6 /* ConfigManager.swift */,
+				0B806F81BC381E884F10C517 /* MacraAudioService.swift */,
+				1DE357C73C24127BDB14696A /* MacraNoraChatService.swift */,
+				B89CD153F07287CF1E67B2E2 /* MacraVersionService.swift */,
+				63A076FC4659CCF2038EDD18 /* NoraOrb.swift */,
+				3FA8B30885C422F84A7DF8FE /* ManageSubscriptionView.swift */,
 			);
 			path = Macra;
 			sourceTree = "<group>";
@@ -586,6 +700,7 @@
 				21E8FA892A9EDB0B00671B49 /* Sources */,
 				21E8FA8A2A9EDB0B00671B49 /* Frameworks */,
 				21E8FA8B2A9EDB0B00671B49 /* Resources */,
+				1ED881C8C7A87E72AD741ACB /* Patch gRPC Bundle ID */,
 			);
 			buildRules = (
 			);
@@ -719,6 +834,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		1ED881C8C7A87E72AD741ACB /* Patch gRPC Bundle ID */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Patch gRPC Bundle ID";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Rewrite the gRPC-C++ framework's Info.plist so the bundle identifier is\n# reverse-DNS compliant. Firebase ships it as `com.firebase.Firebase-gRPC-C++`\n# which contains a `+`, and Xcode rejects that on newer SDKs. Patching the\n# plist invalidates the framework's existing signature, so we re-sign it.\n# We must NOT preserve the old signature identifier (it still has the `+`),\n# otherwise iOS rejects install with a signature mismatch.\nset -e\nFRAMEWORK_DIR=\"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Frameworks/gRPC-C++.framework\"\nINFO_PLIST=\"${FRAMEWORK_DIR}/Info.plist\"\nif [ -f \"$INFO_PLIST\" ]; then\n  /usr/libexec/PlistBuddy -c \"Set :CFBundleIdentifier com.firebase.FirebasegRPCCxx\" \"$INFO_PLIST\"\n  IDENTITY=\"${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}\"\n  rm -rf \"${FRAMEWORK_DIR}/_CodeSignature\"\n  /usr/bin/codesign --force --sign \"$IDENTITY\" --generate-entitlement-der --timestamp=none \"$FRAMEWORK_DIR\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		21E8FA892A9EDB0B00671B49 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -794,6 +931,44 @@
 				21E8FC032A9EE0D100671B49 /* CloseButtonView.swift in Sources */,
 				21E8FBEE2A9EE0D100671B49 /* OfferingViewModel.swift in Sources */,
 				21E8FBD82A9EE0D100671B49 /* PlayerUIView.swift in Sources */,
+				420E050D6B3600ADD06B9192 /* AppShellCoordinator.swift in Sources */,
+				CEC2AADC05D0FCA0DEE19924 /* AppShellTypes.swift in Sources */,
+				9965C426C038DA8EFE54C31C /* NutritionRouteViews.swift in Sources */,
+				2621C0DA2CDDB4BE4188073A /* MacraFoodJournalCaptureViews.swift in Sources */,
+				11B2B010619754E960B45DC4 /* MacraFoodJournalCore.swift in Sources */,
+				8A0E3D240FFA5843007D8B5B /* MacraFoodJournalJournalViews.swift in Sources */,
+				E5E2497DA5EE5A88D4C2A039 /* MacraFoodJournalLabelViews.swift in Sources */,
+				C86AAB347F83472293EB9F1F /* MacraNutritionInsightsView.swift in Sources */,
+				B5A8BBC6E22980644B12C94B /* MealLogDetailView.swift in Sources */,
+				3A6DA97B4A31C971B8486E48 /* MacroTargetsView.swift in Sources */,
+				AB235D297DE83DD11117E00A /* MealPlanDetailView.swift in Sources */,
+				2F50A0A1984F3CBFF5F250F4 /* MealPlanEditorView.swift in Sources */,
+				2D65D9087FB901E240EEF018 /* MealPlanningComponents.swift in Sources */,
+				BD29621DE4262B00A1938AE5 /* MealPlanningModels.swift in Sources */,
+				3CC26F7CBCF958397DEEE3E2 /* MealPlanningRootView.swift in Sources */,
+				924A8828C64B67A716E6C7C9 /* MealPlanningStore.swift in Sources */,
+				427AF89189916D010D88A956 /* MealPlanningViewModels.swift in Sources */,
+				73ED05C407D795171417EFFD /* MealSelectionView.swift in Sources */,
+				1F4AB5051F4432571F19B212 /* MacraOnboardingComponents.swift in Sources */,
+				B668979A4772CE4C616F6628 /* MacraOnboardingCoordinator.swift in Sources */,
+				FB7463B53C73075E5B78E558 /* MacraOnboardingModels.swift in Sources */,
+				40B781E058686A423CBB3BD3 /* MacraOnboardingSteps.swift in Sources */,
+				933B39BB3A26501A31C49136 /* LabelDeepDiveModels.swift in Sources */,
+				20F0643DCBD930E7CC3C0796 /* LabelGradeResult.swift in Sources */,
+				DDF7B6128A453C304FCAD5E0 /* LoggedSupplement.swift in Sources */,
+				284985BD5486D7FC5D859318 /* MacroRecommendations.swift in Sources */,
+				6713011512062EA06F6FBF71 /* ScannedLabel.swift in Sources */,
+				B3510BB462181B3109A10D85 /* NutritionCoreSupport.swift in Sources */,
+				ADCB22C5C48997C105D59C16 /* LabelScanService.swift in Sources */,
+				79957F0624AB16E52019773B /* MacroRecommendationService.swift in Sources */,
+				37730FF847DAD4AF16E2B86B /* MealService.swift in Sources */,
+				16F5432EE3D175780A7793A1 /* SupplementService.swift in Sources */,
+				EC04C2D87632C3E2AC86AAB0 /* ConfigManager.swift in Sources */,
+				7F3D985BF7CE31A5EE6CA443 /* MacraAudioService.swift in Sources */,
+				9355C16B097A6D193D2FC5F5 /* MacraNoraChatService.swift in Sources */,
+				D157E47FBCFEA98FFD09E461 /* MacraVersionService.swift in Sources */,
+				894F92E2E46DE253418F04DD /* NoraOrb.swift in Sources */,
+				753E9E8DA4C68D6C4104EB37 /* ManageSubscriptionView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

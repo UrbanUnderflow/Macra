@@ -87,19 +87,27 @@ struct MockPackage: PackageViewModelProtocol {
 
 struct MockOfferingViewModel: OfferingViewModelProtocol {
     var packageViewModel: [PackageViewModel]
-    
+
     var monthlyPackage: PackageViewModel?
-    
+
     var yearlyPackage: PackageViewModel?
-    
-    var lifetimePackage: PackageViewModel?
-    
+
+    var isLoadingPackages: Bool = false
+
+    var packageLoadError: String?
+
+    var planOptions: [SubscriptionPlanOption] = []
+
     func start() async {
-        
+
     }
     
     func purchase(_ viewmodel: PackageViewModel, completion: @escaping (PurchaseResult) -> Void) {
         
+    }
+
+    func purchase(_ plan: SubscriptionPlanOption, completion: @escaping (PurchaseResult) -> Void) {
+
     }
     
     // Fill in properties or methods that OfferingViewModel expects.
@@ -110,16 +118,15 @@ struct MockOfferingViewModel: OfferingViewModelProtocol {
 struct PackageCardView_Previews: PreviewProvider {
     static var previews: some View {
         PackageCardView(
-            badgeLabel: "Pay Once",
-            title: "Lifetime",
-            subtitle: "Pay once and get access to top notch dog training, forever!",
-            breakDownPrice: "$249",
-            billPrice: "Ont-Time Purchase",
-            bottomLabel: "No subscription",
-            buttonTitle: "Get Lifetime",
+            badgeLabel: "Best Value",
+            title: "Annual Pro Plan",
+            subtitle: "A full year of Macra Pro with premium nutrition features.",
+            breakDownPrice: "About $6 per month",
+            billPrice: "$79.99 billed annually",
+            bottomLabel: "Most popular plan",
+            buttonTitle: "Get Annual",
             package: PackageViewModelProtocol.self as! PackageViewModelProtocol,
             offeringViewModel: OfferingViewModelProtocol.self as! OfferingViewModelProtocol) {
-                //check the status of subscription before moving forward with this purchase
         }
     }
 }

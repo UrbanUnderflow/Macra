@@ -2,6 +2,7 @@ import Firebase
 import FirebaseFirestore
 import FirebaseStorage
 import AuthenticationServices
+import UIKit
 
 enum FirebaseError: Error {
     case invalidCredentials
@@ -14,9 +15,40 @@ class FirebaseService: NSObject  {
     private var db: Firestore!
     var currentAuthorizationController: ASAuthorizationController?
 
+    private enum SharedPulseFirebaseConfig {
+        static let googleAppID = "1:691046627244:ios:821c53e53f20c736a9ec09"
+        static let gcmSenderID = "691046627244"
+        static let apiKey = "AIzaSyCBNr8WylRpi7IZ5M_COy1E3LaStQgLMvk"
+        static let projectID = "quicklifts-dd3f1"
+        static let storageBucket = "quicklifts-dd3f1.appspot.com"
+        static let clientID = "691046627244-mhqr0bau64lqouvp5ralgv0ehubsno3d.apps.googleusercontent.com"
+    }
+
     private override init() {
-        FirebaseApp.configure()
+        super.init()
+        Self.configureFirebaseAppIfNeeded()
         db = Firestore.firestore()
+
+        let settings = FirestoreSettings()
+        settings.isPersistenceEnabled = true
+        db.settings = settings
+    }
+
+    static func configureFirebaseAppIfNeeded() {
+        guard FirebaseApp.app() == nil else { return }
+
+        let options = FirebaseOptions(
+            googleAppID: SharedPulseFirebaseConfig.googleAppID,
+            gcmSenderID: SharedPulseFirebaseConfig.gcmSenderID
+        )
+        options.apiKey = SharedPulseFirebaseConfig.apiKey
+        options.projectID = SharedPulseFirebaseConfig.projectID
+        options.storageBucket = SharedPulseFirebaseConfig.storageBucket
+        options.clientID = SharedPulseFirebaseConfig.clientID
+        options.bundleID = Bundle.main.bundleIdentifier ?? "Tremaine.Macra"
+
+        FirebaseApp.configure(options: options)
+        print("[Firebase] Configured shared Pulse project \(SharedPulseFirebaseConfig.projectID) for bundle \(options.bundleID)")
     }
     
     var isAuthenticated: Bool {
@@ -67,7 +99,7 @@ class FirebaseService: NSObject  {
             if let error = error {
                 completion(.failure(error))
             } else if let authResult = authResult {
-                self.createUserObject()
+                self.createUserObject(registrationEntryPoint: .macra)
                 completion(.success(authResult))
             } else {
                 // This case should never occur, but handle it anyway
@@ -82,6 +114,9 @@ class FirebaseService: NSObject  {
             if let error = error {
                 completion(.failure(error))
             } else if let authResult = authResult {
+                if authResult.additionalUserInfo?.isNewUser == true {
+                    self.createUserObject(registrationEntryPoint: .macra)
+                }
                 completion(.success(authResult))
             } else {
                 completion(.failure(NSError(domain: "FirebaseService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unknown error occurred"])))
@@ -128,6 +163,37 @@ class FirebaseService: NSObject  {
             }
         }
     }
+
+    func uploadMealImage(_ image: UIImage, mealId: String, completion: @escaping (Result<String, Error>) -> Void) {
+        guard let data = image.jpegData(compressionQuality: 0.6),
+              let userId = Auth.auth().currentUser?.uid else {
+            completion(.failure(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid data or user id"])))
+            return
+        }
+
+        let fileName = mealId.isEmpty ? UUID().uuidString : mealId
+        let storageRef = Storage.storage().reference()
+            .child("meal_images")
+            .child(userId)
+            .child("\(fileName)-\(Int(Date().timeIntervalSince1970)).jpg")
+
+        storageRef.putData(data, metadata: nil) { _, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+
+            storageRef.downloadURL { url, error in
+                if let error = error {
+                    completion(.failure(error))
+                } else if let url = url {
+                    completion(.success(url.absoluteString))
+                } else {
+                    completion(.failure(NSError(domain: "FirebaseService", code: -2, userInfo: [NSLocalizedDescriptionKey: "Missing download URL"])))
+                }
+            }
+        }
+    }
     
     let imageCache = NSCache<NSURL, UIImage>()
 
@@ -165,7 +231,7 @@ class FirebaseService: NSObject  {
         }.resume()
     }
     
-    func createUserObject() {
+    func createUserObject(registrationEntryPoint: RegistrationEntryPoint = .macra) {
         // Create a user object when a person first opens the app.
         guard let userId = Auth.auth().currentUser?.uid else {
             return
@@ -185,16 +251,48 @@ class FirebaseService: NSObject  {
             }
             
             guard let document = document, !document.exists else {
-                print("User document already exists")
+                if let existingData = document?.data(),
+                   let existingUser = User(id: document?.documentID ?? userId, dictionary: existingData) {
+                    DispatchQueue.main.async {
+                        UserService.sharedInstance.user = existingUser
+                        UserService.sharedInstance.isBetaUser = existingUser.subscriptionType == .beta || UserService.sharedInstance.isBetaUser
+                        UserService.sharedInstance.isSubscribed = existingUser.subscriptionType.grantsMacraAccess || UserService.sharedInstance.isBetaUser
+                    }
+                }
+                print("User document already exists; Macra loaded existing shared profile without writing a partial user document")
                 return
             }
             
-            // Create new user document
-            userRef.setData([
+            let seedData: [String: Any] = [
+                "id": userId,
                 "email": email,
+                "registrationEntryPoint": registrationEntryPoint.rawValue,
                 "createdAt": Date().timeIntervalSince1970,
                 "updatedAt": Date().timeIntervalSince1970,
-            ]) { (error) in
+            ]
+
+            // Create-only user seed. Existing shared profiles must never be overwritten by Macra.
+            self.db.runTransaction({ transaction, errorPointer -> Any? in
+                let snapshot: DocumentSnapshot
+                do {
+                    snapshot = try transaction.getDocument(userRef)
+                } catch let fetchError as NSError {
+                    errorPointer?.pointee = fetchError
+                    return nil
+                }
+
+                guard !snapshot.exists else {
+                    errorPointer?.pointee = NSError(
+                        domain: "Macra.FirebaseService",
+                        code: 409,
+                        userInfo: [NSLocalizedDescriptionKey: "User document already exists"]
+                    )
+                    return nil
+                }
+
+                transaction.setData(seedData, forDocument: userRef)
+                return nil
+            }) { _, error in
                 if let error = error {
                     print("Error creating user document: \(error.localizedDescription)")
                 } else {

@@ -6,7 +6,7 @@
 //
 
 import XCTest
-@testable import Macra
+@testable import MacraFoodJournal
 
 final class MacraTests: XCTestCase {
 
@@ -31,6 +31,59 @@ final class MacraTests: XCTestCase {
         self.measure {
             // Put the code you want to measure the time of here.
         }
+    }
+
+    func testMacroRecommendationResolverFallsBackToLatestTargetWhenNoGlobalExists() {
+        let olderTarget = MacroRecommendation(
+            id: "monday",
+            userId: "user-1",
+            calories: 2100,
+            protein: 160,
+            carbs: 220,
+            fat: 70,
+            dayOfWeek: "mon",
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let latestTarget = MacroRecommendation(
+            id: "wednesday",
+            userId: "user-1",
+            calories: 2300,
+            protein: 175,
+            carbs: 240,
+            fat: 75,
+            dayOfWeek: "wed",
+            createdAt: Date(timeIntervalSince1970: 200),
+            updatedAt: Date(timeIntervalSince1970: 200)
+        )
+
+        let resolved = MacroRecommendationResolver.current(from: [olderTarget, latestTarget])
+
+        XCTAssertEqual(resolved?.id, "wednesday")
+    }
+
+    func testMacroRecommendationResolverNormalizesDayAliases() {
+        let globalTarget = MacroRecommendation(
+            id: "global",
+            userId: "user-1",
+            calories: 2200,
+            protein: 170,
+            carbs: 230,
+            fat: 72
+        )
+        let tuesdayTarget = MacroRecommendation(
+            id: "tuesday",
+            userId: "user-1",
+            calories: 2400,
+            protein: 180,
+            carbs: 260,
+            fat: 80,
+            dayOfWeek: "tue"
+        )
+
+        let resolved = MacroRecommendationResolver.current(from: [globalTarget, tuesdayTarget], dayOfWeek: "tues")
+
+        XCTAssertEqual(resolved?.id, "tuesday")
     }
 
 }

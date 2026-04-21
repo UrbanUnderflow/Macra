@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import FirebaseStorage
 
 struct RemoteImage: View {
     let url: String
@@ -20,14 +21,52 @@ struct RemoteImage: View {
             }
         }
         .onAppear(perform: loadImage)
+        .onChange(of: url) { _ in
+            loadImage()
+        }
     }
 
     func loadImage() {
-        guard let imageURL = URL(string: url) else {
-            print("Invalid URL.")
+        let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty else {
+            imageData = nil
+            isImageLoading = false
             return
         }
 
+        if trimmedURL.hasPrefix("gs://") {
+            Storage.storage().reference(forURL: trimmedURL).downloadURL { downloadURL, error in
+                DispatchQueue.main.async {
+                    if let error = error {
+                        self.isImageLoading = false
+                        self.loadingError = error
+                        print("Error resolving storage URL: \(error.localizedDescription)")
+                        return
+                    }
+
+                    guard let downloadURL else {
+                        self.isImageLoading = false
+                        return
+                    }
+
+                    self.fetchImage(from: downloadURL)
+                }
+            }
+            return
+        }
+
+        let normalizedURL = trimmedURL.replacingOccurrences(of: "firebasestorage.googleapis.com:443", with: "firebasestorage.googleapis.com")
+        guard let imageURL = URL(string: normalizedURL) else {
+            print("Invalid URL.")
+            imageData = nil
+            return
+        }
+
+        fetchImage(from: imageURL)
+    }
+
+    private func fetchImage(from imageURL: URL) {
+        imageData = nil
         isImageLoading = true
 
         let task = URLSession.shared.dataTask(with: imageURL) { data, response, error in

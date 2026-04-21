@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var appCoordinator: AppCoordinator
     @ObservedObject private var serviceManager: ServiceManager
+    private let reviewScreenshotMode = ProcessInfo.processInfo.environment["MACRA_CAPTURE_PAYWALL"] == "1"
     
     var isModalPresented: Binding<Bool> {
         Binding(
@@ -21,21 +22,33 @@ struct ContentView: View {
     }
     
     private var mainView: some View {
-        appCoordinator.currentScreen.makeView(serviceManager: serviceManager, appCoordinator: appCoordinator)
+        Group {
+            if reviewScreenshotMode {
+                MacraReviewPaywallScreenshotView()
+            } else {
+                appCoordinator.currentScreen.makeView(serviceManager: serviceManager, appCoordinator: appCoordinator)
+            }
+        }
     }
     
+    private var activeUpdateReleaseBinding: Binding<MacraAppVersionPayload?> {
+        Binding(
+            get: { appCoordinator.activeUpdateRelease },
+            set: { newValue in
+                if newValue == nil {
+                    appCoordinator.activeUpdateRelease = nil
+                }
+            }
+        )
+    }
+
     var body: some View {
         ZStack {
+            Color(.systemBackground)
+                .ignoresSafeArea()
+
             mainView
-            
-            if serviceManager.showTabBar == true {
-                VStack {
-                    Spacer()
-                    CustomTabBarView(viewModel: CustomTabBarViewModel(appCoordinator: appCoordinator))
-                }
-                .ignoresSafeArea(.all)
-            }
-            
+
             if let notification = appCoordinator.notificationScreen {
                 switch notification {
                 case .notification(let viewModel):
@@ -43,7 +56,7 @@ struct ContentView: View {
                         .padding()
                 }
             }
-            
+
             if let toast = appCoordinator.toast {
                 switch toast {
                     case .toast(let viewModel):
@@ -53,6 +66,14 @@ struct ContentView: View {
                                 appCoordinator.hideToast()
                         }
                 }
+            }
+        }
+        .onAppear {
+            appCoordinator.checkForPublishedUpdateIfNeeded()
+        }
+        .fullScreenCover(item: activeUpdateReleaseBinding) { release in
+            MacraUpdateModalView(release: release) { markSeen in
+                appCoordinator.dismissPublishedUpdate(markSeen: markSeen)
             }
         }
         .fullScreenCover(isPresented: isModalPresented) {
@@ -76,7 +97,9 @@ struct ContentView: View {
                     case .calendar(let viewModel):
                         CalendarView(viewModel: viewModel)
                     case .payWall:
-                        PayWallView(viewModel: PayWallViewModel(appCoordinator: AppCoordinator(serviceManager: ServiceManager())))
+                        PayWallView(viewModel: PayWallViewModel(appCoordinator: appCoordinator))
+                    case .manageSubscription:
+                        ManageSubscriptionView(viewModel: ManageSubscriptionViewModel(appCoordinator: appCoordinator))
                     case .settings:
                         SettingsView(viewModel: SettingsViewModel(appCoordinator: appCoordinator))
                     default:

@@ -1,0 +1,2 @@
+typealias AppShellTab = AppCoordinator.NutritionShellTab
+typealias AppShellDestination = AppCoordinator.NutritionShellDestination

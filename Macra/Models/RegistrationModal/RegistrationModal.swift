@@ -22,31 +22,17 @@ struct RegistrationModal: View {
     @State private var isDatePickerShown = false
     
     func nextButtonPressed() {
-        guard let u = UserService.sharedInstance.user else {
+        guard UserService.sharedInstance.user != nil else {
             print("Something went wrong with getting the user during auth")
             return
         }
-        
-        var updatedUser = u
-        
-//        if selectedPage == 0 {
-//            updatedUser.dogName = viewModel.puppyName.lowercased()
-//            UserService.sharedInstance.updateUser(user: updatedUser)
-//        }
-//
-//        if selectedPage == 1 {
-//            updatedUser.dogStage = viewModel.selectedStage
-//            UserService.sharedInstance.updateUser(user: updatedUser)
-//        }
-        
-        if selectedPage == 1 {
-            updatedUser.profileImageURL = viewModel.imageUrl
-            UserService.sharedInstance.updateUser(user: updatedUser)
+
+        if selectedPage == 1, !viewModel.imageUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            UserService.sharedInstance.updateProfileImageURL(viewModel.imageUrl)
         }
         
         if selectedPage == 2 {
-            updatedUser.birthdate = viewModel.birthdate
-            UserService.sharedInstance.updateUser(user: updatedUser)
+            UserService.sharedInstance.updateBirthdate(viewModel.birthdate)
         }
         
         if selectedPage <= 3 {
@@ -234,6 +220,7 @@ struct RegistrationModal: View {
                     Spacer()
                     UploadImageView(viewModel: UploadImageViewModel(serviceManager: viewModel.appCoordinator.serviceManager, onImageUploaded: { image in
                         self.selectedImage = image
+                        self.viewModel.imageUrl = UserService.sharedInstance.user?.profileImageURL ?? ""
                     })) {
                         VStack(alignment: .center, spacing:20) {
                             if let image = selectedImage {
