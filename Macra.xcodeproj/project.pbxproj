@@ -729,7 +729,7 @@
 				21E8FA892A9EDB0B00671B49 /* Sources */,
 				21E8FA8A2A9EDB0B00671B49 /* Frameworks */,
 				21E8FA8B2A9EDB0B00671B49 /* Resources */,
-				1ED881C8C7A87E72AD741ACB /* Patch gRPC Bundle ID */,
+				1ED881C8C7A87E72AD741ACB /* Normalize Embedded Framework Plists */,
 			);
 			buildRules = (
 			);
@@ -864,7 +864,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		1ED881C8C7A87E72AD741ACB /* Patch gRPC Bundle ID */ = {
+		1ED881C8C7A87E72AD741ACB /* Normalize Embedded Framework Plists */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -874,14 +874,14 @@
 			);
 			inputPaths = (
 			);
-			name = "Patch gRPC Bundle ID";
+			name = "Normalize Embedded Framework Plists";
 			outputFileListPaths = (
 			);
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Rewrite the gRPC-C++ framework's Info.plist so the bundle identifier is\n# reverse-DNS compliant. Firebase ships it as `com.firebase.Firebase-gRPC-C++`\n# which contains a `+`, and Xcode rejects that on newer SDKs. Patching the\n# plist invalidates the framework's existing signature, so we re-sign it.\n# We must NOT preserve the old signature identifier (it still has the `+`),\n# otherwise iOS rejects install with a signature mismatch.\nset -e\nFRAMEWORK_DIR=\"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Frameworks/gRPC-C++.framework\"\nINFO_PLIST=\"${FRAMEWORK_DIR}/Info.plist\"\nif [ -f \"$INFO_PLIST\" ]; then\n  /usr/libexec/PlistBuddy -c \"Set :CFBundleIdentifier com.firebase.FirebasegRPCCxx\" \"$INFO_PLIST\"\n  IDENTITY=\"${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}\"\n  rm -rf \"${FRAMEWORK_DIR}/_CodeSignature\"\n  /usr/bin/codesign --force --sign \"$IDENTITY\" --generate-entitlement-der --timestamp=none \"$FRAMEWORK_DIR\"\nfi\n";
+			shellScript = "# Normalize embedded SwiftPM binary framework plists for App Store validation.\n# Older Firebase/gRPC binary frameworks can be packaged without keys that\n# Transporter now requires, and gRPC-C++ ships a bundle id containing `+`.\n# Any plist edit invalidates the framework signature, so touched frameworks\n# are re-signed without preserving the old signature identifier.\nset -e\n\nFRAMEWORKS_DIR=\"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Frameworks\"\nif [ ! -d \"$FRAMEWORKS_DIR\" ]; then\n  exit 0\nfi\n\nIDENTITY=\"${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}\"\nAPP_VERSION=\"${MARKETING_VERSION:-1.0}\"\nBUILD_VERSION=\"${CURRENT_PROJECT_VERSION:-1}\"\nMIN_OS_VERSION=\"${IPHONEOS_DEPLOYMENT_TARGET:-16.4}\"\n\nensure_plist_value() {\n  PLIST_FILE=\"$1\"\n  PLIST_KEY=\"$2\"\n  PLIST_TYPE=\"$3\"\n  PLIST_VALUE=\"$4\"\n\n  EXISTING_VALUE=\"$(/usr/libexec/PlistBuddy -c \"Print :${PLIST_KEY}\" \"$PLIST_FILE\" 2>/dev/null || true)\"\n  if [ -n \"$EXISTING_VALUE\" ]; then\n    return\n  fi\n\n  if /usr/libexec/PlistBuddy -c \"Print :${PLIST_KEY}\" \"$PLIST_FILE\" >/dev/null 2>&1; then\n    /usr/libexec/PlistBuddy -c \"Set :${PLIST_KEY} ${PLIST_VALUE}\" \"$PLIST_FILE\"\n  else\n    /usr/libexec/PlistBuddy -c \"Add :${PLIST_KEY} ${PLIST_TYPE} ${PLIST_VALUE}\" \"$PLIST_FILE\"\n  fi\n  MODIFIED=1\n}\n\nfor FRAMEWORK_DIR in \"$FRAMEWORKS_DIR\"/*.framework; do\n  [ -d \"$FRAMEWORK_DIR\" ] || continue\n  INFO_PLIST=\"${FRAMEWORK_DIR}/Info.plist\"\n  [ -f \"$INFO_PLIST\" ] || continue\n\n  MODIFIED=0\n  FRAMEWORK_NAME=\"$(basename \"$FRAMEWORK_DIR\")\"\n\n  if [ \"$FRAMEWORK_NAME\" = \"gRPC-C++.framework\" ]; then\n    BUNDLE_ID=\"$(/usr/libexec/PlistBuddy -c \"Print :CFBundleIdentifier\" \"$INFO_PLIST\" 2>/dev/null || true)\"\n    if [ \"$BUNDLE_ID\" != \"com.firebase.FirebasegRPCCxx\" ]; then\n      if [ -n \"$BUNDLE_ID\" ]; then\n        /usr/libexec/PlistBuddy -c \"Set :CFBundleIdentifier com.firebase.FirebasegRPCCxx\" \"$INFO_PLIST\"\n      else\n        /usr/libexec/PlistBuddy -c \"Add :CFBundleIdentifier string com.firebase.FirebasegRPCCxx\" \"$INFO_PLIST\"\n      fi\n      MODIFIED=1\n    fi\n  fi\n\n  FRAMEWORK_VERSION=\"$(/usr/libexec/PlistBuddy -c \"Print :CFBundleVersion\" \"$INFO_PLIST\" 2>/dev/null || true)\"\n  if [ -z \"$FRAMEWORK_VERSION\" ]; then\n    FRAMEWORK_VERSION=\"$APP_VERSION\"\n  fi\n\n  ensure_plist_value \"$INFO_PLIST\" CFBundleShortVersionString string \"$FRAMEWORK_VERSION\"\n  ensure_plist_value \"$INFO_PLIST\" CFBundleVersion string \"$BUILD_VERSION\"\n  ensure_plist_value \"$INFO_PLIST\" MinimumOSVersion string \"$MIN_OS_VERSION\"\n\n  if [ \"$MODIFIED\" = \"1\" ] && [ \"${CODE_SIGNING_ALLOWED:-YES}\" != \"NO\" ]; then\n    rm -rf \"${FRAMEWORK_DIR}/_CodeSignature\"\n    /usr/bin/codesign --force --sign \"$IDENTITY\" --generate-entitlement-der --timestamp=none \"$FRAMEWORK_DIR\"\n  fi\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

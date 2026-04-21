@@ -24,6 +24,8 @@ final class HomeViewModel: ObservableObject {
     @Published var showLoader = false
     @Published var selectedDate: Date = Calendar.current.startOfDay(for: Date())
 
+    private var loadGeneration = 0
+
     init(appCoordinator: AppCoordinator, serviceManager: ServiceManager) {
         self.appCoordinator = appCoordinator
         self.serviceManager = serviceManager
@@ -65,6 +67,7 @@ final class HomeViewModel: ObservableObject {
         dailyInsightError = nil
         isGeneratingInsight = true
 
+        let insightDate = selectedDate
         let mealsForJournal = todaysMealsAsFoodJournal
         let supplements = loggedSupplements
         let target = (macroTarget ?? UserService.sharedInstance.currentMacroTarget).map {
@@ -80,11 +83,12 @@ final class HomeViewModel: ObservableObject {
             meals: mealsForJournal,
             supplements: supplements,
             macroTarget: target,
-            date: selectedDate
+            date: insightDate
         ) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isGeneratingInsight = false
+                guard Calendar.current.isDate(self.selectedDate, inSameDayAs: insightDate) else { return }
                 switch result {
                 case .success(let insight):
                     self.dailyInsight = insight
@@ -104,6 +108,7 @@ final class HomeViewModel: ObservableObject {
     func navigateToPreviousDay() {
         guard let previous = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate) else { return }
         selectedDate = Calendar.current.startOfDay(for: previous)
+        clearSelectedDayContext()
         load()
     }
 
@@ -112,6 +117,7 @@ final class HomeViewModel: ObservableObject {
               let next = Calendar.current.date(byAdding: .day, value: 1, to: selectedDate) else { return }
         let today = Calendar.current.startOfDay(for: Date())
         selectedDate = min(Calendar.current.startOfDay(for: next), today)
+        clearSelectedDayContext()
         load()
     }
 
@@ -121,14 +127,20 @@ final class HomeViewModel: ObservableObject {
         let capped = normalized > today ? today : normalized
         guard !Calendar.current.isDate(capped, inSameDayAs: selectedDate) else { return }
         selectedDate = capped
-        dailyInsight = nil
-        dailyInsightError = nil
+        clearSelectedDayContext()
         load()
     }
 
     func load() {
         guard let userId = serviceManager.userService.user?.id ?? Auth.auth().currentUser?.uid,
-              !userId.isEmpty else { return }
+              !userId.isEmpty else {
+            isLoading = false
+            return
+        }
+
+        loadGeneration += 1
+        let generation = loadGeneration
+        let requestedDate = selectedDate
 
         isLoading = true
         let group = DispatchGroup()
@@ -145,9 +157,16 @@ final class HomeViewModel: ObservableObject {
         }
 
         group.enter()
-        MealService.sharedInstance.getMeals(byDate: selectedDate, userId: userId) { [weak self] result in
+        MealService.sharedInstance.getMeals(byDate: requestedDate, userId: userId) { [weak self] result in
             DispatchQueue.main.async {
-                if case .success(let meals) = result { self?.todaysMeals = meals }
+                guard let self else {
+                    group.leave()
+                    return
+                }
+                if self.isCurrentLoad(generation, for: requestedDate),
+                   case .success(let meals) = result {
+                    self.todaysMeals = meals
+                }
                 group.leave()
             }
         }
@@ -178,12 +197,18 @@ final class HomeViewModel: ObservableObject {
         }
 
         group.enter()
-        SupplementService.sharedInstance.getLoggedSupplements(byDate: selectedDate) { [weak self] result in
+        SupplementService.sharedInstance.getLoggedSupplements(byDate: requestedDate) { [weak self] result in
             DispatchQueue.main.async {
-                if case .success(let supplements) = result {
-                    self?.loggedSupplements = supplements
-                } else {
-                    self?.loggedSupplements = []
+                guard let self else {
+                    group.leave()
+                    return
+                }
+                if self.isCurrentLoad(generation, for: requestedDate) {
+                    if case .success(let supplements) = result {
+                        self.loggedSupplements = supplements
+                    } else {
+                        self.loggedSupplements = []
+                    }
                 }
                 group.leave()
             }
@@ -195,8 +220,22 @@ final class HomeViewModel: ObservableObject {
         }
 
         group.notify(queue: .main) { [weak self] in
-            self?.isLoading = false
+            guard let self, self.isCurrentLoad(generation, for: requestedDate) else { return }
+            self.isLoading = false
         }
+    }
+
+    private func clearSelectedDayContext() {
+        loadGeneration += 1
+        todaysMeals = []
+        loggedSupplements = []
+        dailyInsight = nil
+        dailyInsightError = nil
+        isLoading = true
+    }
+
+    private func isCurrentLoad(_ generation: Int, for date: Date) -> Bool {
+        generation == loadGeneration && Calendar.current.isDate(selectedDate, inSameDayAs: date)
     }
 
     private func loadMealLoggedDates(completion: @escaping () -> Void) {
@@ -1018,7 +1057,8 @@ struct HomeView: View {
                 meals: viewModel.todaysMeals,
                 target: effectiveTarget,
                 threadDate: viewModel.selectedDate,
-                userId: viewModel.serviceManager.userService.user?.id ?? Auth.auth().currentUser?.uid
+                userId: viewModel.serviceManager.userService.user?.id ?? Auth.auth().currentUser?.uid,
+                isDayContextLoading: viewModel.isLoading
             )
         }
     }
@@ -3004,6 +3044,7 @@ struct AskNoraSection: View {
     let target: MacroRecommendation?
     let threadDate: Date
     let userId: String?
+    let isDayContextLoading: Bool
 
     @State private var query: String = ""
     @State private var messages: [MacraNoraMessage] = []
@@ -3136,7 +3177,7 @@ struct AskNoraSection: View {
                     .overlay(Capsule().strokeBorder(preset.accent.opacity(0.34), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .disabled(isAsking)
+                .disabled(isAsking || isDayContextLoading)
             }
         }
         .padding(.vertical, 2)
@@ -3176,8 +3217,8 @@ struct AskNoraSection: View {
                 .shadow(color: noraAccent.opacity(0.5), radius: 12, x: 0, y: 4)
             }
             .buttonStyle(.plain)
-            .disabled(isAsking || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .opacity(isAsking || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
+            .disabled(isAsking || isDayContextLoading || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .opacity(isAsking || isDayContextLoading || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
         }
     }
 
@@ -3231,6 +3272,14 @@ struct AskNoraSection: View {
             HStack(spacing: 8) {
                 ProgressView().tint(noraAccent)
                 Text("Loading thread…")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.55))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else if isDayContextLoading && messages.isEmpty {
+            HStack(spacing: 8) {
+                ProgressView().tint(noraAccent)
+                Text("Loading \(threadDateLabel.lowercased()) context…")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(.white.opacity(0.55))
             }
@@ -3350,6 +3399,10 @@ struct AskNoraSection: View {
 
     private func runQuery(_ text: String, preset: NoraPromptPreset?) {
         guard !isAsking else { return }
+        guard !isDayContextLoading else {
+            errorMessage = "Nora is still loading \(threadDateLabel.lowercased())'s meals. Try again in a moment."
+            return
+        }
         focused = false
         isAsking = true
         errorMessage = nil
