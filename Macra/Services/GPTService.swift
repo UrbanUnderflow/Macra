@@ -16,12 +16,19 @@ class GPTService {
 
     private static let mealAnalyzerSystemPrompt = "You are Macra's precise nutrition analyzer. You return ONLY valid JSON matching the requested schema, no prose, no markdown fences."
 
+    /// Shared nutrition accuracy rules — kept in lockstep with
+    /// `QuickLifts/Services/NoraAIService.swift → mealAnalyzerAccuracyRules` so
+    /// Macra's journal analyzer and the Fit With Pulse training meal-plan
+    /// editor produce the same macro estimates.
+    /// If you edit this, update the NoraAIService copy too (byte-identical).
     private static let mealAnalyzerAccuracyRules = """
     - Split every meal into individual food items. Never put "egg whites + rice cake + almond butter" into one item; create one ingredient/item per food with its own quantity and macros.
     - Use quantity-based nutrition math for each ingredient before summing the meal. Use standard USDA-style values when no brand label is provided.
     - If portion sizes are not specified, use realistic defaults and reflect that assumption in the `quantity` field.
     - For prep-style plans, assume meat/fish ounces are cooked edible weight, rice/potato grams are cooked weight unless explicitly raw/dry, cream of rice grams/scoops are dry, egg whites are liquid volume, and "1 scoop" protein powder is one standard scoop unless a brand label is shown.
     - Use these reference anchors when the source does not provide a label: 1 cup liquid egg whites = 126 kcal/26P/2C/0F; 1 large whole egg = 70 kcal/6P/0C/5F; 35g or 1 scoop cream of rice = 130 kcal/2P/28C/0F; 1 plain rice cake = 35 kcal/1P/7C/0F; 1 tbsp almond butter = 98 kcal/3P/3C/9F; cooked chicken breast 1 oz = 47 kcal/9P/0C/1F; cooked white fish 1 oz = 32 kcal/7P/0C/0F; cooked jasmine/white rice 100g = 130 kcal/3P/28C/0F; cooked white potato 100g = 87 kcal/2P/20C/0F.
+    - Ground meat reference anchors per 1 oz cooked (use these when unlabeled): ground turkey 99% lean = 37 kcal/8P/0C/0F; ground turkey 93/7 = 50 kcal/7P/0C/3F; ground turkey 85/15 = 60 kcal/7P/0C/4F; ground beef 93/7 = 48 kcal/8P/0C/2F; ground beef 90/10 = 52 kcal/8P/0C/2F; ground beef 85/15 = 62 kcal/7P/0C/4F; ground beef 80/20 = 72 kcal/7P/0C/5F; ground chicken 93/7 = 48 kcal/7P/0C/2F; ground pork standard = 70 kcal/6P/0C/5F; ground lamb standard = 68 kcal/7P/0C/4F.
+    - If "ground turkey" is specified without a lean ratio, assume 93/7. If "ground beef" is specified without a lean ratio, assume 85/15. If "ground chicken" is specified without a ratio, assume 93/7. Note the assumed ratio in the ingredient `quantity` field (e.g. "7 oz (93/7)").
     - Do not include vitamin/mineral supplement-only lines as meals. Count calorie-containing oils only when they materially affect daily fats.
     - For each ingredient/item and meal, calories should be consistent with protein/carbs/fat using 4/4/9 math within normal rounding.
     """
