@@ -13,6 +13,11 @@ final class HomeViewModel: ObservableObject {
     @Published var recentLabelScans: [MacraScannedLabel] = []
     @Published var pinnedLabelScans: [MacraScannedLabel] = []
     @Published var pinnedFoodSnaps: [Meal] = []
+    @Published var loggedSupplements: [LoggedSupplement] = []
+    @Published var mealLoggedDates: Set<Date> = []
+    @Published var dailyInsight: MacraFoodJournalDailyInsight?
+    @Published var isGeneratingInsight: Bool = false
+    @Published var dailyInsightError: String?
     @Published var isLoading = false
     @Published var isLoadingScans = false
     @Published var scanHistoryError: String?
@@ -24,10 +29,71 @@ final class HomeViewModel: ObservableObject {
         self.serviceManager = serviceManager
     }
 
-    var totalCalories: Int { todaysMeals.reduce(0) { $0 + $1.calories } }
-    var totalProtein: Int { todaysMeals.reduce(0) { $0 + $1.protein } }
-    var totalCarbs: Int { todaysMeals.reduce(0) { $0 + $1.carbs } }
-    var totalFat: Int { todaysMeals.reduce(0) { $0 + $1.fat } }
+    var mealCalories: Int { todaysMeals.reduce(0) { $0 + $1.calories } }
+    var mealProtein: Int { todaysMeals.reduce(0) { $0 + $1.protein } }
+    var mealCarbs: Int { todaysMeals.reduce(0) { $0 + $1.carbs } }
+    var mealFat: Int { todaysMeals.reduce(0) { $0 + $1.fat } }
+
+    var supplementCalories: Int { loggedSupplements.reduce(0) { $0 + $1.calories } }
+    var supplementProtein: Int { loggedSupplements.reduce(0) { $0 + $1.protein } }
+    var supplementCarbs: Int { loggedSupplements.reduce(0) { $0 + $1.carbs } }
+    var supplementFat: Int { loggedSupplements.reduce(0) { $0 + $1.fat } }
+
+    var totalCalories: Int { mealCalories + supplementCalories }
+    var totalProtein: Int { mealProtein + supplementProtein }
+    var totalCarbs: Int { mealCarbs + supplementCarbs }
+    var totalFat: Int { mealFat + supplementFat }
+
+    var todaysMealsAsFoodJournal: [MacraFoodJournalMeal] {
+        todaysMeals.map(MacraFoodJournalMeal.init(meal:))
+    }
+
+    var hasNetCarbAdjustment: Bool {
+        todaysMealsAsFoodJournal.contains(where: { $0.hasNetCarbAdjustment })
+    }
+
+    var totalNetCarbs: Int {
+        todaysMealsAsFoodJournal.reduce(0) { $0 + $1.netCarbs }
+    }
+
+    var loggingStats: MacraFoodJournalLoggingStats {
+        MacraFoodJournalLoggingStats(loggedDates: mealLoggedDates, referenceDate: Date())
+    }
+
+    func generateDailyInsight() {
+        guard !isGeneratingInsight else { return }
+        dailyInsightError = nil
+        isGeneratingInsight = true
+
+        let mealsForJournal = todaysMealsAsFoodJournal
+        let supplements = loggedSupplements
+        let target = (macroTarget ?? UserService.sharedInstance.currentMacroTarget).map {
+            MacraFoodJournalMacroTarget(
+                calories: $0.calories,
+                protein: $0.protein,
+                carbs: $0.carbs,
+                fat: $0.fat
+            )
+        }
+
+        MacraFoodJournalInsightService.shared.generateInsight(
+            meals: mealsForJournal,
+            supplements: supplements,
+            macroTarget: target,
+            date: selectedDate
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isGeneratingInsight = false
+                switch result {
+                case .success(let insight):
+                    self.dailyInsight = insight
+                case .failure(let error):
+                    self.dailyInsightError = error.localizedDescription
+                }
+            }
+        }
+    }
 
     var canNavigateToPreviousDay: Bool { true }
 
@@ -55,6 +121,8 @@ final class HomeViewModel: ObservableObject {
         let capped = normalized > today ? today : normalized
         guard !Calendar.current.isDate(capped, inSameDayAs: selectedDate) else { return }
         selectedDate = capped
+        dailyInsight = nil
+        dailyInsightError = nil
         load()
     }
 
@@ -109,8 +177,42 @@ final class HomeViewModel: ObservableObject {
             group.leave()
         }
 
+        group.enter()
+        SupplementService.sharedInstance.getLoggedSupplements(byDate: selectedDate) { [weak self] result in
+            DispatchQueue.main.async {
+                if case .success(let supplements) = result {
+                    self?.loggedSupplements = supplements
+                } else {
+                    self?.loggedSupplements = []
+                }
+                group.leave()
+            }
+        }
+
+        group.enter()
+        loadMealLoggedDates {
+            group.leave()
+        }
+
         group.notify(queue: .main) { [weak self] in
             self?.isLoading = false
+        }
+    }
+
+    private func loadMealLoggedDates(completion: @escaping () -> Void) {
+        guard let userId = serviceManager.userService.user?.id ?? Auth.auth().currentUser?.uid,
+              !userId.isEmpty else {
+            completion()
+            return
+        }
+        MealService.sharedInstance.getRecentMeals(userId: userId, limit: 200) { [weak self] result in
+            DispatchQueue.main.async {
+                if case .success(let meals) = result {
+                    let calendar = Calendar.current
+                    self?.mealLoggedDates = Set(meals.map { calendar.startOfDay(for: $0.createdAt) })
+                }
+                completion()
+            }
         }
     }
 
@@ -461,6 +563,8 @@ struct HomeView: View {
     @State private var activeMealDetail: Meal?
     @State private var isCopyDayPickerPresented = false
     @State private var copyTargetDate: Date = Calendar.current.startOfDay(for: Date())
+    @State private var activeMacroBreakdown: MacraFoodJournalMacroType?
+    @State private var isNetCarbInfoPresented = false
 
     init(viewModel: HomeViewModel) {
         _viewModel = ObservedObject(wrappedValue: viewModel)
@@ -594,6 +698,28 @@ struct HomeView: View {
                         }
                     },
                     onDeleted: { viewModel.load() }
+                )
+            }
+            .sheet(item: $activeMacroBreakdown) { macroType in
+                MacraFoodJournalMacroBreakdownView(
+                    meals: viewModel.todaysMealsAsFoodJournal,
+                    supplements: viewModel.loggedSupplements,
+                    macroType: macroType,
+                    selectedDate: viewModel.selectedDate,
+                    macroTarget: (viewModel.macroTarget ?? userService.currentMacroTarget).map {
+                        MacraFoodJournalMacroTarget(
+                            calories: $0.calories,
+                            protein: $0.protein,
+                            carbs: $0.carbs,
+                            fat: $0.fat
+                        )
+                    }
+                )
+            }
+            .sheet(isPresented: $isNetCarbInfoPresented) {
+                MacraFoodJournalNetCarbInfoView(
+                    meals: viewModel.todaysMealsAsFoodJournal,
+                    selectedDate: viewModel.selectedDate
                 )
             }
             .onAppear {
@@ -819,8 +945,23 @@ struct HomeView: View {
                 carbsTarget: effectiveTarget?.carbs,
                 fatConsumed: viewModel.totalFat,
                 fatTarget: effectiveTarget?.fat,
-                hasCompletedOnboarding: userService.user?.hasCompletedMacraOnboarding == true
+                hasCompletedOnboarding: userService.user?.hasCompletedMacraOnboarding == true,
+                onTapMacro: { macro in
+                    activeMacroBreakdown = macro
+                }
             )
+
+            if viewModel.hasNetCarbAdjustment {
+                Button {
+                    isNetCarbInfoPresented = true
+                } label: {
+                    HomeNetCarbChip(netCarbs: viewModel.totalNetCarbs)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Net carbs explanation")
+            }
+
+            MacraFoodJournalStreakStrip(stats: viewModel.loggingStats)
 
             Button {
                 isLogMenuPresented = true
@@ -857,6 +998,15 @@ struct HomeView: View {
                         activeMealDetail = meal
                     }
                 }
+            }
+
+            if !viewModel.todaysMeals.isEmpty {
+                HomeDailyInsightCard(
+                    insight: viewModel.dailyInsight,
+                    isGenerating: viewModel.isGeneratingInsight,
+                    errorMessage: viewModel.dailyInsightError,
+                    onGenerate: { viewModel.generateDailyInsight() }
+                )
             }
 
             AskNoraSection(
@@ -930,7 +1080,8 @@ struct HomeView: View {
         MealService.sharedInstance.saveMeal(meal, for: foodJournalMeal.createdAt, userId: viewModel.serviceManager.userService.user?.id) { result in
             DispatchQueue.main.async {
                 switch result {
-                case .success:
+                case .success(let saved):
+                    MacraHealthKitService.shared.saveMeal(saved, date: saved.createdAt) { _ in }
                     viewModel.load()
                 case .failure(let error):
                     viewModel.appCoordinator.showToast(
@@ -1249,6 +1400,10 @@ struct HomeView: View {
 
                     Divider().background(Color.white.opacity(0.08))
 
+                    MacraHealthKitToggleRow()
+
+                    Divider().background(Color.white.opacity(0.08))
+
                     Button {
                         viewModel.appCoordinator.showSettingsModal()
                     } label: {
@@ -1395,17 +1550,44 @@ private struct CalorieMacroHero: View {
     let fatConsumed: Int
     let fatTarget: Int?
     let hasCompletedOnboarding: Bool
+    var onTapMacro: ((MacraFoodJournalMacroType) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 18) {
-            CalorieRing(consumed: caloriesConsumed, target: caloriesTarget, hasCompletedOnboarding: hasCompletedOnboarding)
-                .frame(height: 220)
-                .padding(.top, 4)
+            Button {
+                onTapMacro?(.calories)
+            } label: {
+                CalorieRing(consumed: caloriesConsumed, target: caloriesTarget, hasCompletedOnboarding: hasCompletedOnboarding)
+                    .frame(height: 220)
+                    .padding(.top, 4)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Calories breakdown by meal")
 
             HStack(spacing: 14) {
-                MacroBar(label: "Protein", current: proteinConsumed, target: proteinTarget, color: Color(hex: "60A5FA"))
-                MacroBar(label: "Carbs", current: carbsConsumed, target: carbsTarget, color: Color.primaryGreen)
-                MacroBar(label: "Fat", current: fatConsumed, target: fatTarget, color: Color(hex: "FBBF24"))
+                Button {
+                    onTapMacro?(.protein)
+                } label: {
+                    MacroBar(label: "Protein", current: proteinConsumed, target: proteinTarget, color: Color(hex: "60A5FA"))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Protein breakdown by meal")
+
+                Button {
+                    onTapMacro?(.carbs)
+                } label: {
+                    MacroBar(label: "Carbs", current: carbsConsumed, target: carbsTarget, color: Color.primaryGreen)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Carbs breakdown by meal")
+
+                Button {
+                    onTapMacro?(.fat)
+                } label: {
+                    MacroBar(label: "Fat", current: fatConsumed, target: fatTarget, color: Color(hex: "FBBF24"))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Fat breakdown by meal")
             }
         }
         .padding(.horizontal, 20)
@@ -3156,6 +3338,16 @@ private struct NoraMessageBubble: View {
         return formatter.string(from: message.timestamp)
     }
 
+    private var attributedContent: AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        if let parsed = try? AttributedString(markdown: message.content, options: options) {
+            return parsed
+        }
+        return AttributedString(message.content)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             if message.role == .user {
@@ -3196,7 +3388,7 @@ private struct NoraMessageBubble: View {
                     .foregroundColor(.white.opacity(0.35))
             }
 
-            Text(message.content)
+            Text(attributedContent)
                 .font(.system(size: 13, weight: message.role == .user ? .semibold : .regular, design: .rounded))
                 .foregroundColor(.white.opacity(message.role == .user ? 1 : 0.85))
                 .multilineTextAlignment(.leading)
@@ -4118,6 +4310,124 @@ private struct LabelScanFeedCard: View {
 
 // MARK: - Copy Day CTA
 
+private struct HomeDailyInsightCard: View {
+    let insight: MacraFoodJournalDailyInsight?
+    let isGenerating: Bool
+    let errorMessage: String?
+    let onGenerate: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: insight?.icon ?? "sparkles")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.primaryGreen)
+                Text(insight?.title ?? "Daily insight")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                Spacer()
+                if let insight {
+                    Text(insight.timestamp.formatted(date: .omitted, time: .shortened))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.45))
+                }
+            }
+
+            if let insight {
+                Text(insight.response)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.white.opacity(0.82))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(3)
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button {
+                        onGenerate()
+                    } label: {
+                        Label(isGenerating ? "Regenerating…" : "Regenerate", systemImage: "arrow.clockwise")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.primaryGreen)
+                    }
+                    .disabled(isGenerating)
+                }
+            } else if isGenerating {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(Color.primaryGreen)
+                    Text("Nora is reading your day…")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.white.opacity(0.72))
+                }
+            } else {
+                Text("See what Nora notices about today's meals — protein cadence, fiber density, macro balance, or what's missing.")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.white.opacity(0.72))
+                Button {
+                    onGenerate()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Generate insight")
+                            .font(.subheadline.weight(.bold))
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color.primaryGreen))
+                }
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(Color(hex: "F87171"))
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.primaryGreen.opacity(0.24), lineWidth: 1)
+        )
+    }
+}
+
+private struct HomeNetCarbChip: View {
+    let netCarbs: Int
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "leaf.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color(hex: "60A5FA"))
+            Text("Net carbs: \(netCarbs)g")
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.white.opacity(0.85))
+            Spacer()
+            Image(systemName: "info.circle")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.55))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(hex: "60A5FA").opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color(hex: "60A5FA").opacity(0.28), lineWidth: 1)
+        )
+    }
+}
+
 private struct CopyDayCTA: View {
     let mealCount: Int
 
@@ -4575,6 +4885,80 @@ private struct ShellCTAButton: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: Color.primaryGreen.opacity(0.25), radius: 14, x: 0, y: 8)
+    }
+}
+
+private struct MacraHealthKitToggleRow: View {
+    @State private var isOn: Bool = MacraHealthKitService.shared.userOptIn
+    @State private var authErrorMessage: String?
+    @State private var isRequesting: Bool = false
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "heart.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color(hex: "F87171"))
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(Color(hex: "F87171").opacity(0.15)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Sync meals to Apple Health")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                Text(subtitleText)
+                    .font(.caption)
+                    .foregroundStyle(Color.white.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .tint(Color.primaryGreen)
+                .disabled(isRequesting || !MacraHealthKitService.shared.isAvailable)
+                .onChange(of: isOn) { newValue in
+                    handleToggle(newValue)
+                }
+        }
+        .padding(.vertical, 10)
+    }
+
+    private var subtitleText: String {
+        if !MacraHealthKitService.shared.isAvailable {
+            return "HealthKit isn't available on this device."
+        }
+        if let authErrorMessage {
+            return authErrorMessage
+        }
+        return "Write dietary energy, protein, carbs, fat, and fiber when you log a meal."
+    }
+
+    private func handleToggle(_ newValue: Bool) {
+        guard MacraHealthKitService.shared.isAvailable else {
+            isOn = false
+            return
+        }
+        if newValue {
+            isRequesting = true
+            authErrorMessage = nil
+            MacraHealthKitService.shared.requestAuthorization { granted, error in
+                isRequesting = false
+                if let error {
+                    authErrorMessage = error.localizedDescription
+                    isOn = false
+                    MacraHealthKitService.shared.userOptIn = false
+                } else if granted {
+                    MacraHealthKitService.shared.userOptIn = true
+                } else {
+                    authErrorMessage = "Enable Macra in Health app → Sources to sync."
+                    isOn = false
+                    MacraHealthKitService.shared.userOptIn = false
+                }
+            }
+        } else {
+            MacraHealthKitService.shared.userOptIn = false
+        }
     }
 }
 

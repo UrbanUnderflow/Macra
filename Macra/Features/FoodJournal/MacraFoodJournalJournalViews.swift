@@ -77,6 +77,19 @@ struct MacraFoodJournalSheetContentView: View {
             } else {
                 MacraFoodJournalMissingMealView(message: "Label scan unavailable.")
             }
+        case .macroBreakdown(let macroType):
+            MacraFoodJournalMacroBreakdownView(
+                meals: viewModel.mealsForSelectedDay,
+                supplements: viewModel.loggedSupplementsForSelectedDay,
+                macroType: macroType,
+                selectedDate: viewModel.selectedDate,
+                macroTarget: viewModel.daySummary.macroTarget
+            )
+        case .netCarbInfo:
+            MacraFoodJournalNetCarbInfoView(
+                meals: viewModel.mealsForSelectedDay,
+                selectedDate: viewModel.selectedDate
+            )
         }
     }
 }
@@ -93,6 +106,7 @@ struct MacraFoodJournalDayView: View {
                 VStack(spacing: 20) {
                     header
                     heroCard
+                    MacraFoodJournalStreakStrip(stats: viewModel.loggingStats)
                     quickActions
                     pinnedMealsSection
                     mealsSection
@@ -190,22 +204,84 @@ struct MacraFoodJournalDayView: View {
                         .foregroundColor(MacraFoodJournalTheme.textSoft)
                 }
                 Spacer()
-                FoodJournalMacroRing(
-                    calories: summary.totalCalories,
-                    target: summary.macroTarget?.calories,
-                    accent: MacraFoodJournalTheme.accent
-                )
-                .frame(width: 110, height: 110)
+                Button {
+                    viewModel.activeSheet = .macroBreakdown(.calories)
+                } label: {
+                    FoodJournalMacroRing(
+                        calories: summary.totalCalories,
+                        target: summary.macroTarget?.calories,
+                        accent: MacraFoodJournalTheme.accent
+                    )
+                    .frame(width: 110, height: 110)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Calories breakdown by meal")
             }
 
             HStack(spacing: 12) {
-                foodJournalMacroCard(title: "Protein", value: summary.totalProtein, target: summary.macroTarget?.protein, tint: MacraFoodJournalTheme.accent)
-                foodJournalMacroCard(title: "Carbs", value: summary.totalCarbs, target: summary.macroTarget?.carbs, tint: MacraFoodJournalTheme.accent2)
-                foodJournalMacroCard(title: "Fat", value: summary.totalFat, target: summary.macroTarget?.fat, tint: MacraFoodJournalTheme.accent3)
+                Button {
+                    viewModel.activeSheet = .macroBreakdown(.protein)
+                } label: {
+                    foodJournalMacroCard(title: "Protein", value: summary.totalProtein, target: summary.macroTarget?.protein, tint: MacraFoodJournalTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Protein breakdown by meal")
+
+                Button {
+                    viewModel.activeSheet = .macroBreakdown(.carbs)
+                } label: {
+                    foodJournalMacroCard(title: "Carbs", value: summary.totalCarbs, target: summary.macroTarget?.carbs, tint: MacraFoodJournalTheme.accent2)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Carbs breakdown by meal")
+
+                Button {
+                    viewModel.activeSheet = .macroBreakdown(.fat)
+                } label: {
+                    foodJournalMacroCard(title: "Fat", value: summary.totalFat, target: summary.macroTarget?.fat, tint: MacraFoodJournalTheme.accent3)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Fat breakdown by meal")
+            }
+
+            if summary.meals.contains(where: { $0.hasNetCarbAdjustment }) {
+                netCarbChip
             }
         }
         .padding(20)
         .background(foodJournalCardBackground)
+    }
+
+    private var netCarbChip: some View {
+        let netCarbs = summary.meals.reduce(0) { $0 + $1.netCarbs }
+        return Button {
+            viewModel.activeSheet = .netCarbInfo
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "leaf.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(MacraFoodJournalTheme.accent2)
+                Text("Net carbs: \(netCarbs)g")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(MacraFoodJournalTheme.textSoft)
+                Spacer()
+                Image(systemName: "info.circle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(MacraFoodJournalTheme.textMuted)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(MacraFoodJournalTheme.accent2.opacity(0.10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(MacraFoodJournalTheme.accent2.opacity(0.22), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Net carbs explanation")
     }
 
     private var quickActions: some View {

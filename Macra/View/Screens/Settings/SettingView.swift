@@ -57,6 +57,10 @@ struct SettingsView: View {
                                 viewModel.appCoordinator.showPayWallModal()
                             }
                         }
+                    SettingCard(title: "Notifications", subtitle: "Meal reminders, check-ins, emails")
+                        .onTapGesture {
+                            viewModel.appCoordinator.showMacraNotificationSettingsModal()
+                        }
                     SettingCard(title: "Privacy Policy", subtitle: "")
                         .onTapGesture {
                             viewModel.appCoordinator.showPrivacyScreenModal()

@@ -135,6 +135,7 @@ final class AppCoordinator: ObservableObject {
         case terms
         case privacyPolicy
         case settings
+        case macraNotificationSettings
         case calendar(viewModel: CalendarViewModel)
         case payWall
         case manageSubscription
@@ -431,6 +432,10 @@ final class AppCoordinator: ObservableObject {
         modalScreen = .settings
     }
 
+    func showMacraNotificationSettingsModal() {
+        modalScreen = .macraNotificationSettings
+    }
+
     func showNotificationModal(viewModel: CustomModalViewModel) {
         notificationScreen = .notification(viewModel: viewModel)
     }
@@ -503,6 +508,8 @@ extension AppCoordinator.Screen: Screen {
         case .calendar:
             return AnyView(EmptyView())
         case .settings:
+            return AnyView(EmptyView())
+        case .macraNotificationSettings:
             return AnyView(EmptyView())
         case .log:
             return AnyView(EmptyView())

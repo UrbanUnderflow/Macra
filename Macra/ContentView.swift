@@ -102,6 +102,8 @@ struct ContentView: View {
                         ManageSubscriptionView(viewModel: ManageSubscriptionViewModel(appCoordinator: appCoordinator))
                     case .settings:
                         SettingsView(viewModel: SettingsViewModel(appCoordinator: appCoordinator))
+                    case .macraNotificationSettings:
+                        MacraNotificationSettingsView(appCoordinator: appCoordinator)
                     default:
                         EmptyView()
                     }

@@ -35,14 +35,17 @@ class EntryService: ObservableObject {
             completion(nil, NSError(domain: "EntryService", code: 1001, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"]))
             return
         }
-        
+
         let reference = db.collection("users").document(userId).collection("entry")
-        
+
         reference.addDocument(data: entry.toDictionary()) { error in
             if let error = error {
                 print("Error writing log to Firestore: \(error)")
                 completion(nil, error)
             } else {
+                UserService.sharedInstance.updateMacraOwnedFields([
+                    "lastMacraLogAt": Date().timeIntervalSince1970,
+                ])
                 completion(entry, nil)
             }
         }

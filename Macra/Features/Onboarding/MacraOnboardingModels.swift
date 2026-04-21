@@ -161,6 +161,7 @@ struct MacraOnboardingAnswers {
     var activityLevel: ActivityLevel?
     var dietaryPreference: DietaryPreference?
     var biggestStruggle: BiggestStruggle?
+    var notificationPreferences: MacraNotificationPreferences = .default
 
     var goalDirection: MacraGoalDirection? {
         guard let current = currentWeightKg, let target = goalWeightKg else { return nil }
@@ -183,6 +184,115 @@ struct MacraOnboardingAnswers {
         if let goalDirection = goalDirection { dict["goalDirection"] = goalDirection.rawValue }
         dict["updatedAt"] = Date().timeIntervalSince1970
         return dict
+    }
+}
+
+/// User-selected push notification preferences surfaced during Macra onboarding.
+/// Persisted on the root user doc under `macraNotificationPreferences` so scheduled
+/// server functions (e.g. the admin notification sequences) can honor opt-outs.
+struct MacraNotificationPreferences: Hashable {
+    var mealReminders: Bool
+    var morningLogReminder: Bool
+    var endOfDayCheckin: Bool
+    /// Iso-8601 hours-minutes (local), used for the morning reminder. Default 08:00.
+    var morningReminderTime: TimeOfDay
+    /// Iso-8601 hours-minutes (local), used for the evening check-in. Default 20:00.
+    var endOfDayReminderTime: TimeOfDay
+    /// Local times at which the per-meal reminders fire. Indices map to Meal 1, 2, 3, 4.
+    var mealReminderTimes: [TimeOfDay]
+
+    static let `default` = MacraNotificationPreferences(
+        mealReminders: false,
+        morningLogReminder: false,
+        endOfDayCheckin: false,
+        morningReminderTime: TimeOfDay(hour: 8, minute: 0),
+        endOfDayReminderTime: TimeOfDay(hour: 20, minute: 0),
+        mealReminderTimes: [
+            TimeOfDay(hour: 8, minute: 0),
+            TimeOfDay(hour: 12, minute: 30),
+            TimeOfDay(hour: 17, minute: 0),
+            TimeOfDay(hour: 20, minute: 0),
+        ]
+    )
+
+    var hasAnyEnabled: Bool {
+        mealReminders || morningLogReminder || endOfDayCheckin
+    }
+
+    func toDictionary() -> [String: Any] {
+        return [
+            "mealReminders": mealReminders,
+            "morningLogReminder": morningLogReminder,
+            "endOfDayCheckin": endOfDayCheckin,
+            "morningReminderTime": morningReminderTime.toDictionary(),
+            "endOfDayReminderTime": endOfDayReminderTime.toDictionary(),
+            "mealReminderTimes": mealReminderTimes.map { $0.toDictionary() },
+            "updatedAt": Date().timeIntervalSince1970,
+        ]
+    }
+
+    /// Builds a preferences object from a Firestore dictionary, falling back
+    /// to `.default` values for any missing fields.
+    static func fromDictionary(_ dict: [String: Any]?) -> MacraNotificationPreferences {
+        var prefs = MacraNotificationPreferences.default
+        guard let dict = dict else { return prefs }
+
+        if let v = dict["mealReminders"] as? Bool { prefs.mealReminders = v }
+        if let v = dict["morningLogReminder"] as? Bool { prefs.morningLogReminder = v }
+        if let v = dict["endOfDayCheckin"] as? Bool { prefs.endOfDayCheckin = v }
+        if let morning = TimeOfDay.fromDictionary(dict["morningReminderTime"] as? [String: Any]) {
+            prefs.morningReminderTime = morning
+        }
+        if let evening = TimeOfDay.fromDictionary(dict["endOfDayReminderTime"] as? [String: Any]) {
+            prefs.endOfDayReminderTime = evening
+        }
+        if let times = dict["mealReminderTimes"] as? [[String: Any]] {
+            let parsed = times.compactMap { TimeOfDay.fromDictionary($0) }
+            if !parsed.isEmpty { prefs.mealReminderTimes = parsed }
+        }
+        return prefs
+    }
+}
+
+/// Email sequence preferences captured during onboarding. Stored alongside push prefs
+/// so the admin can show a single opt-out surface. Welcome email fires once regardless
+/// of the `tips` / `winback` toggles because it's the transactional confirmation.
+struct MacraEmailPreferences: Hashable {
+    var tipsSeries: Bool
+    var inactivityWinback: Bool
+
+    static let `default` = MacraEmailPreferences(tipsSeries: true, inactivityWinback: true)
+
+    static func fromDictionary(_ dict: [String: Any]?) -> MacraEmailPreferences {
+        var prefs = MacraEmailPreferences.default
+        guard let dict = dict else { return prefs }
+        if let v = dict["tipsSeries"] as? Bool { prefs.tipsSeries = v }
+        if let v = dict["inactivityWinback"] as? Bool { prefs.inactivityWinback = v }
+        return prefs
+    }
+
+    func toDictionary() -> [String: Any] {
+        return [
+            "tipsSeries": tipsSeries,
+            "inactivityWinback": inactivityWinback,
+            "updatedAt": Date().timeIntervalSince1970,
+        ]
+    }
+}
+
+struct TimeOfDay: Hashable {
+    var hour: Int
+    var minute: Int
+
+    func toDictionary() -> [String: Any] {
+        return ["hour": hour, "minute": minute]
+    }
+
+    static func fromDictionary(_ dict: [String: Any]?) -> TimeOfDay? {
+        guard let dict = dict,
+              let hour = dict["hour"] as? Int,
+              let minute = dict["minute"] as? Int else { return nil }
+        return TimeOfDay(hour: hour, minute: minute)
     }
 }
 

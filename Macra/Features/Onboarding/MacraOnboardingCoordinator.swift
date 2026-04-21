@@ -167,6 +167,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case prediction
         case planReady
         case features
+        case notificationPreferences
         case commitTrial
     }
 
@@ -223,6 +224,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case .prediction: return true
         case .planReady: return suggestedMealPlan != nil || mealPlanError != nil
         case .features: return true
+        case .notificationPreferences: return true
         case .commitTrial: return !isPurchasing
         }
     }
@@ -353,6 +355,16 @@ final class MacraOnboardingCoordinator: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Called from the notification preferences step once the user confirms.
+    /// Persists prefs to Firestore, installs the on-device schedules, and
+    /// kicks off the Macra welcome email (which is idempotent server-side).
+    func persistNotificationPreferencesAndNotifyWelcome() {
+        let preferences = answers.notificationPreferences
+        UserService.sharedInstance.saveMacraNotificationPreferences(preferences)
+        NotificationService.sharedInstance.syncScheduledNotifications(with: preferences)
+        UserService.sharedInstance.sendMacraWelcomeEmail()
     }
 
     private func saveMacroTargetsFromPrediction(completion: @escaping () -> Void) {
@@ -524,6 +536,8 @@ struct MacraOnboardingFlowView: View {
                 PlanReadyStepView(coordinator: coordinator)
             case .features:
                 FeaturesStepView(coordinator: coordinator)
+            case .notificationPreferences:
+                NotificationPreferencesStepView(coordinator: coordinator)
             case .commitTrial:
                 CommitTrialStepView(coordinator: coordinator)
             }

@@ -44,6 +44,7 @@ struct MealLogDetailView: View {
                     hero
                     timeCard
                     totalsCard
+                    healthBadgesSection
                     ingredientsSection
                     eatAgainButton
                     deleteButton
@@ -423,6 +424,14 @@ struct MealLogDetailView: View {
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.9))
                 .monospacedDigit()
+        }
+    }
+
+    @ViewBuilder
+    private var healthBadgesSection: some View {
+        let badges = MacraHealthBadgeEngine.badges(for: meal)
+        if !badges.isEmpty {
+            MacraFoodJournalHealthBadgesView(badges: badges)
         }
     }
 

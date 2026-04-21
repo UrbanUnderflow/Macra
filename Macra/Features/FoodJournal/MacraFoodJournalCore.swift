@@ -692,13 +692,28 @@ struct MacraFoodJournalDaySummary: Identifiable, Hashable {
     var macroTarget: MacraFoodJournalMacroTarget?
     var insights: [MacraFoodJournalDailyInsight]
     var labelScans: [MacraScannedLabel]
+    var loggedSupplements: [LoggedSupplement] = []
 
-    var totalCalories: Int { meals.reduce(0) { $0 + $1.calories } }
-    var totalProtein: Int { meals.reduce(0) { $0 + $1.protein } }
-    var totalCarbs: Int { meals.reduce(0) { $0 + $1.carbs } }
-    var totalFat: Int { meals.reduce(0) { $0 + $1.fat } }
+    var mealCalories: Int { meals.reduce(0) { $0 + $1.calories } }
+    var mealProtein: Int { meals.reduce(0) { $0 + $1.protein } }
+    var mealCarbs: Int { meals.reduce(0) { $0 + $1.carbs } }
+    var mealFat: Int { meals.reduce(0) { $0 + $1.fat } }
+
+    var supplementCalories: Int { loggedSupplements.reduce(0) { $0 + $1.calories } }
+    var supplementProtein: Int { loggedSupplements.reduce(0) { $0 + $1.protein } }
+    var supplementCarbs: Int { loggedSupplements.reduce(0) { $0 + $1.carbs } }
+    var supplementFat: Int { loggedSupplements.reduce(0) { $0 + $1.fat } }
+
+    var totalCalories: Int { mealCalories + supplementCalories }
+    var totalProtein: Int { mealProtein + supplementProtein }
+    var totalCarbs: Int { mealCarbs + supplementCarbs }
+    var totalFat: Int { mealFat + supplementFat }
+
+    var hasSupplementMacros: Bool {
+        supplementCalories > 0 || supplementProtein > 0 || supplementCarbs > 0 || supplementFat > 0
+    }
     var mealCount: Int { meals.count }
-    var hasNutritionData: Bool { !meals.isEmpty }
+    var hasNutritionData: Bool { !meals.isEmpty || !loggedSupplements.isEmpty }
 }
 
 struct MacraFoodJournalMonthDay: Identifiable, Hashable {
@@ -741,6 +756,7 @@ protocol MacraFoodJournalStoreProviding: AnyObject {
     func noraMessages(on date: Date) -> [MacraNoraMessage]
     func setNoraMessages(_ messages: [MacraNoraMessage], on date: Date)
     func appendNoraMessage(_ message: MacraNoraMessage)
+    func datesWithLoggedMeals() -> Set<Date>
 }
 
 final class MacraFoodJournalStore: ObservableObject, MacraFoodJournalStoreProviding {
@@ -939,6 +955,17 @@ final class MacraFoodJournalStore: ObservableObject, MacraFoodJournalStoreProvid
         objectWillChange.send()
     }
 
+    func datesWithLoggedMeals() -> Set<Date> {
+        let calendar = Calendar.current
+        var result: Set<Date> = []
+        for (_, meals) in mealsByDay where !meals.isEmpty {
+            if let first = meals.first {
+                result.insert(calendar.startOfDay(for: first.createdAt))
+            }
+        }
+        return result
+    }
+
     private func seedPreviewData() {
         let calendar = Calendar.current
         let now = Date()
@@ -1133,6 +1160,8 @@ enum MacraFoodJournalSheet: Identifiable, Hashable {
     case share
     case labelHistory
     case labelDetail(String)
+    case macroBreakdown(MacraFoodJournalMacroType)
+    case netCarbInfo
 
     var id: String {
         switch self {
@@ -1149,6 +1178,8 @@ enum MacraFoodJournalSheet: Identifiable, Hashable {
         case .share: return "share"
         case .labelHistory: return "labelHistory"
         case .labelDetail(let id): return "labelDetail-\(id)"
+        case .macroBreakdown(let macro): return "macroBreakdown-\(macro.rawValue)"
+        case .netCarbInfo: return "netCarbInfo"
         }
     }
 }
@@ -1174,11 +1205,13 @@ final class MacraFoodJournalViewModel: ObservableObject {
     @Published var labelHistoryError: String?
     @Published var isAnalyzingLabel = false
     @Published var labelAnalysisError: String?
+    @Published var loggedSupplementsByDay: [String: [LoggedSupplement]] = [:]
     var shouldReturnHomeAfterMealSave = false
     var onMealSaved: ((MacraFoodJournalMeal) -> Void)?
 
     let store: MacraFoodJournalStore
     private var cancellables: Set<AnyCancellable> = []
+    private var supplementFetchDates: Set<String> = []
 
     init(store: MacraFoodJournalStore = MacraFoodJournalStore(), selectedDate: Date = Date()) {
         self.store = store
@@ -1186,10 +1219,53 @@ final class MacraFoodJournalViewModel: ObservableObject {
         store.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
+        $selectedDate
+            .removeDuplicates { Calendar.current.isDate($0, inSameDayAs: $1) }
+            .sink { [weak self] date in self?.loadLoggedSupplements(for: date) }
+            .store(in: &cancellables)
+        loadLoggedSupplements(for: selectedDate)
     }
 
     var daySummary: MacraFoodJournalDaySummary {
-        store.daySummary(for: selectedDate)
+        var summary = store.daySummary(for: selectedDate)
+        summary.loggedSupplements = loggedSupplementsByDay[selectedDate.macraFoodJournalDayKey] ?? []
+        return summary
+    }
+
+    var loggedSupplementsForSelectedDay: [LoggedSupplement] {
+        loggedSupplementsByDay[selectedDate.macraFoodJournalDayKey] ?? []
+    }
+
+    func loadLoggedSupplements(for date: Date, force: Bool = false) {
+        let key = date.macraFoodJournalDayKey
+        if !force, supplementFetchDates.contains(key) { return }
+        supplementFetchDates.insert(key)
+        SupplementService.sharedInstance.getLoggedSupplements(byDate: date) { [weak self] result in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let supplements):
+                    self.loggedSupplementsByDay[key] = supplements
+                case .failure:
+                    // Keep whatever's already cached. A failure shouldn't wipe the
+                    // rollup; the Supps tab surfaces the real error state.
+                    if self.loggedSupplementsByDay[key] == nil {
+                        self.loggedSupplementsByDay[key] = []
+                    }
+                }
+            }
+        }
+    }
+
+    func refreshLoggedSupplementsForSelectedDay() {
+        loadLoggedSupplements(for: selectedDate, force: true)
+    }
+
+    var loggingStats: MacraFoodJournalLoggingStats {
+        MacraFoodJournalLoggingStats(
+            loggedDates: store.datesWithLoggedMeals(),
+            referenceDate: Date()
+        )
     }
 
     var monthDays: [MacraFoodJournalMonthDay] {

@@ -266,6 +266,78 @@ class UserService: ObservableObject {
         updateRootUserPatch(updates, completion: completion)
     }
 
+    /// Persists Macra push notification preferences to the root user document.
+    /// Server-side scheduled functions (admin notification sequences) read
+    /// `macraNotificationPreferences` to decide whether to include this user.
+    func saveMacraNotificationPreferences(_ preferences: MacraNotificationPreferences,
+                                          completion: ((Error?) -> Void)? = nil) {
+        updateMacraOwnedFields([
+            "macraNotificationPreferences": preferences.toDictionary(),
+        ], completion: completion)
+    }
+
+    /// Fetches Macra push + email preferences from the user doc. Returns
+    /// default values if missing so callers can drive UI immediately.
+    func loadMacraPreferences(completion: @escaping (MacraNotificationPreferences, MacraEmailPreferences) -> Void) {
+        guard let userId = Auth.auth().currentUser?.uid else {
+            completion(.default, .default)
+            return
+        }
+
+        db.collection("users").document(userId).getDocument { snapshot, _ in
+            let data = snapshot?.data() ?? [:]
+            let push = MacraNotificationPreferences.fromDictionary(data["macraNotificationPreferences"] as? [String: Any])
+            let email = MacraEmailPreferences.fromDictionary(data["macraEmailPreferences"] as? [String: Any])
+            DispatchQueue.main.async {
+                completion(push, email)
+            }
+        }
+    }
+
+    /// Persists Macra email preferences (tips series, inactivity winback) alongside the push prefs.
+    func saveMacraEmailPreferences(_ preferences: MacraEmailPreferences,
+                                   completion: ((Error?) -> Void)? = nil) {
+        updateMacraOwnedFields([
+            "macraEmailPreferences": preferences.toDictionary(),
+        ], completion: completion)
+    }
+
+    /// Fires the Macra welcome email via the QuickLifts-Web netlify function.
+    /// Server-side idempotency (`macraWelcomeEmailSentAt` on the user doc)
+    /// guarantees we don't spam the user if this is called more than once.
+    func sendMacraWelcomeEmail() {
+        guard let user = Auth.auth().currentUser,
+              let email = user.email, !email.isEmpty else { return }
+
+        let userId = user.uid
+        let firstName = user.displayName?
+            .split(separator: " ")
+            .first
+            .map(String.init) ?? ""
+
+        let base = ConfigManager.shared.getWebsiteBaseURL()
+        guard let url = URL(string: "\(base)/.netlify/functions/send-macra-welcome-email") else { return }
+
+        let body: [String: Any] = [
+            "userId": userId,
+            "toEmail": email,
+            "firstName": firstName,
+        ]
+        guard let payload = try? JSONSerialization.data(withJSONObject: body) else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = payload
+        request.timeoutInterval = 20
+
+        URLSession.shared.dataTask(with: request) { _, _, error in
+            if let error = error {
+                print("sendMacraWelcomeEmail error: \(error.localizedDescription)")
+            }
+        }.resume()
+    }
+
     private func updateRootUserPatch(_ fields: [String: Any], completion: ((Error?) -> Void)? = nil) {
         guard let userId = Auth.auth().currentUser?.uid else {
             completion?(nil)
