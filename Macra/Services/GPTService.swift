@@ -214,31 +214,13 @@ class GPTService {
     }
 
     private static func parseMealAnalysisJSON(_ raw: String) throws -> MealAnalysis {
-        // GPT occasionally wraps JSON in ```json fences or prose — extract the
-        // outermost {...} block before decoding.
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard
-            let start = trimmed.firstIndex(of: "{"),
-            let end = trimmed.lastIndex(of: "}"),
-            start <= end
-        else {
-            throw MealAnalysisError.parsingFailed("no JSON object found")
-        }
-
-        let jsonSlice = String(trimmed[start...end])
-        guard let data = jsonSlice.data(using: .utf8) else {
-            throw MealAnalysisError.parsingFailed("invalid UTF-8")
-        }
-
-        let object: Any
+        let dict: [String: Any]
         do {
-            object = try JSONSerialization.jsonObject(with: data, options: [])
+            dict = try Self.jsonObjectDictionary(fromOpenAIContent: raw)
+        } catch let error as JSONContentParseError {
+            throw MealAnalysisError.parsingFailed(error.detail)
         } catch {
             throw MealAnalysisError.parsingFailed("JSON deserialization failed: \(error.localizedDescription)")
-        }
-
-        guard let dict = object as? [String: Any] else {
-            throw MealAnalysisError.parsingFailed("root is not an object")
         }
 
         let name = (dict["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -336,6 +318,12 @@ class GPTService {
             let rationale: String
         }
 
+        struct ScopedMacros {
+            let label: String
+            let days: [String]
+            let macros: Macros
+        }
+
         struct PlanItem {
             let name: String
             let quantity: String
@@ -358,6 +346,7 @@ class GPTService {
 
         let summary: String
         let macros: Macros
+        let scopedMacros: [ScopedMacros]
         let planName: String
         let meals: [PlanMeal]
     }
@@ -423,6 +412,19 @@ class GPTService {
             "fat": int,
             "rationale": "one-sentence why these numbers (under 140 chars)"
           },
+          "scopedMacros": [
+            {
+              "label": "Fri & Sat substitution",
+              "days": ["fri", "sat"],
+              "macros": {
+                "calories": int,
+                "protein": int,
+                "carbs": int,
+                "fat": int,
+                "rationale": "one-sentence why this day differs (under 140 chars)"
+              }
+            }
+          ],
           "mealPlan": {
             "name": "short plan name (under 40 chars)",
             "meals": [
@@ -446,6 +448,10 @@ class GPTService {
 
         Rules:
         - Use "Meal 1", "Meal 2" labels; NEVER breakfast/lunch/dinner/snack.
+        - If the plan has explicit day-specific substitutions or variants (for example "Fri & Sat, Sub", "Monday/Thursday high carb", "rest day swap"), calculate `macros` from the default/all-days plan and add `scopedMacros` entries for the affected weekdays.
+        - `scopedMacros[].macros` must be the full-day total for that scoped day after applying substitutions, not the macro delta.
+        - Use weekday abbreviations only in `scopedMacros[].days`: "mon", "tue", "wed", "thu", "fri", "sat", "sun". Omit variants without explicit weekdays from `scopedMacros`.
+        - If there are no explicit weekday variants, return `scopedMacros: []`.
         - Use realistic whole-food ingredients; no novelty items.
         - Match food choices to the user's phase; do not default to general wellness foods when the user is in prep, peak week, or post-show reverse.
         - All numeric fields are integers (round).
@@ -493,6 +499,7 @@ class GPTService {
                     print("[Macra][Nora.analyzeMacros] ✅ \(analysis.macros.calories)kcal · plan:'\(analysis.planName)' meals:\(analysis.meals.count)")
                     completion(.success(analysis))
                 } catch {
+                    print("[Macra][Nora.analyzeMacros] raw preview: \(Self.debugPreview(raw))")
                     print("[Macra][Nora.analyzeMacros] ❌ parse error: \(error.localizedDescription)")
                     completion(.failure(error))
                 }
@@ -504,29 +511,20 @@ class GPTService {
         }
     }
 
-    private static func parseNoraAnalysisJSON(_ raw: String) throws -> NoraMacroAnalysis {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard
-            let start = trimmed.firstIndex(of: "{"),
-            let end = trimmed.lastIndex(of: "}"),
-            start <= end
-        else {
-            throw NoraMacroAnalysisError.parsingFailed("no JSON object found")
-        }
-        let jsonSlice = String(trimmed[start...end])
-        guard let data = jsonSlice.data(using: .utf8) else {
-            throw NoraMacroAnalysisError.parsingFailed("invalid UTF-8")
-        }
-
-        let object: Any
+    static func parseNoraAnalysisJSON(_ raw: String) throws -> NoraMacroAnalysis {
+        let dict: [String: Any]
         do {
-            object = try JSONSerialization.jsonObject(with: data, options: [])
+            dict = try Self.jsonObjectDictionary(fromOpenAIContent: raw)
+        } catch let error as JSONContentParseError {
+            if let fallback = Self.fallbackNoraMacroAnalysis(from: raw) {
+                return fallback
+            }
+            throw NoraMacroAnalysisError.parsingFailed(error.detail)
         } catch {
+            if let fallback = Self.fallbackNoraMacroAnalysis(from: raw) {
+                return fallback
+            }
             throw NoraMacroAnalysisError.parsingFailed("JSON deserialize failed: \(error.localizedDescription)")
-        }
-
-        guard let dict = object as? [String: Any] else {
-            throw NoraMacroAnalysisError.parsingFailed("root is not an object")
         }
 
         let summary = (dict["summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -541,6 +539,7 @@ class GPTService {
             fat: intValue(macrosDict["fat"]),
             rationale: (macrosDict["rationale"] as? String) ?? ""
         )
+        let scopedMacros = parseScopedMacros(from: dict)
 
         let planDict = dict["mealPlan"] as? [String: Any] ?? [:]
         let planName = ((planDict["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -573,9 +572,530 @@ class GPTService {
         return NoraMacroAnalysis(
             summary: summary,
             macros: macros,
+            scopedMacros: scopedMacros,
             planName: planName,
             meals: meals
         )
+    }
+
+    private enum JSONContentParseError: Error {
+        case noJSONObject
+        case invalidUTF8
+        case deserializeFailed(String)
+        case rootIsNotObject
+        case nestingLimit
+
+        var detail: String {
+            switch self {
+            case .noJSONObject:
+                return "no JSON object found"
+            case .invalidUTF8:
+                return "invalid UTF-8"
+            case .deserializeFailed(let detail):
+                return "JSON deserialize failed: \(detail)"
+            case .rootIsNotObject:
+                return "root is not an object"
+            case .nestingLimit:
+                return "JSON response was nested too deeply"
+            }
+        }
+    }
+
+    /// Extracts the JSON object returned by the OpenAI bridge. The model is
+    /// asked for a bare object, but in practice responses can be wrapped in a
+    /// markdown fence, a full chat-completion envelope, or even a JSON string
+    /// containing an escaped object. This keeps those transport quirks out of
+    /// the feature parsers.
+    private static func jsonObjectDictionary(fromOpenAIContent raw: String, depth: Int = 0) throws -> [String: Any] {
+        guard depth < 4 else {
+            throw JSONContentParseError.nestingLimit
+        }
+
+        var lastError: JSONContentParseError?
+        for candidate in jsonObjectCandidates(from: raw) {
+            do {
+                let value = try jsonValue(from: candidate)
+                if let dict = try normalizedJSONObject(from: value, depth: depth) {
+                    return dict
+                }
+                lastError = .rootIsNotObject
+            } catch let error as JSONContentParseError {
+                lastError = error
+            } catch {
+                lastError = .deserializeFailed(error.localizedDescription)
+            }
+        }
+
+        throw lastError ?? JSONContentParseError.noJSONObject
+    }
+
+    private static func normalizedJSONObject(from value: Any, depth: Int) throws -> [String: Any]? {
+        if let dict = value as? [String: Any] {
+            if let nestedContent = openAIMessageContent(from: dict),
+               let nestedDict = try? jsonObjectDictionary(fromOpenAIContent: nestedContent, depth: depth + 1) {
+                return nestedDict
+            }
+            return dict
+        }
+
+        if let string = value as? String {
+            return try jsonObjectDictionary(fromOpenAIContent: string, depth: depth + 1)
+        }
+
+        return nil
+    }
+
+    private static func jsonValue(from candidate: String) throws -> Any {
+        var lastError: JSONContentParseError?
+
+        for repairedCandidate in repairedJSONCandidates(from: candidate) {
+            guard let data = repairedCandidate.data(using: .utf8) else {
+                throw JSONContentParseError.invalidUTF8
+            }
+
+            do {
+                return try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+            } catch {
+                lastError = .deserializeFailed(error.localizedDescription)
+            }
+
+            do {
+                return try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed, .json5Allowed])
+            } catch {
+                lastError = .deserializeFailed(error.localizedDescription)
+            }
+        }
+
+        throw lastError ?? JSONContentParseError.noJSONObject
+    }
+
+    private static func openAIMessageContent(from dict: [String: Any]) -> String? {
+        if let choices = dict["choices"] as? [[String: Any]],
+           let firstChoice = choices.first,
+           let message = firstChoice["message"] as? [String: Any],
+           let content = message["content"] as? String,
+           !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return content
+        }
+
+        if let message = dict["message"] as? [String: Any],
+           let content = message["content"] as? String,
+           !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return content
+        }
+
+        return nil
+    }
+
+    private static func jsonObjectCandidates(from raw: String) -> [String] {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        var candidates = [trimmed]
+        candidates.append(contentsOf: fencedJSONCandidates(from: trimmed))
+        candidates.append(contentsOf: balancedJSONObjectSubstrings(in: trimmed))
+
+        var seen = Set<String>()
+        return candidates.filter { candidate in
+            let normalized = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalized.isEmpty, !seen.contains(normalized) else { return false }
+            seen.insert(normalized)
+            return true
+        }
+    }
+
+    private static func fencedJSONCandidates(from text: String) -> [String] {
+        var candidates: [String] = []
+        var buffer: [String] = []
+        var isInsideFence = false
+
+        for line in text.components(separatedBy: .newlines) {
+            if line.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("```") {
+                if isInsideFence {
+                    let candidate = buffer.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !candidate.isEmpty {
+                        candidates.append(candidate)
+                    }
+                    buffer.removeAll()
+                    isInsideFence = false
+                } else {
+                    isInsideFence = true
+                }
+            } else if isInsideFence {
+                buffer.append(line)
+            }
+        }
+
+        return candidates
+    }
+
+    private static func balancedJSONObjectSubstrings(in text: String) -> [String] {
+        var substrings: [String] = []
+        var objectStart: String.Index?
+        var depth = 0
+        var isInsideString = false
+        var isEscaped = false
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let character = text[index]
+
+            if isInsideString {
+                if isEscaped {
+                    isEscaped = false
+                } else if character == "\\" {
+                    isEscaped = true
+                } else if character == "\"" {
+                    isInsideString = false
+                }
+            } else {
+                if character == "\"" {
+                    isInsideString = true
+                } else if character == "{" {
+                    if depth == 0 {
+                        objectStart = index
+                    }
+                    depth += 1
+                } else if character == "}", depth > 0 {
+                    depth -= 1
+                    if depth == 0, let start = objectStart {
+                        substrings.append(String(text[start...index]))
+                        objectStart = nil
+                    }
+                }
+            }
+
+            index = text.index(after: index)
+        }
+
+        return substrings
+    }
+
+    private static func repairedJSONCandidates(from candidate: String) -> [String] {
+        let controlEscaped = escapingControlCharactersInsideStrings(candidate)
+        let trailingCommaRemoved = removingTrailingCommas(candidate)
+        let fullyRepaired = removingTrailingCommas(controlEscaped)
+
+        var seen = Set<String>()
+        return [candidate, controlEscaped, trailingCommaRemoved, fullyRepaired].filter { value in
+            guard !seen.contains(value) else { return false }
+            seen.insert(value)
+            return true
+        }
+    }
+
+    private static func escapingControlCharactersInsideStrings(_ text: String) -> String {
+        var output = ""
+        output.reserveCapacity(text.count)
+
+        var isInsideString = false
+        var isEscaped = false
+
+        for scalar in text.unicodeScalars {
+            if isInsideString {
+                if isEscaped {
+                    output.unicodeScalars.append(scalar)
+                    isEscaped = false
+                    continue
+                }
+
+                if scalar == "\\" {
+                    output.unicodeScalars.append(scalar)
+                    isEscaped = true
+                    continue
+                }
+
+                if scalar == "\"" {
+                    output.unicodeScalars.append(scalar)
+                    isInsideString = false
+                    continue
+                }
+
+                switch scalar.value {
+                case 0x08:
+                    output += "\\b"
+                case 0x09:
+                    output += "\\t"
+                case 0x0A:
+                    output += "\\n"
+                case 0x0C:
+                    output += "\\f"
+                case 0x0D:
+                    output += "\\r"
+                case 0x00..<0x20:
+                    output += String(format: "\\u%04X", scalar.value)
+                default:
+                    output.unicodeScalars.append(scalar)
+                }
+            } else {
+                output.unicodeScalars.append(scalar)
+                if scalar == "\"" {
+                    isInsideString = true
+                }
+            }
+        }
+
+        return output
+    }
+
+    private static func removingTrailingCommas(_ text: String) -> String {
+        let scalars = Array(text.unicodeScalars)
+        var output = ""
+        output.reserveCapacity(text.count)
+
+        var isInsideString = false
+        var isEscaped = false
+        var index = 0
+
+        while index < scalars.count {
+            let scalar = scalars[index]
+
+            if isInsideString {
+                output.unicodeScalars.append(scalar)
+                if isEscaped {
+                    isEscaped = false
+                } else if scalar == "\\" {
+                    isEscaped = true
+                } else if scalar == "\"" {
+                    isInsideString = false
+                }
+                index += 1
+                continue
+            }
+
+            if scalar == "\"" {
+                isInsideString = true
+                output.unicodeScalars.append(scalar)
+                index += 1
+                continue
+            }
+
+            if scalar == "," {
+                var lookahead = index + 1
+                while lookahead < scalars.count,
+                      CharacterSet.whitespacesAndNewlines.contains(scalars[lookahead]) {
+                    lookahead += 1
+                }
+
+                if lookahead < scalars.count,
+                   scalars[lookahead] == "}" || scalars[lookahead] == "]" {
+                    index += 1
+                    continue
+                }
+            }
+
+            output.unicodeScalars.append(scalar)
+            index += 1
+        }
+
+        return output
+    }
+
+    private static func fallbackNoraMacroAnalysis(from raw: String) -> NoraMacroAnalysis? {
+        for candidate in jsonObjectCandidates(from: raw) {
+            guard let macrosText = jsonObjectString(forKey: "macros", in: candidate) else {
+                continue
+            }
+
+            let macrosDict = (try? jsonObjectDictionary(fromOpenAIContent: macrosText)) ?? [:]
+            let calories = intValue(macrosDict["calories"]) > 0
+                ? intValue(macrosDict["calories"])
+                : firstIntValue(forKey: "calories", in: macrosText)
+            let protein = intValue(macrosDict["protein"]) > 0
+                ? intValue(macrosDict["protein"])
+                : firstIntValue(forKey: "protein", in: macrosText)
+            let carbs = intValue(macrosDict["carbs"]) > 0
+                ? intValue(macrosDict["carbs"])
+                : firstIntValue(forKey: "carbs", in: macrosText)
+            let fat = intValue(macrosDict["fat"]) > 0
+                ? intValue(macrosDict["fat"])
+                : firstIntValue(forKey: "fat", in: macrosText)
+
+            guard calories > 0 else { continue }
+
+            let rationale = (macrosDict["rationale"] as? String)
+                ?? firstStringValue(forKey: "rationale", in: macrosText)
+                ?? ""
+            let summary = firstStringValue(forKey: "summary", in: candidate)
+                ?? "Nora generated a macro target."
+            let planName = jsonObjectString(forKey: "mealPlan", in: candidate)
+                .flatMap { firstStringValue(forKey: "name", in: $0) }
+                ?? "Nora's plan"
+
+            print("[Macra][Nora.analyzeMacros] ⚠️ salvaged macro target from malformed JSON; meal plan omitted")
+            return NoraMacroAnalysis(
+                summary: summary,
+                macros: NoraMacroAnalysis.Macros(
+                    calories: calories,
+                    protein: protein,
+                    carbs: carbs,
+                    fat: fat,
+                    rationale: rationale
+                ),
+                scopedMacros: [],
+                planName: planName,
+                meals: []
+            )
+        }
+
+        return nil
+    }
+
+    private static func jsonObjectString(forKey key: String, in text: String) -> String? {
+        guard let keyRange = text.range(of: "\"\(key)\"") else { return nil }
+        guard let colonRange = text[keyRange.upperBound...].range(of: ":") else { return nil }
+
+        var index = colonRange.upperBound
+        while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+
+        guard index < text.endIndex, text[index] == "{" else { return nil }
+
+        var depth = 0
+        var isInsideString = false
+        var isEscaped = false
+        var cursor = index
+
+        while cursor < text.endIndex {
+            let character = text[cursor]
+
+            if isInsideString {
+                if isEscaped {
+                    isEscaped = false
+                } else if character == "\\" {
+                    isEscaped = true
+                } else if character == "\"" {
+                    isInsideString = false
+                }
+            } else {
+                if character == "\"" {
+                    isInsideString = true
+                } else if character == "{" {
+                    depth += 1
+                } else if character == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        return String(text[index...cursor])
+                    }
+                }
+            }
+
+            cursor = text.index(after: cursor)
+        }
+
+        return nil
+    }
+
+    private static func firstIntValue(forKey key: String, in text: String) -> Int {
+        let pattern = #""\#(key)"\s*:\s*"?(-?\d[\d,]*(?:\.\d+)?)"?"#
+        guard let match = firstMatch(pattern: pattern, in: text),
+              let range = Range(match.range(at: 1), in: text) else {
+            return 0
+        }
+
+        let number = String(text[range]).replacingOccurrences(of: ",", with: "")
+        if let int = Int(number) { return int }
+        if let double = Double(number) { return Int(double.rounded()) }
+        return 0
+    }
+
+    private static func firstStringValue(forKey key: String, in text: String) -> String? {
+        let pattern = #""\#(key)"\s*:\s*"((?:\\.|[^"\\])*)"#
+        guard let match = firstMatch(pattern: pattern, in: text),
+              let range = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+
+        let escapedValue = String(text[range])
+        let quotedValue = "\"\(escapedValue)\""
+        if let data = quotedValue.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(String.self, from: data) {
+            return decoded.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return escapedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func firstMatch(pattern: String, in text: String) -> NSTextCheckingResult? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.firstMatch(in: text, range: range)
+    }
+
+    private static func debugPreview(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .prefix(900)
+            .description
+    }
+
+    private static func parseScopedMacros(from dict: [String: Any]) -> [NoraMacroAnalysis.ScopedMacros] {
+        let rawEntries = dict["scopedMacros"] as? [[String: Any]]
+            ?? dict["dayMacros"] as? [[String: Any]]
+            ?? dict["macroVariants"] as? [[String: Any]]
+            ?? []
+
+        return rawEntries.compactMap { entry in
+            let rawDays = (entry["days"] as? [Any] ?? entry["dayOfWeek"] as? [Any] ?? [])
+                .compactMap { $0 as? String }
+            let singleDay = (entry["day"] as? String) ?? (entry["dayOfWeek"] as? String)
+            let days = (rawDays + [singleDay].compactMap { $0 })
+                .compactMap(normalizedMacroDay)
+                .removingDuplicates()
+
+            guard !days.isEmpty else { return nil }
+
+            let macrosDict = entry["macros"] as? [String: Any] ?? entry
+            let macros = NoraMacroAnalysis.Macros(
+                calories: intValue(macrosDict["calories"]),
+                protein: intValue(macrosDict["protein"]),
+                carbs: intValue(macrosDict["carbs"]),
+                fat: intValue(macrosDict["fat"]),
+                rationale: (macrosDict["rationale"] as? String)
+                    ?? (entry["rationale"] as? String)
+                    ?? ""
+            )
+
+            guard macros.calories > 0 else { return nil }
+
+            let label = ((entry["label"] as? String) ?? days.map { $0.uppercased() }.joined(separator: ", "))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            return NoraMacroAnalysis.ScopedMacros(
+                label: label.isEmpty ? days.map { $0.uppercased() }.joined(separator: ", ") : label,
+                days: days,
+                macros: macros
+            )
+        }
+    }
+
+    private static func normalizedMacroDay(_ rawValue: String) -> String? {
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "mon", "monday":
+            return "mon"
+        case "tue", "tues", "tuesday":
+            return "tue"
+        case "wed", "wednesday":
+            return "wed"
+        case "thu", "thur", "thurs", "thursday":
+            return "thu"
+        case "fri", "friday":
+            return "fri"
+        case "sat", "saturday":
+            return "sat"
+        case "sun", "sunday":
+            return "sun"
+        default:
+            return nil
+        }
+    }
+}
+
+private extension Array where Element: Hashable {
+    func removingDuplicates() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
     }
 }
 

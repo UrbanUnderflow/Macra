@@ -1748,6 +1748,11 @@ final class MacraFoodJournalViewModel: ObservableObject {
 
     FLAG: Artificial sweeteners, artificial colors, BHA, BHT, inflammatory oils, HFCS, MSG, sodium nitrite/nitrate.
 
+    SUGAR ALCOHOLS (polyols) — IMPORTANT:
+    - Populate `sugarAlcohols` whenever the panel lists "Sugar Alcohols", "Sugar Alcohol", "Polyols", or names a specific polyol (erythritol, xylitol, maltitol, sorbitol, isomalt, lactitol, mannitol, allulose, monk fruit blends).
+    - If the ingredients list contains erythritol / xylitol / monk-fruit blends (e.g. Lakanto) or the front-of-pack says "Sugar Free" / "No Sugar Added" / "Keto" AND the panel shows meaningful total carbs with near-zero sugars, infer the bulk of those carbs as sugar alcohols and populate `sugarAlcohols` with your best estimate in grams.
+    - If truly zero or not applicable (plain meats, oils, produce), return null — never invent.
+
     RETURN EXACTLY THIS JSON STRUCTURE:
     {
       "productTitle": "Exact product name as printed or null",
@@ -1760,6 +1765,7 @@ final class MacraFoodJournalViewModel: ObservableObject {
       "servingSize": "string or null",
       "sugars": number_or_null,
       "dietaryFiber": number_or_null,
+      "sugarAlcohols": integer_grams_or_null,
       "sodium": number_or_null,
       "summary": "Brief 1-2 sentence summary",
       "detailedExplanation": "3-5 sentence explanation referencing specific ingredients and values",

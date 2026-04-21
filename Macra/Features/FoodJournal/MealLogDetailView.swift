@@ -27,6 +27,16 @@ struct MealLogDetailView: View {
     @State private var isUploadingImage = false
     @State private var imageUploadError: String?
 
+    @State private var showNetCarbsEditor = false
+    @State private var draftFiberText: String = ""
+    @State private var draftSugarAlcoholsText: String = ""
+    @State private var isSavingNetCarbs = false
+    @State private var netCarbsErrorMessage: String?
+
+    @State private var isReanalyzing = false
+    @State private var reanalysisStatusMessage: String?
+    @State private var reanalysisErrorMessage: String?
+
     init(meal: Meal, onUpdated: @escaping (Meal) -> Void, onDeleted: (() -> Void)? = nil) {
         self.logDate = meal.createdAt
         self.onUpdated = onUpdated
@@ -87,6 +97,11 @@ struct MealLogDetailView: View {
         .sheet(isPresented: $showEatAgainTimePicker) {
             eatAgainSheet
                 .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showNetCarbsEditor) {
+            netCarbsEditorSheet
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .alert("Delete this meal?", isPresented: $showDeleteConfirm) {
@@ -360,6 +375,8 @@ struct MealLogDetailView: View {
             if meal.hasNetCarbAdjustment {
                 netCarbsBreakdown
             }
+
+            reanalyzeRow
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -377,6 +394,85 @@ struct MealLogDetailView: View {
         )
     }
 
+    /// Always-on "Reanalyze" escape hatch. Re-runs the GPT meal analyzer
+    /// against the meal's name + caption + ingredients so any prompt or
+    /// parser improvement we ship (sugar-alcohol detection, fiber, ingredient
+    /// cleanup, etc.) retroactively applies to already-logged meals.
+    /// Long-press falls through to a manual fiber / sugar-alcohols editor.
+    private var reanalyzeRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: performReanalyze) {
+                HStack(spacing: 10) {
+                    if isReanalyzing {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(Color.primaryGreen)
+                            .scaleEffect(0.75)
+                    } else {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(Color.primaryGreen)
+                    }
+                    Text(isReanalyzing ? "Reanalyzing…" : "Reanalyze")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.88))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Color.primaryGreen.opacity(0.75))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.primaryGreen.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.primaryGreen.opacity(0.22), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(isReanalyzing)
+            .contextMenu {
+                Button {
+                    beginEditingNetCarbs()
+                } label: {
+                    Label("Adjust manually", systemImage: "pencil")
+                }
+            }
+
+            HStack(spacing: 10) {
+                Text("Pulls any recent macro, fiber, or sugar-alcohol improvements into this meal.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button {
+                    beginEditingNetCarbs()
+                } label: {
+                    Text("Edit manually")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Color.primaryGreen.opacity(0.85))
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let status = reanalysisStatusMessage {
+                Text(status)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color.primaryGreen.opacity(0.85))
+                    .transition(.opacity)
+            }
+            if let error = reanalysisErrorMessage {
+                Text(error)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color(hex: "EF4444"))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     private var netCarbsBreakdown: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -384,6 +480,14 @@ struct MealLogDetailView: View {
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .tracking(1.1)
                     .foregroundColor(Color.primaryGreen.opacity(0.9))
+                Button {
+                    beginEditingNetCarbs()
+                } label: {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color.primaryGreen.opacity(0.85))
+                }
+                .buttonStyle(.plain)
                 Spacer()
                 Text("\(meal.netCarbs)g")
                     .font(.system(size: 22, weight: .heavy, design: .rounded))
@@ -757,6 +861,320 @@ struct MealLogDetailView: View {
                     isUploadingImage = false
                     pickedImage = nil
                     imageUploadError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    // MARK: - Reanalyze
+
+    private func performReanalyze() {
+        guard !isReanalyzing else { return }
+        isReanalyzing = true
+        reanalysisErrorMessage = nil
+        reanalysisStatusMessage = nil
+
+        let title = meal.name
+        let description: String = {
+            let caption = meal.caption.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !caption.isEmpty { return caption }
+            if let detailed = meal.detailedIngredients, !detailed.isEmpty {
+                return detailed.map { "\($0.quantity) \($0.name)".trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: ", ")
+            }
+            if !meal.ingredients.isEmpty {
+                return meal.ingredients.joined(separator: ", ")
+            }
+            return meal.name
+        }()
+
+        print("[Macra][MealLogDetailView.reanalyze] ▶️ name:'\(title)' descLen:\(description.count)")
+
+        GPTService.sharedInstance.analyzeMealNote(title: title, description: description) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let analysis):
+                    applyReanalysis(analysis)
+                case .failure(let error):
+                    isReanalyzing = false
+                    reanalysisErrorMessage = error.localizedDescription
+                    print("[Macra][MealLogDetailView.reanalyze] ❌ \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func applyReanalysis(_ analysis: GPTService.MealAnalysis) {
+        var updated = meal
+        updated.calories = analysis.calories
+        updated.protein = analysis.protein
+        updated.carbs = analysis.carbs
+        updated.fat = analysis.fat
+        updated.fiber = analysis.fiber
+        updated.sugarAlcohols = analysis.sugarAlcohols
+
+        let mappedDetailed: [MealIngredientDetail] = analysis.ingredients.map {
+            MealIngredientDetail(
+                name: $0.name,
+                quantity: $0.quantity,
+                calories: $0.calories,
+                protein: $0.protein,
+                carbs: $0.carbs,
+                fat: $0.fat,
+                fiber: $0.fiber,
+                sugarAlcohols: $0.sugarAlcohols
+            )
+        }
+        if !mappedDetailed.isEmpty {
+            updated.detailedIngredients = mappedDetailed
+            updated.ingredients = mappedDetailed.map(\.name)
+        }
+        updated.updatedAt = Date()
+
+        let userId = UserService.sharedInstance.user?.id ?? Auth.auth().currentUser?.uid
+        MealService.sharedInstance.updateMeal(updated, for: meal.createdAt, userId: userId) { result in
+            DispatchQueue.main.async {
+                isReanalyzing = false
+                switch result {
+                case .success(let saved):
+                    let oldNet = meal.netCarbs
+                    meal = saved
+                    onUpdated(saved)
+                    let newNet = saved.netCarbs
+                    if newNet != oldNet {
+                        reanalysisStatusMessage = "Updated — net carbs \(oldNet)g → \(newNet)g."
+                    } else {
+                        reanalysisStatusMessage = "No changes — this meal was already up to date."
+                    }
+                    print("[Macra][MealLogDetailView.reanalyze] ✅ netCarbs \(oldNet)g → \(newNet)g fiber:\(saved.fiber ?? 0) sugarAlcohols:\(saved.sugarAlcohols ?? 0)")
+                case .failure(let error):
+                    reanalysisErrorMessage = error.localizedDescription
+                    print("[Macra][MealLogDetailView.reanalyze] ❌ save failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Net carbs editor
+
+    private func beginEditingNetCarbs() {
+        draftFiberText = meal.fiber.map(String.init) ?? ""
+        draftSugarAlcoholsText = meal.sugarAlcohols.map(String.init) ?? ""
+        netCarbsErrorMessage = nil
+        showNetCarbsEditor = true
+    }
+
+    private var parsedDraftFiber: Int? {
+        let trimmed = draftFiberText.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return nil }
+        return Int(trimmed)
+    }
+
+    private var parsedDraftSugarAlcohols: Int? {
+        let trimmed = draftSugarAlcoholsText.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return nil }
+        return Int(trimmed)
+    }
+
+    private var previewNetCarbs: Int {
+        max(0, meal.carbs - (parsedDraftFiber ?? 0) - (parsedDraftSugarAlcohols ?? 0))
+    }
+
+    private var netCarbsEditorSheet: some View {
+        ZStack {
+            background
+
+            VStack(spacing: 0) {
+                HStack {
+                    Button("Cancel") { showNetCarbsEditor = false }
+                        .foregroundColor(.white.opacity(0.7))
+                    Spacer()
+                    Text("Net carbs")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                    Spacer()
+                    Button(action: performSaveNetCarbs) {
+                        if isSavingNetCarbs {
+                            ProgressView().tint(Color.primaryGreen)
+                        } else {
+                            Text("Save")
+                                .font(.system(size: 15, weight: .bold, design: .rounded))
+                                .foregroundColor(Color.primaryGreen)
+                        }
+                    }
+                    .disabled(isSavingNetCarbs)
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 18)
+                .padding(.bottom, 10)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        editorIntroBlock
+                        editorFieldRow(
+                            label: "Fiber",
+                            symbol: "leaf.fill",
+                            tint: Color.primaryGreen,
+                            text: $draftFiberText,
+                            hint: "Grams of dietary fiber (from the nutrition panel)."
+                        )
+                        editorFieldRow(
+                            label: "Sugar alcohols",
+                            symbol: "sparkles",
+                            tint: Color(hex: "8B5CF6"),
+                            text: $draftSugarAlcoholsText,
+                            hint: "Grams of polyols — erythritol, xylitol, maltitol, allulose, monk-fruit blends (e.g. Lakanto)."
+                        )
+                        editorPreviewCard
+                        if let message = netCarbsErrorMessage {
+                            Text(message)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(Color(hex: "EF4444"))
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 10)
+                    .padding(.bottom, 32)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var editorIntroBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Adjust \(meal.name.isEmpty ? "this meal's" : "“\(meal.name)”'s") net carbs")
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+            Text("Total carbs stay at \(meal.carbs)g. We subtract fiber and sugar alcohols to get net — the portion that actually affects blood sugar.")
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.65))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func editorFieldRow(label: String, symbol: String, tint: Color, text: Binding<String>, hint: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(tint)
+                Text(label.uppercased())
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+
+            HStack(spacing: 8) {
+                TextField("0", text: text)
+                    .keyboardType(.numberPad)
+                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white)
+                    .monospacedDigit()
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.05))
+                    .cornerRadius(10)
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tint.opacity(0.25), lineWidth: 1))
+                Text("g")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+            }
+
+            Text(hint)
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.5))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private var editorPreviewCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("PREVIEW")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .tracking(1.1)
+                .foregroundColor(Color.primaryGreen.opacity(0.9))
+
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(previewNetCarbs)g")
+                    .font(.system(size: 36, weight: .heavy, design: .rounded))
+                    .foregroundColor(Color.primaryGreen)
+                    .monospacedDigit()
+                Text("net carbs")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.55))
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                netCarbsLine(label: "Total carbs", value: meal.carbs, sign: "")
+                if let fiber = parsedDraftFiber, fiber > 0 {
+                    netCarbsLine(label: "Fiber", value: fiber, sign: "−")
+                }
+                if let alcohols = parsedDraftSugarAlcohols, alcohols > 0 {
+                    netCarbsLine(label: "Sugar alcohols", value: alcohols, sign: "−")
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.primaryGreen.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.primaryGreen.opacity(0.22), lineWidth: 1)
+        )
+    }
+
+    private func performSaveNetCarbs() {
+        guard !isSavingNetCarbs else { return }
+        if draftFiberText.trimmingCharacters(in: .whitespaces).isEmpty == false, parsedDraftFiber == nil {
+            netCarbsErrorMessage = "Fiber must be a whole number of grams."
+            return
+        }
+        if draftSugarAlcoholsText.trimmingCharacters(in: .whitespaces).isEmpty == false, parsedDraftSugarAlcohols == nil {
+            netCarbsErrorMessage = "Sugar alcohols must be a whole number of grams."
+            return
+        }
+
+        let fiberValue = parsedDraftFiber
+        let alcoholsValue = parsedDraftSugarAlcohols
+        let totalSubtract = (fiberValue ?? 0) + (alcoholsValue ?? 0)
+        if totalSubtract > meal.carbs {
+            netCarbsErrorMessage = "Fiber + sugar alcohols (\(totalSubtract)g) can't exceed total carbs (\(meal.carbs)g)."
+            return
+        }
+
+        var updated = meal
+        updated.fiber = fiberValue
+        updated.sugarAlcohols = alcoholsValue
+        updated.updatedAt = Date()
+
+        isSavingNetCarbs = true
+        netCarbsErrorMessage = nil
+
+        let userId = UserService.sharedInstance.user?.id ?? Auth.auth().currentUser?.uid
+        MealService.sharedInstance.updateMeal(updated, for: meal.createdAt, userId: userId) { result in
+            DispatchQueue.main.async {
+                isSavingNetCarbs = false
+                switch result {
+                case .success(let saved):
+                    meal = saved
+                    onUpdated(saved)
+                    showNetCarbsEditor = false
+                case .failure(let error):
+                    netCarbsErrorMessage = error.localizedDescription
                 }
             }
         }

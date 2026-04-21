@@ -590,26 +590,29 @@ struct HomeView: View {
             ZStack {
                 darkBackground
 
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 24) {
-                        topBar
+                GeometryReader { geometry in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 24) {
+                            topBar
 
-                        switch viewModel.appCoordinator.nutritionShellTab {
-                        case .journal:
-                            journalSurface
-                        case .planner:
-                            plannerSurface
-                        case .scanner:
-                            scannerSurface
-                        case .supplements:
-                            supplementSurface
-                        case .more:
-                            moreSurface
+                            switch viewModel.appCoordinator.nutritionShellTab {
+                            case .journal:
+                                journalSurface
+                            case .planner:
+                                plannerSurface
+                            case .scanner:
+                                scannerSurface
+                            case .supplements:
+                                supplementSurface
+                            case .more:
+                                moreSurface
+                            }
                         }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 12)
+                        .padding(.bottom, 120)
+                        .frame(width: geometry.size.width, alignment: .topLeading)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-                    .padding(.bottom, 120)
                 }
             }
             .preferredColorScheme(.dark)
@@ -733,12 +736,14 @@ struct HomeView: View {
                 presentPendingLogMenuIfNeeded()
             }
             .onChange(of: viewModel.appCoordinator.nutritionShellTab) { tab in
-                if tab == .supplements {
+                switch tab {
+                case .supplements:
                     supplementViewModel.setSelectedDate(viewModel.selectedDate)
                     supplementViewModel.load()
-                }
-                if tab == .journal || tab == .scanner || tab == .planner {
+                case .journal, .scanner, .planner:
                     viewModel.load()
+                default:
+                    break
                 }
             }
             .onChange(of: viewModel.selectedDate) { newDate in
@@ -1013,7 +1018,7 @@ struct HomeView: View {
                 meals: viewModel.todaysMeals,
                 target: effectiveTarget,
                 threadDate: viewModel.selectedDate,
-                userId: viewModel.serviceManager.userService.user?.id
+                userId: viewModel.serviceManager.userService.user?.id ?? Auth.auth().currentUser?.uid
             )
         }
     }
@@ -1589,6 +1594,20 @@ private struct CalorieMacroHero: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Fat breakdown by meal")
             }
+
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "hand.tap.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("Tap the ring or any macro for a meal-by-meal breakdown")
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(Color.white.opacity(0.5))
+            .padding(.top, 2)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 20)
@@ -1674,9 +1693,14 @@ private struct CalorieRing: View {
                         .foregroundStyle(.white)
                         .monospacedDigit()
 
-                    Text("of \(target) kcal")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.white.opacity(0.55))
+                    HStack(spacing: 4) {
+                        Text("of \(target) kcal")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.white.opacity(0.55))
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.primaryGreen.opacity(0.85))
+                    }
 
                     remainingPill(target: target)
                         .padding(.top, 2)
@@ -1740,10 +1764,16 @@ private struct MacroBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label.uppercased())
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .tracking(0.8)
-                .foregroundStyle(Color.white.opacity(0.55))
+            HStack(spacing: 4) {
+                Text(label.uppercased())
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.white.opacity(0.55))
+                Spacer(minLength: 2)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(color)
+            }
 
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text("\(current)")
@@ -1775,7 +1805,17 @@ private struct MacroBar: View {
             }
             .frame(height: 6)
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(color.opacity(0.28), lineWidth: 1)
+        )
     }
 }
 
@@ -2858,6 +2898,13 @@ struct NoraChatService {
         let target: TargetPayload?
         let history: [HistoryEntry]?
         let goal: String?
+        let threadDate: String
+        let threadDateKey: String
+        let threadDateLabel: String
+        let currentDate: String
+        let currentDateKey: String
+        let timezone: String
+        let isToday: Bool
     }
 
     private struct Response: Decodable {
@@ -2869,7 +2916,8 @@ struct NoraChatService {
         query: String,
         meals: [Meal],
         target: MacroRecommendation?,
-        history: [MacraNoraMessage] = []
+        history: [MacraNoraMessage] = [],
+        threadDate: Date = Date()
     ) async throws -> String {
         guard let user = Auth.auth().currentUser else {
             throw MacraMealPlanServiceError.notAuthenticated
@@ -2893,6 +2941,17 @@ struct NoraChatService {
         let historyTail = history.suffix(6).map {
             HistoryEntry(role: $0.role.rawValue, content: $0.content)
         }
+        let now = Date()
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        let calendar = Calendar.current
+        let selectedDateLabel: String = {
+            if calendar.isDateInToday(threadDate) { return "Today" }
+            if calendar.isDateInYesterday(threadDate) { return "Yesterday" }
+            let formatter = DateFormatter()
+            formatter.setLocalizedDateFormatFromTemplate("EEEMMMd")
+            return formatter.string(from: threadDate)
+        }()
 
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
@@ -2905,7 +2964,14 @@ struct NoraChatService {
             meals: mealPayloads,
             target: targetPayload,
             history: historyTail.isEmpty ? nil : historyTail,
-            goal: nil
+            goal: nil,
+            threadDate: isoFormatter.string(from: threadDate),
+            threadDateKey: threadDate.macraFoodJournalDayKey,
+            threadDateLabel: selectedDateLabel,
+            currentDate: isoFormatter.string(from: now),
+            currentDateKey: now.macraFoodJournalDayKey,
+            timezone: TimeZone.current.identifier,
+            isToday: calendar.isDateInToday(threadDate)
         )
         urlRequest.httpBody = try JSONEncoder().encode(payload)
 
@@ -2952,19 +3018,19 @@ struct AskNoraSection: View {
     private let presets: [NoraPromptPreset] = [
         NoraPromptPreset(
             label: "Analyze my day",
-            prompt: "Give me a complete analysis of my eating today. How are my macros, calorie intake, and meal balance? What stands out?",
+            prompt: "Give me a complete analysis of this food log. How are my macros, calorie intake, and meal balance? What stands out?",
             icon: "chart.bar.doc.horizontal",
             accentHex: "3B82F6"
         ),
         NoraPromptPreset(
             label: "What am I missing?",
-            prompt: "What key nutrients or food groups am I missing today? Are there any gaps in my nutrition that I should address?",
+            prompt: "What key nutrients or food groups are missing from this food log? Are there any gaps in my nutrition that I should address going forward?",
             icon: "exclamationmark.triangle.fill",
             accentHex: "FFB454"
         ),
         NoraPromptPreset(
             label: "Improvement tips",
-            prompt: "Based on my meals and supplements today, give me 3-5 specific, actionable tips to improve my nutrition.",
+            prompt: "Based on this food log and supplements, give me 3-5 specific, actionable tips to improve my nutrition.",
             icon: "arrow.up.right.circle.fill",
             accentHex: "8B5CF6"
         )
@@ -3224,14 +3290,16 @@ struct AskNoraSection: View {
         let currentKey = dayKey
         if !force, loadedDayKey == currentKey, errorMessage == nil { return }
 
-        // Clear any prior-date messages immediately so the UI reflects the
-        // new day while the fetch is inflight.
-        messages = []
         errorMessage = nil
         loadedDayKey = currentKey
 
+        // Local cache is the UI source of truth — populate it synchronously
+        // so the thread shows up instantly (and survives Firestore failures,
+        // missing indexes, offline, or a cold-start before auth hydrates).
+        messages = MacraNoraThreadCache.load(userId: userId, dayKey: currentKey)
+
         guard userId != nil else {
-            // Not signed in → nothing to load. Leave empty.
+            // Not signed in → local-only thread.
             return
         }
 
@@ -3245,9 +3313,21 @@ struct AskNoraSection: View {
                 isLoadingThread = false
                 switch result {
                 case .success(let loaded):
-                    messages = loaded
+                    // Merge remote into local so we pick up cross-device
+                    // history without clobbering messages that are still
+                    // pending their Firestore round-trip.
+                    messages = MacraNoraThreadCache.merge(
+                        remote: loaded,
+                        userId: userId,
+                        dayKey: currentKey
+                    )
                 case .failure(let error):
-                    errorMessage = "Couldn't load thread: \(error.localizedDescription)"
+                    // Silent fallback — we still have the local cache, so
+                    // the user keeps their thread. Only surface the error
+                    // if the cache was empty (nothing to show otherwise).
+                    if messages.isEmpty {
+                        errorMessage = "Couldn't load thread: \(error.localizedDescription)"
+                    }
                 }
             }
         }
@@ -3276,20 +3356,31 @@ struct AskNoraSection: View {
         MacraAudioService.sharedInstance.playSound(.noraGreeting)
 
         let askedAt = Date()
+        let threadDayKey = dayKey
+        let threadDateSnapshot = threadDate
+        let mealsSnapshot = meals
+        let targetSnapshot = target
+        let userIdSnapshot = userId
         let userMessage = MacraNoraMessage(
             role: .user,
             content: text,
             timestamp: askedAt,
-            dayKey: dayKey,
+            dayKey: threadDayKey,
             accentHex: preset?.accentHex ?? "E0FE10",
             iconSystemName: preset?.icon ?? "sparkles"
         )
 
         // Optimistically show the user's bubble and persist it so the prompt
-        // survives even if the model call fails.
+        // survives even if the model call fails. Write to the local cache
+        // first (guaranteed durable) then fire-and-forget Firestore sync.
         messages.append(userMessage)
         query = ""
-        MacraNoraChatService.sharedInstance.saveMessage(userMessage, userId: userId)
+        MacraNoraThreadCache.append(userMessage, userId: userIdSnapshot)
+        MacraNoraChatService.sharedInstance.saveMessage(userMessage, userId: userIdSnapshot) { result in
+            if case .failure(let error) = result {
+                print("[Macra][Nora] ❌ user-message sync failed — local cache holds it: \(error.localizedDescription)")
+            }
+        }
 
         let historySnapshot = messages
 
@@ -3297,26 +3388,36 @@ struct AskNoraSection: View {
             do {
                 let reply = try await NoraChatService.shared.ask(
                     query: text,
-                    meals: meals,
-                    target: target,
-                    history: historySnapshot
+                    meals: mealsSnapshot,
+                    target: targetSnapshot,
+                    history: historySnapshot,
+                    threadDate: threadDateSnapshot
                 )
                 let assistantMessage = MacraNoraMessage(
                     role: .assistant,
                     content: reply,
                     timestamp: Date(),
-                    dayKey: dayKey,
+                    dayKey: threadDayKey,
                     accentHex: "E0FE10",
                     iconSystemName: "sparkles"
                 )
                 await MainActor.run {
-                    messages.append(assistantMessage)
+                    if dayKey == threadDayKey {
+                        messages.append(assistantMessage)
+                    }
+                    MacraNoraThreadCache.append(assistantMessage, userId: userIdSnapshot)
                     isAsking = false
                 }
-                MacraNoraChatService.sharedInstance.saveMessage(assistantMessage, userId: userId)
+                MacraNoraChatService.sharedInstance.saveMessage(assistantMessage, userId: userIdSnapshot) { result in
+                    if case .failure(let error) = result {
+                        print("[Macra][Nora] ❌ assistant-message sync failed — local cache holds it: \(error.localizedDescription)")
+                    }
+                }
             } catch {
                 await MainActor.run {
-                    errorMessage = error.localizedDescription
+                    if dayKey == threadDayKey {
+                        errorMessage = error.localizedDescription
+                    }
                     isAsking = false
                 }
             }

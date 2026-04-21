@@ -32,6 +32,7 @@ struct MacraApp: App {
         WindowGroup {
             ContentView(serviceManager: serviceManager)
                 .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                .dismissKeyboardOnTapOutside()
         }
     }
 }

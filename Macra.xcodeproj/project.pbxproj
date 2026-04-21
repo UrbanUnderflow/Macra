@@ -103,6 +103,7 @@
 		284985BD5486D7FC5D859318 /* MacroRecommendations.swift in Sources */ = {isa = PBXBuildFile; fileRef = F32E903234E3D6E530A3A48D /* MacroRecommendations.swift */; };
 		2D65D9087FB901E240EEF018 /* MealPlanningComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = D46405C8BEBB1FBDD73A958D /* MealPlanningComponents.swift */; };
 		2F50A0A1984F3CBFF5F250F4 /* MealPlanEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 699F9F99E2624108399076E7 /* MealPlanEditorView.swift */; };
+		356E402BABFDA6043DAB71A5 /* MacraNoraThreadCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 576C9DCD0D49D50CF57DFC2E /* MacraNoraThreadCache.swift */; };
 		37730FF847DAD4AF16E2B86B /* MealService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800972D5438983A6181B0AA3 /* MealService.swift */; };
 		3A6DA97B4A31C971B8486E48 /* MacroTargetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04A55552BBF560C093C5D914 /* MacroTargetsView.swift */; };
 		3CC26F7CBCF958397DEEE3E2 /* MealPlanningRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9197BBAD8B3FF871D139EEDA /* MealPlanningRootView.swift */; };
@@ -252,6 +253,7 @@
 		3FA8B30885C422F84A7DF8FE /* ManageSubscriptionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ManageSubscriptionView.swift; path = View/Screens/Subscription/ManageSubscriptionView.swift; sourceTree = "<group>"; };
 		4F1DCA9555F7BEB2C5B01F33 /* ScannedLabel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScannedLabel.swift; path = NutritionCore/Models/ScannedLabel.swift; sourceTree = "<group>"; };
 		55AAEF11387B24366875597E /* LabelDeepDiveModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LabelDeepDiveModels.swift; path = NutritionCore/Models/LabelDeepDiveModels.swift; sourceTree = "<group>"; };
+		576C9DCD0D49D50CF57DFC2E /* MacraNoraThreadCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraNoraThreadCache.swift; path = Features/FoodJournal/MacraNoraThreadCache.swift; sourceTree = "<group>"; };
 		59C154DEC44326B9B5E2346A /* MacraOnboardingSteps.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraOnboardingSteps.swift; path = Features/Onboarding/MacraOnboardingSteps.swift; sourceTree = "<group>"; };
 		5D8338612294D092D0F0CCCD /* MacraFoodJournalNetCarbInfoView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalNetCarbInfoView.swift; path = Features/FoodJournal/MacraFoodJournalNetCarbInfoView.swift; sourceTree = "<group>"; };
 		5DCBA14C27291DEDA7C55767 /* MealPlanDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanDetailView.swift; path = Features/MealPlanning/MealPlanDetailView.swift; sourceTree = "<group>"; };
@@ -408,6 +410,7 @@
 				F94DCAE9D00D3643F81C7B73 /* MacraHealthKitService.swift */,
 				70FA55D050BE9821C3560DDE /* MacraFoodJournalHealthBadges.swift */,
 				3277F0D7BF0712FDDD61C1FC /* MacraNotificationSettingsView.swift */,
+				576C9DCD0D49D50CF57DFC2E /* MacraNoraThreadCache.swift */,
 			);
 			path = Macra;
 			sourceTree = "<group>";
@@ -1003,6 +1006,7 @@
 				09D8FE66E6E991E43ECC3FFC /* MacraHealthKitService.swift in Sources */,
 				540FC825E240743A28D7B04A /* MacraFoodJournalHealthBadges.swift in Sources */,
 				15FC1E54934232053D9C7C87 /* MacraNotificationSettingsView.swift in Sources */,
+				356E402BABFDA6043DAB71A5 /* MacraNoraThreadCache.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1235,7 +1239,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Macra.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Macra";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MacraFoodJournal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MacraFoodJournal";
 			};
 			name = Debug;
 		};
@@ -1255,7 +1259,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Macra.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Macra";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MacraFoodJournal.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MacraFoodJournal";
 			};
 			name = Release;
 		};

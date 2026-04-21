@@ -86,4 +86,246 @@ final class MacraTests: XCTestCase {
         XCTAssertEqual(resolved?.id, "tuesday")
     }
 
+    func testNoraAnalysisParsesDoubleEncodedJSONContent() throws {
+        let rawJSON = Self.noraAnalysisJSON()
+        let encoded = try XCTUnwrap(String(
+            data: JSONEncoder().encode(rawJSON),
+            encoding: .utf8
+        ))
+
+        let analysis = try GPTService.parseNoraAnalysisJSON(encoded)
+
+        XCTAssertEqual(analysis.macros.calories, 2100)
+        XCTAssertEqual(analysis.macros.protein, 180)
+        XCTAssertEqual(analysis.planName, "Prep day")
+        XCTAssertEqual(analysis.meals.first?.items.first?.name, "Chicken breast")
+    }
+
+    func testNoraAnalysisParsesFencedJSONContent() throws {
+        let raw = """
+        ```json
+        \(Self.noraAnalysisJSON())
+        ```
+        """
+
+        let analysis = try GPTService.parseNoraAnalysisJSON(raw)
+
+        XCTAssertEqual(analysis.macros.carbs, 220)
+        XCTAssertEqual(analysis.meals.first?.title, "Meal 1")
+    }
+
+    func testNoraAnalysisParsesOpenAIWrappedContent() throws {
+        let envelope: [String: Any] = [
+            "choices": [
+                [
+                    "message": [
+                        "content": Self.noraAnalysisJSON()
+                    ]
+                ]
+            ]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: envelope, options: [])
+        let raw = try XCTUnwrap(String(data: data, encoding: .utf8))
+
+        let analysis = try GPTService.parseNoraAnalysisJSON(raw)
+
+        XCTAssertEqual(analysis.summary, "Daily target for current goal.")
+        XCTAssertEqual(analysis.macros.fat, 60)
+    }
+
+    func testNoraAnalysisParsesScopedMacroTargets() throws {
+        let raw = """
+        {
+          "summary": "Default plan with Fri/Sat substitution.",
+          "macros": {
+            "calories": 2400,
+            "protein": 240,
+            "carbs": 220,
+            "fat": 70,
+            "rationale": "Default plan total."
+          },
+          "scopedMacros": [
+            {
+              "label": "Fri & Sat substitution",
+              "days": ["fri", "sat"],
+              "macros": {
+                "calories": 2520,
+                "protein": 246,
+                "carbs": 245,
+                "fat": 74,
+                "rationale": "Cream of rice substitution changes the day total."
+              }
+            }
+          ],
+          "mealPlan": {
+            "name": "Prep plan",
+            "meals": []
+          }
+        }
+        """
+
+        let analysis = try GPTService.parseNoraAnalysisJSON(raw)
+
+        XCTAssertEqual(analysis.macros.calories, 2400)
+        XCTAssertEqual(analysis.scopedMacros.count, 1)
+        XCTAssertEqual(analysis.scopedMacros.first?.days, ["fri", "sat"])
+        XCTAssertEqual(analysis.scopedMacros.first?.macros.calories, 2520)
+    }
+
+    func testNoraAnalysisRepairsControlCharactersInsideStrings() throws {
+        let raw = Self.noraAnalysisJSON()
+            .replacingOccurrences(
+                of: "Keeps protein high while supporting training.",
+                with: "Keeps protein high\nwhile supporting training."
+            )
+
+        let analysis = try GPTService.parseNoraAnalysisJSON(raw)
+
+        XCTAssertEqual(analysis.macros.rationale, "Keeps protein high\nwhile supporting training.")
+    }
+
+    func testNoraAnalysisParsesJSON5TrailingCommas() throws {
+        let raw = """
+        {
+          "summary": "Daily target for current goal.",
+          "macros": {
+            "calories": 2100,
+            "protein": 180,
+            "carbs": 220,
+            "fat": 60,
+            "rationale": "Keeps protein high while supporting training.",
+          },
+          "mealPlan": {
+            "name": "Prep day",
+            "meals": [],
+          },
+        }
+        """
+
+        let analysis = try GPTService.parseNoraAnalysisJSON(raw)
+
+        XCTAssertEqual(analysis.macros.calories, 2100)
+        XCTAssertTrue(analysis.meals.isEmpty)
+    }
+
+    func testNoraAnalysisFallsBackToMacroOnlyWhenMealPlanIsMalformed() throws {
+        let raw = """
+        {
+          "summary": "Daily target for current goal.",
+          "macros": {
+            "calories": 2,100,
+            "protein": 180,
+            "carbs": 220,
+            "fat": 60,
+            "rationale": "Keeps protein high while supporting training."
+          },
+          "mealPlan": {
+            "name": "Prep day",
+            "meals": [
+              {
+                "title": "Meal 1",
+                "items": [
+                  { "name": "Chicken breast", "calories": 230g }
+                ]
+              }
+            ]
+          }
+        }
+        """
+
+        let analysis = try GPTService.parseNoraAnalysisJSON(raw)
+
+        XCTAssertEqual(analysis.macros.calories, 2100)
+        XCTAssertEqual(analysis.macros.protein, 180)
+        XCTAssertEqual(analysis.planName, "Prep day")
+        XCTAssertTrue(analysis.meals.isEmpty)
+    }
+
+    func testNoraMacrosOnlySavesScopedDayTargets() {
+        let store = InMemoryMealPlanningStore()
+        let viewModel = MacroTargetsViewModel(userId: "user-1", store: store)
+        let analysis = GPTService.NoraMacroAnalysis(
+            summary: "Default plan with Fri/Sat substitution.",
+            macros: GPTService.NoraMacroAnalysis.Macros(
+                calories: 2400,
+                protein: 240,
+                carbs: 220,
+                fat: 70,
+                rationale: "Default plan total."
+            ),
+            scopedMacros: [
+                GPTService.NoraMacroAnalysis.ScopedMacros(
+                    label: "Fri & Sat substitution",
+                    days: ["fri", "sat"],
+                    macros: GPTService.NoraMacroAnalysis.Macros(
+                        calories: 2520,
+                        protein: 246,
+                        carbs: 245,
+                        fat: 74,
+                        rationale: "Substitution total."
+                    )
+                )
+            ],
+            planName: "Prep plan",
+            meals: []
+        )
+        let saveExpectation = expectation(description: "saved scoped macros")
+
+        viewModel.applyNoraMacrosOnly(from: analysis) {
+            store.fetchMacroRecommendations(userId: "user-1") { result in
+                guard case .success(let recommendations) = result else {
+                    XCTFail("Expected saved recommendations")
+                    saveExpectation.fulfill()
+                    return
+                }
+
+                let global = recommendations.first(where: { $0.dayOfWeek == nil })
+                let friday = recommendations.first(where: { $0.dayOfWeek == "fri" })
+                let saturday = recommendations.first(where: { $0.dayOfWeek == "sat" })
+
+                XCTAssertEqual(global?.calories, 2400)
+                XCTAssertEqual(friday?.calories, 2520)
+                XCTAssertEqual(saturday?.carbs, 245)
+                saveExpectation.fulfill()
+            }
+        }
+
+        wait(for: [saveExpectation], timeout: 1)
+    }
+
+    private static func noraAnalysisJSON() -> String {
+        """
+        {
+          "summary": "Daily target for current goal.",
+          "macros": {
+            "calories": 2100,
+            "protein": 180,
+            "carbs": 220,
+            "fat": 60,
+            "rationale": "Keeps protein high while supporting training."
+          },
+          "scopedMacros": [],
+          "mealPlan": {
+            "name": "Prep day",
+            "meals": [
+              {
+                "title": "Meal 1",
+                "notes": null,
+                "items": [
+                  {
+                    "name": "Chicken breast",
+                    "quantity": "5 oz",
+                    "calories": 230,
+                    "protein": 44,
+                    "carbs": 0,
+                    "fat": 5
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """
+    }
+
 }

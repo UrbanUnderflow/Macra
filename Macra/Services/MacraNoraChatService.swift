@@ -59,16 +59,15 @@ final class MacraNoraChatService {
             .document(resolvedUserId)
             .collection(NutritionCoreConfiguration.noraChatCollection)
             .whereField("dayKey", isEqualTo: dayKey)
-            .order(by: "timestamp", descending: false)
             .getDocuments { snapshot, error in
                 if let error {
                     print("[Macra][NoraChatService.load] ❌ dayKey:\(dayKey) → \(error.localizedDescription)")
                     completion(.failure(error))
                     return
                 }
-                let messages = snapshot?.documents.compactMap {
+                let messages = (snapshot?.documents.compactMap {
                     MacraNoraMessage(id: $0.documentID, dictionary: $0.data())
-                } ?? []
+                } ?? []).sorted { $0.timestamp < $1.timestamp }
                 completion(.success(messages))
             }
     }

@@ -975,8 +975,24 @@ struct MacroTargetEditorView: View {
 }
 
 private struct NoraResultWrapper: Identifiable {
-    let id = UUID()
+    let id: String
     let result: GPTService.NoraMacroAnalysis
+
+    init(result: GPTService.NoraMacroAnalysis) {
+        self.result = result
+        self.id = [
+            "\(result.macros.calories)",
+            "\(result.macros.protein)",
+            "\(result.macros.carbs)",
+            "\(result.macros.fat)",
+            "\(result.meals.count)",
+            result.planName,
+            result.summary,
+            result.scopedMacros.map { scoped in
+                "\(scoped.days.joined(separator: ",")):\(scoped.macros.calories):\(scoped.macros.protein):\(scoped.macros.carbs):\(scoped.macros.fat)"
+            }.joined(separator: ";")
+        ].joined(separator: "|")
+    }
 }
 
 // MARK: - Nora result confirmation sheet
@@ -1053,9 +1069,12 @@ struct NoraAssessResultSheet: View {
             titleVisibility: .visible
         ) {
             Button("Save macros", role: .none) {
-                viewModel.applyNoraMacrosOnly(from: result)
-                dismiss()
-                onDone(true)
+                isSaving = true
+                viewModel.applyNoraMacrosOnly(from: result) {
+                    isSaving = false
+                    dismiss()
+                    onDone(true)
+                }
             }
             Button("Discard", role: .destructive) {
                 dismiss()
@@ -1145,6 +1164,22 @@ struct NoraAssessResultSheet: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+
+            if !result.scopedMacros.isEmpty {
+                Divider()
+                    .overlay(Color.white.opacity(0.12))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("DAY VARIANTS")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .tracking(1.2)
+                        .foregroundColor(.white.opacity(0.55))
+
+                    ForEach(Array(result.scopedMacros.enumerated()), id: \.offset) { _, scoped in
+                        scopedMacroRow(scoped)
+                    }
+                }
+            }
         }
         .padding(18)
         .background(cardBackground(accent: Self.macraYellow))
@@ -1172,6 +1207,38 @@ struct NoraAssessResultSheet: View {
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(tint.opacity(emphasize ? 0.42 : 0.22), lineWidth: 1)
+        )
+    }
+
+    private func scopedMacroRow(_ scoped: GPTService.NoraMacroAnalysis.ScopedMacros) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(scoped.days.map { $0.uppercased() }.joined(separator: ", "))
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundColor(Self.macraYellow)
+                Text(scoped.label)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.58))
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                macroChip("\(scoped.macros.calories)", tint: Self.macraYellow)
+                macroChip("\(scoped.macros.protein)P", tint: Color(hex: "FAFAFA"))
+                macroChip("\(scoped.macros.carbs)C", tint: Color(hex: "3B82F6"))
+                macroChip("\(scoped.macros.fat)F", tint: Color(hex: "FFB454"))
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
         )
     }
 
@@ -1290,16 +1357,24 @@ struct NoraAssessResultSheet: View {
             // your new meal plan?" Yes saves macros + replaces the plan.
             Button {
                 isSaving = true
-                viewModel.applyNoraResult(result) {
-                    isSaving = false
-                    dismiss()
-                    onDone(true)
+                if result.meals.isEmpty {
+                    viewModel.applyNoraMacrosOnly(from: result) {
+                        isSaving = false
+                        dismiss()
+                        onDone(true)
+                    }
+                } else {
+                    viewModel.applyNoraResult(result) {
+                        isSaving = false
+                        dismiss()
+                        onDone(true)
+                    }
                 }
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.system(size: 15, weight: .bold))
-                    Text(result.meals.isEmpty ? "Save macro targets" : "Use plan + macros")
+                    Text(primaryActionTitle)
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                 }
                 .foregroundColor(.black)
@@ -1352,6 +1427,14 @@ struct NoraAssessResultSheet: View {
                 .disabled(isSaving)
             }
         }
+    }
+
+    private var primaryActionTitle: String {
+        let scopedDayCount = result.scopedMacros.flatMap(\.days).count
+        if result.meals.isEmpty {
+            return scopedDayCount > 0 ? "Save all macro targets" : "Save macro targets"
+        }
+        return scopedDayCount > 0 ? "Use plan + all macros" : "Use plan + macros"
     }
 
     // MARK: Chrome

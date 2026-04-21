@@ -665,28 +665,159 @@ final class MacroTargetsViewModel: ObservableObject {
     /// replace the active meal plan with the one Nora suggested.
     func applyNoraResult(_ result: GPTService.NoraMacroAnalysis, onComplete: @escaping () -> Void) {
         print("[Macra][MacroTargets.applyNoraResult] Saving macros + meal plan")
-        saveMacros(from: result.macros)
-        replaceActiveMealPlan(with: result) { [weak self] error in
-            if let error {
-                self?.errorMessage = error.localizedDescription
+        saveMacroTargets(from: result) { [weak self] macroError in
+            if let macroError {
+                self?.errorMessage = macroError.localizedDescription
+                onComplete()
+                return
             }
-            onComplete()
+
+            self?.replaceActiveMealPlan(with: result) { [weak self] planError in
+                if let planError {
+                    self?.errorMessage = planError.localizedDescription
+                }
+                onComplete()
+            }
         }
     }
 
     /// User answered "no" to the meal plan, then "yes" to macros: keep Nora's
     /// macro numbers but don't touch their plan.
-    func applyNoraMacrosOnly(from result: GPTService.NoraMacroAnalysis) {
+    func applyNoraMacrosOnly(from result: GPTService.NoraMacroAnalysis, onComplete: (() -> Void)? = nil) {
         print("[Macra][MacroTargets.applyNoraMacrosOnly] Saving macros only")
-        saveMacros(from: result.macros)
+        saveMacroTargets(from: result) { _ in
+            onComplete?()
+        }
     }
 
-    private func saveMacros(from macros: GPTService.NoraMacroAnalysis.Macros) {
-        calories = macros.calories
-        protein = macros.protein
-        carbs = macros.carbs
-        fat = macros.fat
-        saveRecommendation()
+    private func saveMacroTargets(from analysis: GPTService.NoraMacroAnalysis, completion: @escaping (Error?) -> Void) {
+        let targets = Self.macroRecommendations(from: analysis, userId: userId)
+        guard !targets.isEmpty else {
+            completion(nil)
+            return
+        }
+
+        calories = analysis.macros.calories
+        protein = analysis.macros.protein
+        carbs = analysis.macros.carbs
+        fat = analysis.macros.fat
+
+        isSaving = true
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var savedTargets: [MacroRecommendation] = []
+        var saveError: Error?
+
+        for target in targets {
+            group.enter()
+            store.saveMacroRecommendation(target) { result in
+                lock.lock()
+                switch result {
+                case .success(let saved):
+                    savedTargets.append(saved)
+                case .failure(let error):
+                    if saveError == nil {
+                        saveError = error
+                    }
+                }
+                lock.unlock()
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self else { return }
+            self.isSaving = false
+
+            if let saveError {
+                self.errorMessage = saveError.localizedDescription
+                completion(saveError)
+                return
+            }
+
+            for saved in savedTargets {
+                if let index = self.recommendations.firstIndex(where: { $0.id == saved.id }) {
+                    self.recommendations[index] = saved
+                } else {
+                    self.recommendations.insert(saved, at: 0)
+                }
+
+                if saved.dayOfWeek == nil {
+                    self.currentRecommendation = saved
+                    UserService.sharedInstance.currentMacroTarget = saved
+                }
+            }
+
+            self.recommendations = self.deduplicatedRecommendations
+            self.statusMessage = Self.noraSaveStatus(for: analysis)
+            completion(nil)
+        }
+    }
+
+    private static func macroRecommendations(from analysis: GPTService.NoraMacroAnalysis, userId: String) -> [MacroRecommendation] {
+        var keyedTargets: [String: MacroRecommendation] = [
+            "global": MacroRecommendation(
+                userId: userId,
+                calories: analysis.macros.calories,
+                protein: analysis.macros.protein,
+                carbs: analysis.macros.carbs,
+                fat: analysis.macros.fat,
+                dayOfWeek: nil
+            )
+        ]
+
+        for scoped in analysis.scopedMacros {
+            for day in scoped.days {
+                guard let normalizedDay = normalizedDayOfWeek(day) else { continue }
+                keyedTargets[normalizedDay] = MacroRecommendation(
+                    userId: userId,
+                    calories: scoped.macros.calories,
+                    protein: scoped.macros.protein,
+                    carbs: scoped.macros.carbs,
+                    fat: scoped.macros.fat,
+                    dayOfWeek: normalizedDay
+                )
+            }
+        }
+
+        let dayOrder = ["global", "mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        return dayOrder.compactMap { keyedTargets[$0] }
+    }
+
+    private static func normalizedDayOfWeek(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "mon", "monday":
+            return "mon"
+        case "tue", "tues", "tuesday":
+            return "tue"
+        case "wed", "wednesday":
+            return "wed"
+        case "thu", "thur", "thurs", "thursday":
+            return "thu"
+        case "fri", "friday":
+            return "fri"
+        case "sat", "saturday":
+            return "sat"
+        case "sun", "sunday":
+            return "sun"
+        default:
+            return nil
+        }
+    }
+
+    private static func noraSaveStatus(for analysis: GPTService.NoraMacroAnalysis) -> String {
+        let scopedDays = analysis.scopedMacros
+            .flatMap(\.days)
+            .compactMap(normalizedDayOfWeek)
+            .removeDuplicates()
+
+        guard !scopedDays.isEmpty else {
+            return "Saved macro targets."
+        }
+
+        let labels = scopedDays.map { $0.uppercased() }.joined(separator: ", ")
+        return "Saved macro targets for all days + \(labels)."
     }
 
     /// Deactivates every currently active meal plan for the user and saves a

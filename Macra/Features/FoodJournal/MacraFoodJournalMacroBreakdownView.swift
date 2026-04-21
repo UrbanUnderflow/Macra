@@ -27,10 +27,23 @@ enum MacraFoodJournalMacroType: String, CaseIterable, Hashable, Identifiable {
     func value(in meal: MacraFoodJournalMeal) -> Int {
         switch self {
         case .protein: return meal.protein
-        case .carbs: return meal.carbs
+        case .carbs: return meal.netCarbs
         case .fat: return meal.fat
         case .calories: return meal.calories
         }
+    }
+
+    /// Optional inline detail surfaced under a meal row — currently used to
+    /// show how much was subtracted from total carbs to arrive at net.
+    func detailNote(for meal: MacraFoodJournalMeal) -> String? {
+        guard self == .carbs else { return nil }
+        let fiber = meal.fiber ?? 0
+        let alcohols = meal.sugarAlcohols ?? 0
+        guard fiber > 0 || alcohols > 0 else { return nil }
+        var parts: [String] = ["\(meal.carbs)g total"]
+        if fiber > 0 { parts.append("−\(fiber)g fiber") }
+        if alcohols > 0 { parts.append("−\(alcohols)g sugar alcohols") }
+        return parts.joined(separator: " · ")
     }
 
     func value(in supplement: LoggedSupplement) -> Int {
@@ -111,6 +124,17 @@ struct MacraFoodJournalMacroBreakdownView: View {
         selectedDate.formatted(date: .abbreviated, time: .omitted)
     }
 
+    private var headerTitle: String {
+        switch macroType {
+        case .carbs: return "Net carbs by meal"
+        default: return "\(macroType.rawValue) by meal"
+        }
+    }
+
+    private var macroDisplayName: String {
+        macroType == .carbs ? "net carbs" : macroType.rawValue.lowercased()
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Capsule()
@@ -179,7 +203,7 @@ struct MacraFoodJournalMacroBreakdownView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("\(macroType.rawValue) by meal")
+                Text(headerTitle)
                     .font(.headline)
                     .foregroundColor(MacraFoodJournalTheme.text)
                 Text(formattedDate)
@@ -258,6 +282,12 @@ struct MacraFoodJournalMacroBreakdownView: View {
                 Text("Logged at \(time)")
                     .font(.caption)
                     .foregroundColor(MacraFoodJournalTheme.textMuted)
+                if let detail = macroType.detailNote(for: meal) {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundColor(macroType.tint.opacity(0.9))
+                        .lineLimit(2)
+                }
             }
 
             Spacer()
@@ -266,6 +296,11 @@ struct MacraFoodJournalMacroBreakdownView: View {
                 Text("\(amount)\(macroType.unit)")
                     .font(.subheadline.weight(.bold))
                     .foregroundColor(macroType.tint)
+                if macroType == .carbs, macroType.detailNote(for: meal) != nil {
+                    Text("net")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(macroType.tint.opacity(0.7))
+                }
                 if totalValue > 0 {
                     let pct = Int((Double(amount) / Double(totalValue)) * 100)
                     Text("\(pct)%")
@@ -366,7 +401,7 @@ struct MacraFoodJournalMacroBreakdownView: View {
         } else {
             sourceLabel = sourceCount == 1 ? "source" : "sources"
         }
-        let base = "You consumed \(totalValue)\(macroType.unit) of \(macroType.rawValue.lowercased()) across \(sourceCount) \(sourceLabel) on \(formattedDate)."
+        let base = "You consumed \(totalValue)\(macroType.unit) of \(macroDisplayName) across \(sourceCount) \(sourceLabel) on \(formattedDate)."
         guard let target, target > 0 else { return base }
         let pct = Int((Double(totalValue) / Double(target)) * 100)
         return base + " That's \(pct)% of your \(target)\(macroType.unit) target."
@@ -377,10 +412,10 @@ struct MacraFoodJournalMacroBreakdownView: View {
             Image(systemName: "fork.knife.circle")
                 .font(.system(size: 44))
                 .foregroundColor(MacraFoodJournalTheme.textMuted)
-            Text("No meals with \(macroType.rawValue.lowercased())")
+            Text("No meals with \(macroDisplayName)")
                 .font(.headline)
                 .foregroundColor(MacraFoodJournalTheme.textSoft)
-            Text("None of your meals for this day contain significant \(macroType.rawValue.lowercased()).")
+            Text("None of your meals for this day contain significant \(macroDisplayName).")
                 .font(.subheadline)
                 .foregroundColor(MacraFoodJournalTheme.textMuted)
                 .multilineTextAlignment(.center)
