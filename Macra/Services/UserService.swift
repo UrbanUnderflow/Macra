@@ -190,6 +190,7 @@ class UserService: ObservableObject {
     func markMacraOnboardingComplete(completion: ((Error?) -> Void)? = nil) {
         updateMacraOwnedFields([
             "hasCompletedMacraOnboarding": true,
+            "macraOnboardingCompletedAt": Date().timeIntervalSince1970,
         ]) { [weak self] error in
             if var cached = self?.user, error == nil {
                 cached.hasCompletedMacraOnboarding = true
