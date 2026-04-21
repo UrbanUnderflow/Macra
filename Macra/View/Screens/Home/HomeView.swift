@@ -1217,7 +1217,7 @@ struct HomeView: View {
                 systemImage: "barcode.viewfinder",
                 accent: Color(hex: "06B6D4")
             ) {
-                viewModel.appCoordinator.showNutritionDestination(.labelScanner)
+                viewModel.appCoordinator.showNutritionTab(.journal)
             }
         }
     }
@@ -1331,7 +1331,7 @@ struct HomeView: View {
                             isPinned: viewModel.isLabelPinned(scan.id),
                             onTogglePin: { viewModel.togglePinLabel(scan) }
                         ) {
-                            viewModel.appCoordinator.showNutritionDestination(.labelScanner)
+                            viewModel.appCoordinator.showNutritionTab(.journal)
                         }
                     }
                 }
@@ -4756,8 +4756,6 @@ private struct NutritionDestinationView: View {
             } else {
                 NutritionRequiresAccountView(message: "Sign in to save macro targets and recommendation history.")
             }
-        case .labelScanner:
-            MacraFoodJournalRootView(initialSheet: .labelScan)
         case .supplementTracker:
             NutritionSupplementTrackerRouteView()
         case .mealHistory:

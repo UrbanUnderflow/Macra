@@ -172,6 +172,105 @@ final class MacraTests: XCTestCase {
         XCTAssertEqual(analysis.scopedMacros.first?.macros.calories, 2520)
     }
 
+    func testNoraAnalysisCorrectsCombinedPrepMealMacros() throws {
+        let raw = """
+        {
+          "summary": "Prep meals from pasted plan.",
+          "macros": {
+            "calories": 2400,
+            "protein": 240,
+            "carbs": 220,
+            "fat": 70,
+            "rationale": "Default plan total."
+          },
+          "scopedMacros": [],
+          "mealPlan": {
+            "name": "Prep plan",
+            "meals": [
+              {
+                "title": "Meal 1",
+                "notes": null,
+                "items": [
+                  {
+                    "name": "1 cup egg white + 1 whole egg, spinach, cream of rice(1 scoop)",
+                    "quantity": "",
+                    "calories": 210,
+                    "protein": 26,
+                    "carbs": 20,
+                    "fat": 5
+                  }
+                ]
+              },
+              {
+                "title": "Meal 3",
+                "notes": null,
+                "items": [
+                  {
+                    "name": "7 oz ground turkey + 2 oz vegetables + 250 g jasmine rice",
+                    "quantity": "",
+                    "calories": 740,
+                    "protein": 56,
+                    "carbs": 95,
+                    "fat": 14
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """
+
+        let analysis = try GPTService.parseNoraAnalysisJSON(raw)
+        let mealOne = try XCTUnwrap(analysis.meals.first)
+        let mealThree = try XCTUnwrap(analysis.meals.dropFirst().first)
+
+        XCTAssertEqual(mealOne.items.count, 4)
+        XCTAssertEqual(mealOne.totalCalories, 333)
+        XCTAssertEqual(mealOne.totalProtein, 35)
+        XCTAssertEqual(mealOne.totalCarbs, 31)
+        XCTAssertEqual(mealOne.totalFat, 5)
+
+        XCTAssertEqual(mealThree.items.count, 3)
+        XCTAssertEqual(mealThree.totalCalories, 646)
+        XCTAssertEqual(mealThree.totalProtein, 57)
+        XCTAssertEqual(mealThree.totalCarbs, 75)
+        XCTAssertEqual(mealThree.totalFat, 15)
+    }
+
+    func testMealAnalysisUsesSharedPrepMacroCorrection() throws {
+        let raw = """
+        {
+          "name": "Prep breakfast",
+          "calories": 210,
+          "protein": 26,
+          "carbs": 20,
+          "fat": 5,
+          "fiber": null,
+          "sugarAlcohols": null,
+          "ingredients": [
+            {
+              "name": "1 cup egg white + 1 whole egg, spinach, cream of rice(1 scoop)",
+              "quantity": "",
+              "calories": 210,
+              "protein": 26,
+              "carbs": 20,
+              "fat": 5,
+              "fiber": null,
+              "sugarAlcohols": null
+            }
+          ]
+        }
+        """
+
+        let analysis = try GPTService.parseMealAnalysisJSON(raw)
+
+        XCTAssertEqual(analysis.ingredients.count, 4)
+        XCTAssertEqual(analysis.calories, 333)
+        XCTAssertEqual(analysis.protein, 35)
+        XCTAssertEqual(analysis.carbs, 31)
+        XCTAssertEqual(analysis.fat, 5)
+    }
+
     func testNoraAnalysisRepairsControlCharactersInsideStrings() throws {
         let raw = Self.noraAnalysisJSON()
             .replacingOccurrences(

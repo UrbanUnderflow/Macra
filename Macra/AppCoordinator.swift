@@ -51,7 +51,6 @@ final class AppCoordinator: ObservableObject {
         case journalComposer
         case mealPlanning
         case macroTargets
-        case labelScanner
         case supplementTracker
         case mealHistory
         case insights
@@ -65,8 +64,6 @@ final class AppCoordinator: ObservableObject {
                 return "Meal planning"
             case .macroTargets:
                 return "Macro targets"
-            case .labelScanner:
-                return "Label scanner"
             case .supplementTracker:
                 return "Supplement tracker"
             case .mealHistory:
@@ -86,8 +83,6 @@ final class AppCoordinator: ObservableObject {
                 return "Plan meals and move them back into today’s journal."
             case .macroTargets:
                 return "Review targets and recommendation settings."
-            case .labelScanner:
-                return "Scan packaged foods and inspect ingredients."
             case .supplementTracker:
                 return "Track supplements and their nutrient contributions."
             case .mealHistory:
@@ -107,8 +102,6 @@ final class AppCoordinator: ObservableObject {
                 return "calendar.badge.plus"
             case .macroTargets:
                 return "target"
-            case .labelScanner:
-                return "qrcode.viewfinder"
             case .supplementTracker:
                 return "pills.circle.fill"
             case .mealHistory:
