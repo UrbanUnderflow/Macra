@@ -126,7 +126,7 @@ struct MeetNoraStepView: View {
     private var avatarCard: some View {
         ZStack(alignment: .topLeading) {
             LinearGradient(
-                colors: [accent.opacity(0.32), Color(hex: "8B5CF6").opacity(0.28), Color(hex: "3B82F6").opacity(0.24)],
+                colors: [Color(hex: "3B82F6").opacity(0.22), Color(hex: "8B5CF6").opacity(0.18), Color.clear],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -134,22 +134,8 @@ struct MeetNoraStepView: View {
             .frame(height: 180)
 
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [accent, Color(hex: "8B5CF6")],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 56, height: 56)
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundColor(.black)
-                    }
-                    .shadow(color: accent.opacity(0.55), radius: 22, x: 0, y: 8)
+                HStack(spacing: 14) {
+                    NoraOrb(size: 56, isActive: true)
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Nora")
@@ -176,20 +162,20 @@ struct MeetNoraStepView: View {
                 .fill(.ultraThinMaterial)
                 .overlay(
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill(accent.opacity(0.06))
+                        .fill(Color.white.opacity(0.03))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
                         .strokeBorder(
                             LinearGradient(
-                                colors: [accent.opacity(0.5), accent.opacity(0.16), .clear],
+                                colors: [Color.white.opacity(0.18), Color.white.opacity(0.06), .clear],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             ),
                             lineWidth: 1
                         )
                 )
-                .shadow(color: accent.opacity(0.22), radius: 24, x: 0, y: 14)
+                .shadow(color: Color.black.opacity(0.35), radius: 24, x: 0, y: 14)
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
@@ -503,6 +489,190 @@ struct PaceStepView: View {
                     )
                 }
             }
+        }
+    }
+}
+
+struct SportSelectionStepView: View {
+    @ObservedObject var coordinator: MacraOnboardingCoordinator
+    @StateObject private var configService = MacraSportConfigService.shared
+
+    private let columns = [GridItem(.flexible()), GridItem(.flexible())]
+
+    private var selectedSport: MacraSportConfig? {
+        guard let id = coordinator.answers.sport else { return nil }
+        return configService.sports.first(where: { $0.id == id })
+    }
+
+    var body: some View {
+        OnboardingScaffold(
+            title: "What sport do you play?",
+            subtitle: "We'll tune Nora to your sport's training, fueling, and game-day demands.",
+            progress: coordinator.progress,
+            canGoBack: coordinator.canGoBack,
+            canGoForward: coordinator.canGoForward,
+            onBack: coordinator.back,
+            onForward: coordinator.advance
+        ) {
+            VStack(alignment: .leading, spacing: 18) {
+                if configService.isLoading && configService.sports.isEmpty {
+                    HStack {
+                        ProgressView().tint(Color.primaryGreen)
+                        Text("Loading sports…").foregroundColor(Color.white.opacity(0.6))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 24)
+                } else if let error = configService.loadError, configService.sports.isEmpty {
+                    VStack(spacing: 8) {
+                        Text("Couldn't load sports")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundColor(.white)
+                        Text(error)
+                            .font(.system(size: 13))
+                            .foregroundColor(Color.white.opacity(0.6))
+                            .multilineTextAlignment(.center)
+                        Button("Retry") { configService.load() }
+                            .foregroundColor(Color.primaryGreen)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                } else {
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(configService.sports) { sport in
+                            SportTile(
+                                sport: sport,
+                                isSelected: coordinator.answers.sport == sport.id,
+                                onTap: {
+                                    coordinator.answers.sport = sport.id
+                                    coordinator.answers.sportName = sport.name
+                                    if !sport.positions.contains(coordinator.answers.sportPosition ?? "") {
+                                        coordinator.answers.sportPosition = nil
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if let sport = selectedSport, !sport.positions.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Position")
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .tracking(1.0)
+                            .foregroundColor(Color.white.opacity(0.55))
+                        FlexibleChipGroup(
+                            options: sport.positions,
+                            selection: $coordinator.answers.sportPosition
+                        )
+                        Text("Optional — pick one if you have a primary position.")
+                            .font(.system(size: 12))
+                            .foregroundColor(Color.white.opacity(0.45))
+                    }
+                    .padding(.top, 4)
+                }
+            }
+            .onAppear { configService.loadIfNeeded() }
+        }
+    }
+}
+
+private struct SportTile: View {
+    let sport: MacraSportConfig
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(sport.emoji).font(.system(size: 28))
+                Text(sport.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(isSelected ? 0.12 : 0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? Color.primaryGreen.opacity(0.8) : Color.white.opacity(0.08),
+                        lineWidth: isSelected ? 1.5 : 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct FlexibleChipGroup: View {
+    let options: [String]
+    @Binding var selection: String?
+
+    var body: some View {
+        FlowLayout(spacing: 8) {
+            ForEach(options, id: \.self) { option in
+                Button(action: { selection = (selection == option) ? nil : option }) {
+                    Text(option)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(selection == option ? Color.secondaryCharcoal : .white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule().fill(selection == option ? Color.primaryGreen : Color.white.opacity(0.06))
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(Color.white.opacity(selection == option ? 0 : 0.10), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rowWidth: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if rowWidth + size.width > maxWidth, rowWidth > 0 {
+                totalHeight += rowHeight + spacing
+                rowWidth = 0
+                rowHeight = 0
+            }
+            rowWidth += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        totalHeight += rowHeight
+        return CGSize(width: maxWidth == .infinity ? rowWidth : maxWidth, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }

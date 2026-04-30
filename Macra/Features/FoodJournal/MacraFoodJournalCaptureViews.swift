@@ -212,6 +212,7 @@ struct MacraFoodJournalScanFoodView: View {
     @State private var mealCaption: String = ""
     @State private var isPhotoPickerPresented = false
     @State private var pickerSourceType: UIImagePickerController.SourceType = .camera
+    @State private var isOpeningCamera: Bool = false
     @FocusState private var focusedField: ScanField?
 
     private enum ScanField: Hashable {
@@ -273,13 +274,31 @@ struct MacraFoodJournalScanFoodView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .overlay {
+            MacraCameraOpeningOverlay(isVisible: isOpeningCamera, message: pickerSourceType == .camera ? "Opening camera…" : "Opening photos…")
+        }
         .onAppear {
             mealTitle = viewModel.draftMealTitle
             mealCaption = viewModel.draftMealCaption
+            // When the user came in via "Upload photo", skip the camera-first
+            // affordance and jump directly to the photo library so the flow
+            // matches the menu intent. After that, the rest of the flow is
+            // identical to a real-time camera capture.
+            if viewModel.draftMealImage == nil,
+               viewModel.draftPhotoCaptureSource == .upload {
+                presentPhotoLibrary()
+            }
         }
         .sheet(isPresented: $isPhotoPickerPresented) {
             MacraMealPhotoPicker(sourceType: pickerSourceType, selectedImage: $viewModel.draftMealImage)
                 .ignoresSafeArea()
+        }
+        .onChange(of: isPhotoPickerPresented) { presented in
+            // Sheet either appeared (camera up) or was dismissed — either way
+            // hide the open-camera loader.
+            if !presented {
+                isOpeningCamera = false
+            }
         }
     }
 
@@ -440,8 +459,35 @@ struct MacraFoodJournalScanFoodView: View {
     }
 
     private func presentPhotoPicker() {
+        // Honor the upload-source request if it's set; otherwise prefer the
+        // live camera (falling back to the library on simulators / devices
+        // without camera hardware).
+        if viewModel.draftPhotoCaptureSource == .upload {
+            presentPhotoLibrary()
+            return
+        }
         pickerSourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
-        isPhotoPickerPresented = true
+        isOpeningCamera = true
+        // Defer to next runloop so the overlay paints before the picker
+        // sheet's UIImagePickerController init blocks the main thread.
+        DispatchQueue.main.async {
+            isPhotoPickerPresented = true
+        }
+        // Safety: never strand the loader if the sheet fails to appear.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            if !isPhotoPickerPresented { isOpeningCamera = false }
+        }
+    }
+
+    private func presentPhotoLibrary() {
+        pickerSourceType = .photoLibrary
+        isOpeningCamera = true
+        DispatchQueue.main.async {
+            isPhotoPickerPresented = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            if !isPhotoPickerPresented { isOpeningCamera = false }
+        }
     }
 }
 
@@ -460,22 +506,41 @@ struct MacraFoodJournalImageConfirmationView: View {
                         preview
                         fields
                         tips
+                        if let errorMessage = viewModel.analysisError, !viewModel.isAnalyzing {
+                            Text(errorMessage)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .foregroundColor(Color(red: 1.0, green: 0.55, blue: 0.55))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                         Button {
                             viewModel.selectedDate = mealTime
                             viewModel.draftMealNotes = note
                             viewModel.addMealFromDraft(entryMethod: .photo)
                         } label: {
-                            Text("Analyze and save")
-                                .font(.headline.weight(.semibold))
-                                .foregroundColor(.black)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(MacraFoodJournalTheme.accent)
-                                .clipShape(Capsule())
+                            HStack(spacing: 8) {
+                                if viewModel.isAnalyzing {
+                                    ProgressView().tint(.black).scaleEffect(0.8)
+                                }
+                                Text(viewModel.isAnalyzing ? "Analyzing…" : "Analyze and save")
+                                    .font(.headline.weight(.semibold))
+                                    .foregroundColor(.black)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(MacraFoodJournalTheme.accent)
+                            .clipShape(Capsule())
+                            .opacity(viewModel.isAnalyzing ? 0.85 : 1)
                         }
+                        .disabled(viewModel.isAnalyzing)
                     }
                     .padding(20)
                 }
+            }
+            .overlay {
+                MacraAnalyzingFoodOverlay(
+                    isVisible: viewModel.isAnalyzing,
+                    photo: viewModel.draftMealImage
+                )
             }
         }
     }

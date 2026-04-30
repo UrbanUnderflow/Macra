@@ -140,6 +140,15 @@ struct MealIngredientDetail: Identifiable, Hashable, Codable {
     var fat: Int
     var fiber: Int?
     var sugarAlcohols: Int?
+    // Extended micronutrients — FWP writes these on shared meals, so Macra
+    // needs to read and round-trip them or cross-app edits lose data.
+    var sugars: Int?
+    var sodium: Int?
+    var cholesterol: Int?
+    var saturatedFat: Int?
+    var unsaturatedFat: Int?
+    var vitamins: [String: Int]?
+    var minerals: [String: Int]?
 
     init(
         id: String = UUID().uuidString,
@@ -150,7 +159,14 @@ struct MealIngredientDetail: Identifiable, Hashable, Codable {
         carbs: Int,
         fat: Int,
         fiber: Int? = nil,
-        sugarAlcohols: Int? = nil
+        sugarAlcohols: Int? = nil,
+        sugars: Int? = nil,
+        sodium: Int? = nil,
+        cholesterol: Int? = nil,
+        saturatedFat: Int? = nil,
+        unsaturatedFat: Int? = nil,
+        vitamins: [String: Int]? = nil,
+        minerals: [String: Int]? = nil
     ) {
         self.id = id
         self.name = name
@@ -161,6 +177,13 @@ struct MealIngredientDetail: Identifiable, Hashable, Codable {
         self.fat = fat
         self.fiber = fiber
         self.sugarAlcohols = sugarAlcohols
+        self.sugars = sugars
+        self.sodium = sodium
+        self.cholesterol = cholesterol
+        self.saturatedFat = saturatedFat
+        self.unsaturatedFat = unsaturatedFat
+        self.vitamins = vitamins
+        self.minerals = minerals
     }
 
     init?(dictionary: [String: Any]) {
@@ -174,6 +197,13 @@ struct MealIngredientDetail: Identifiable, Hashable, Codable {
         self.fat = dictionary["fat"] as? Int ?? 0
         self.fiber = dictionary["fiber"] as? Int
         self.sugarAlcohols = dictionary["sugarAlcohols"] as? Int
+        self.sugars = dictionary["sugars"] as? Int
+        self.sodium = dictionary["sodium"] as? Int
+        self.cholesterol = dictionary["cholesterol"] as? Int
+        self.saturatedFat = dictionary["saturatedFat"] as? Int
+        self.unsaturatedFat = dictionary["unsaturatedFat"] as? Int
+        self.vitamins = dictionary["vitamins"] as? [String: Int]
+        self.minerals = dictionary["minerals"] as? [String: Int]
     }
 
     func toDictionary() -> [String: Any] {
@@ -188,6 +218,13 @@ struct MealIngredientDetail: Identifiable, Hashable, Codable {
         ]
         if let fiber { dict["fiber"] = fiber }
         if let sugarAlcohols { dict["sugarAlcohols"] = sugarAlcohols }
+        if let sugars, sugars > 0 { dict["sugars"] = sugars }
+        if let sodium, sodium > 0 { dict["sodium"] = sodium }
+        if let cholesterol, cholesterol > 0 { dict["cholesterol"] = cholesterol }
+        if let saturatedFat, saturatedFat > 0 { dict["saturatedFat"] = saturatedFat }
+        if let unsaturatedFat, unsaturatedFat > 0 { dict["unsaturatedFat"] = unsaturatedFat }
+        if let vitamins, !vitamins.isEmpty { dict["vitamins"] = vitamins }
+        if let minerals, !minerals.isEmpty { dict["minerals"] = minerals }
         return dict
     }
 
@@ -213,10 +250,27 @@ struct Meal: Identifiable, Hashable {
     var carbs: Int
     var fiber: Int?
     var sugarAlcohols: Int?
+    // Extended micronutrients — round-tripped from the shared Firestore meals
+    // collection so FWP-authored data isn't silently dropped on Macra reads.
+    var sugars: Int?
+    var sodium: Int?
+    var cholesterol: Int?
+    var saturatedFat: Int?
+    var unsaturatedFat: Int?
+    var vitamins: [String: Int]?
+    var minerals: [String: Int]?
     var image: String
     var entryMethod: MealEntryMethod
     var servingSize: String?
     var sourceReferences: [MealSourceReference]?
+    /// Which app logged this meal: "macra", "fwp", (future: "pulsecheck"). `nil` for legacy
+    /// entries written before the tag existed. Preserved on edits — the creator tag is sticky.
+    var sourcedFrom: String?
+    /// How the photo (if any) was acquired: "camera" = real-time capture; "upload"
+    /// = chosen from the photo library. `nil` for non-photo entries (text, voice,
+    /// history, label) or legacy rows. Used by future scoring/incentive logic
+    /// that rewards real-time captures over uploads.
+    var photoCaptureSource: String?
     var createdAt: Date
     var updatedAt: Date
 
@@ -233,10 +287,19 @@ struct Meal: Identifiable, Hashable {
         carbs: Int,
         fiber: Int? = nil,
         sugarAlcohols: Int? = nil,
+        sugars: Int? = nil,
+        sodium: Int? = nil,
+        cholesterol: Int? = nil,
+        saturatedFat: Int? = nil,
+        unsaturatedFat: Int? = nil,
+        vitamins: [String: Int]? = nil,
+        minerals: [String: Int]? = nil,
         image: String,
         entryMethod: MealEntryMethod = .unknown,
         servingSize: String? = nil,
         sourceReferences: [MealSourceReference]? = nil,
+        sourcedFrom: String? = nil,
+        photoCaptureSource: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -252,10 +315,19 @@ struct Meal: Identifiable, Hashable {
         self.carbs = carbs
         self.fiber = fiber
         self.sugarAlcohols = sugarAlcohols
+        self.sugars = sugars
+        self.sodium = sodium
+        self.cholesterol = cholesterol
+        self.saturatedFat = saturatedFat
+        self.unsaturatedFat = unsaturatedFat
+        self.vitamins = vitamins
+        self.minerals = minerals
         self.image = image
         self.entryMethod = entryMethod
         self.servingSize = servingSize
         self.sourceReferences = sourceReferences
+        self.sourcedFrom = sourcedFrom
+        self.photoCaptureSource = photoCaptureSource
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -277,6 +349,13 @@ struct Meal: Identifiable, Hashable {
         self.carbs = dictionary["carbs"] as? Int ?? 0
         self.fiber = dictionary["fiber"] as? Int
         self.sugarAlcohols = dictionary["sugarAlcohols"] as? Int
+        self.sugars = dictionary["sugars"] as? Int
+        self.sodium = dictionary["sodium"] as? Int
+        self.cholesterol = dictionary["cholesterol"] as? Int
+        self.saturatedFat = dictionary["saturatedFat"] as? Int
+        self.unsaturatedFat = dictionary["unsaturatedFat"] as? Int
+        self.vitamins = dictionary["vitamins"] as? [String: Int]
+        self.minerals = dictionary["minerals"] as? [String: Int]
         self.image = dictionary["image"] as? String ?? ""
         self.entryMethod = MealEntryMethod(rawValue: dictionary["entryMethod"] as? String ?? "") ?? .unknown
         self.servingSize = dictionary["servingSize"] as? String
@@ -288,6 +367,8 @@ struct Meal: Identifiable, Hashable {
         } else {
             self.sourceReferences = nil
         }
+        self.sourcedFrom = dictionary["sourcedFrom"] as? String
+        self.photoCaptureSource = dictionary["photoCaptureSource"] as? String
     }
 
     func toDictionary() -> [String: Any] {
@@ -304,7 +385,10 @@ struct Meal: Identifiable, Hashable {
             "image": image,
             "entryMethod": entryMethod.rawValue,
             "createdAt": createdAt.timeIntervalSince1970,
-            "updatedAt": updatedAt.timeIntervalSince1970
+            "updatedAt": updatedAt.timeIntervalSince1970,
+            // Default new writes to "macra"; preserve whatever the model already carries for
+            // entries originally logged in another Pulse app (FWP, PulseCheck).
+            "sourcedFrom": sourcedFrom ?? "macra"
         ]
 
         if let fiber {
@@ -313,6 +397,34 @@ struct Meal: Identifiable, Hashable {
 
         if let sugarAlcohols {
             dict["sugarAlcohols"] = sugarAlcohols
+        }
+
+        if let sugars, sugars > 0 {
+            dict["sugars"] = sugars
+        }
+
+        if let sodium, sodium > 0 {
+            dict["sodium"] = sodium
+        }
+
+        if let cholesterol, cholesterol > 0 {
+            dict["cholesterol"] = cholesterol
+        }
+
+        if let saturatedFat, saturatedFat > 0 {
+            dict["saturatedFat"] = saturatedFat
+        }
+
+        if let unsaturatedFat, unsaturatedFat > 0 {
+            dict["unsaturatedFat"] = unsaturatedFat
+        }
+
+        if let vitamins, !vitamins.isEmpty {
+            dict["vitamins"] = vitamins
+        }
+
+        if let minerals, !minerals.isEmpty {
+            dict["minerals"] = minerals
         }
 
         if let detailedIngredients, !detailedIngredients.isEmpty {
@@ -325,6 +437,10 @@ struct Meal: Identifiable, Hashable {
 
         if let sourceReferences, !sourceReferences.isEmpty {
             dict["sourceReferences"] = sourceReferences.map { $0.toDictionary() }
+        }
+
+        if let photoCaptureSource, !photoCaptureSource.isEmpty {
+            dict["photoCaptureSource"] = photoCaptureSource
         }
 
         return dict

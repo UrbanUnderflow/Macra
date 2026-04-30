@@ -47,6 +47,10 @@ enum NutritionCoreLogger {
 
 enum NutritionCoreNotification {
     static let dataDidChange = Notification.Name("NutritionCoreDataDidChange")
+    /// Fired when the user's active meal plan is mirrored to
+    /// `macraSuggestedMealPlans/current`. Today's fuel listens for this so
+    /// it can reload the plan that drives the daily UI.
+    static let activePlanDidChange = Notification.Name("NutritionCoreActivePlanDidChange")
 }
 
 struct NutritionCoreConfiguration {

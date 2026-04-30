@@ -166,6 +166,16 @@ class UserService: ObservableObject {
                 }
                 completion?(error)
             }
+
+        // Mirror athlete sport to the shared user doc so FWP / PulseCheck /
+        // the Sports Intelligence Layer can read it without crossing into
+        // Macra's nested profile collection.
+        if answers.activityLevel == .athlete, let sport = answers.sport {
+            var rootFields: [String: Any] = ["athleteSport": sport]
+            if let name = answers.sportName { rootFields["athleteSportName"] = name }
+            if let position = answers.sportPosition { rootFields["athleteSportPosition"] = position }
+            updateRootUserPatch(rootFields)
+        }
     }
 
     func hasSavedMacraProfile(completion: @escaping (Bool) -> Void) {
@@ -257,6 +267,33 @@ class UserService: ObservableObject {
         ]) { error in
             if let error {
                 print("Error saving Macra beta access marker: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func revokeLocalMacraBetaAccess() {
+        UserDefaults.standard.removeObject(forKey: Self.localBetaAccessKey)
+
+        if var cached = user, cached.subscriptionType == .beta {
+            cached.subscriptionType = .free
+            publish(cached)
+        } else {
+            DispatchQueue.main.async {
+                self.isBetaUser = false
+                if let cached = self.user {
+                    self.isSubscribed = cached.subscriptionType.grantsMacraAccess
+                } else {
+                    self.isSubscribed = false
+                }
+            }
+        }
+
+        updateMacraOwnedFields([
+            "macra.betaAccess": false,
+            "macra.betaAccessRevokedAt": Date().timeIntervalSince1970,
+        ]) { error in
+            if let error {
+                print("Error clearing Macra beta access marker: \(error.localizedDescription)")
             }
         }
     }

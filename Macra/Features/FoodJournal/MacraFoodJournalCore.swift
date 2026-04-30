@@ -75,6 +75,15 @@ struct MacraFoodJournalMealIngredient: Identifiable, Hashable, Codable {
     var fat: Int
     var fiber: Int?
     var sugarAlcohols: Int?
+    // Extended micronutrients (all optional, default nil for backward compatibility).
+    // Populated from IngredientNutrition when bridging shared `Meal` data.
+    var sugars: Int?
+    var sodium: Int?
+    var cholesterol: Int?
+    var saturatedFat: Int?
+    var unsaturatedFat: Int?
+    var vitamins: [String: Int]?
+    var minerals: [String: Int]?
 
     init(
         id: String = UUID().uuidString,
@@ -85,7 +94,14 @@ struct MacraFoodJournalMealIngredient: Identifiable, Hashable, Codable {
         carbs: Int,
         fat: Int,
         fiber: Int? = nil,
-        sugarAlcohols: Int? = nil
+        sugarAlcohols: Int? = nil,
+        sugars: Int? = nil,
+        sodium: Int? = nil,
+        cholesterol: Int? = nil,
+        saturatedFat: Int? = nil,
+        unsaturatedFat: Int? = nil,
+        vitamins: [String: Int]? = nil,
+        minerals: [String: Int]? = nil
     ) {
         self.id = id
         self.name = name
@@ -96,6 +112,13 @@ struct MacraFoodJournalMealIngredient: Identifiable, Hashable, Codable {
         self.fat = fat
         self.fiber = fiber
         self.sugarAlcohols = sugarAlcohols
+        self.sugars = sugars
+        self.sodium = sodium
+        self.cholesterol = cholesterol
+        self.saturatedFat = saturatedFat
+        self.unsaturatedFat = unsaturatedFat
+        self.vitamins = vitamins
+        self.minerals = minerals
     }
 
     var netCarbs: Int {
@@ -117,6 +140,15 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
     var fat: Int
     var fiber: Int?
     var sugarAlcohols: Int?
+    // Extended micronutrients (all optional, default nil for backward compatibility).
+    // Populated from the shared `Meal` model when available.
+    var sugars: Int?
+    var sodium: Int?
+    var cholesterol: Int?
+    var saturatedFat: Int?
+    var unsaturatedFat: Int?
+    var vitamins: [String: Int]?
+    var minerals: [String: Int]?
     var imageURL: String?
     var entryMethod: MacraFoodJournalEntryMethod
     var ingredients: [MacraFoodJournalMealIngredient]
@@ -125,6 +157,15 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
     var updatedAt: Date
     var isPinned: Bool
     var colorSeed: Double
+    /// Which Pulse app originally logged this meal: "macra", "fwp", "pulsecheck".
+    /// `nil` for legacy entries written before the tag existed.
+    var sourcedFrom: String?
+    /// How the photo (if any) was acquired: "camera" = real-time capture in
+    /// the Macra scan flow; "upload" = chosen from the photo library. `nil`
+    /// for non-photo entries (text, voice, history) or legacy rows. Used by
+    /// future scoring/incentive logic that rewards real-time captures over
+    /// uploads.
+    var photoCaptureSource: String?
 
     init(
         id: String = UUID().uuidString,
@@ -136,6 +177,13 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
         fat: Int,
         fiber: Int? = nil,
         sugarAlcohols: Int? = nil,
+        sugars: Int? = nil,
+        sodium: Int? = nil,
+        cholesterol: Int? = nil,
+        saturatedFat: Int? = nil,
+        unsaturatedFat: Int? = nil,
+        vitamins: [String: Int]? = nil,
+        minerals: [String: Int]? = nil,
         imageURL: String? = nil,
         entryMethod: MacraFoodJournalEntryMethod = .manual,
         ingredients: [MacraFoodJournalMealIngredient] = [],
@@ -143,7 +191,9 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         isPinned: Bool = false,
-        colorSeed: Double = Double.random(in: 0.1...0.95)
+        colorSeed: Double = Double.random(in: 0.1...0.95),
+        sourcedFrom: String? = nil,
+        photoCaptureSource: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -154,6 +204,13 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
         self.fat = fat
         self.fiber = fiber
         self.sugarAlcohols = sugarAlcohols
+        self.sugars = sugars
+        self.sodium = sodium
+        self.cholesterol = cholesterol
+        self.saturatedFat = saturatedFat
+        self.unsaturatedFat = unsaturatedFat
+        self.vitamins = vitamins
+        self.minerals = minerals
         self.imageURL = imageURL
         self.entryMethod = entryMethod
         self.ingredients = ingredients
@@ -162,6 +219,8 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
         self.updatedAt = updatedAt
         self.isPinned = isPinned
         self.colorSeed = colorSeed
+        self.sourcedFrom = sourcedFrom
+        self.photoCaptureSource = photoCaptureSource
     }
 
     var totalMacroCalories: Int {
@@ -191,6 +250,89 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
     var hasNetCarbAdjustment: Bool {
         (fiber ?? 0) > 0 || (sugarAlcohols ?? 0) > 0
     }
+
+    /// True when any ingredient carries structured nutrition (sugars/sodium/etc.
+    /// or vitamin/mineral maps). Gates the "Accurate" badge in the breakdown
+    /// card — same logic FWP uses.
+    var hasDetailedIngredientNutrition: Bool {
+        guard !ingredients.isEmpty else { return false }
+        return ingredients.contains { ing in
+            (ing.sugars ?? 0) > 0 || (ing.fiber ?? 0) > 0 || (ing.sugarAlcohols ?? 0) > 0 ||
+            (ing.sodium ?? 0) > 0 || (ing.cholesterol ?? 0) > 0 ||
+            (ing.saturatedFat ?? 0) > 0 || (ing.unsaturatedFat ?? 0) > 0 ||
+            !(ing.vitamins?.isEmpty ?? true) || !(ing.minerals?.isEmpty ?? true)
+        }
+    }
+
+    /// True when the meal has any micronutrient data worth surfacing. Mirrors
+    /// `Meal.hasAdditionalNutrition` on FWP so the breakdown card renders on the
+    /// same conditions across apps.
+    var hasAdditionalNutrition: Bool {
+        accurateSugars > 0 || accurateFiber > 0 || accurateSodium > 0 ||
+            accurateCholesterol > 0 || accurateSaturatedFat > 0 || accurateUnsaturatedFat > 0 ||
+            !accurateVitamins.isEmpty || !accurateMinerals.isEmpty
+    }
+
+    // MARK: - Accurate micronutrient values
+    // Prefer the ingredient-level sum when ingredients carry structured nutrition;
+    // otherwise fall back to the meal-level value. This matches FWP's `accurate*`
+    // logic so edits to one ingredient show up in the totals.
+
+    var accurateSugars: Int {
+        let summed = ingredients.reduce(0) { $0 + ($1.sugars ?? 0) }
+        return summed > 0 ? summed : (sugars ?? 0)
+    }
+
+    var accurateFiber: Int {
+        let summed = ingredients.reduce(0) { $0 + ($1.fiber ?? 0) }
+        return summed > 0 ? summed : (fiber ?? 0)
+    }
+
+    var accurateSodium: Int {
+        let summed = ingredients.reduce(0) { $0 + ($1.sodium ?? 0) }
+        return summed > 0 ? summed : (sodium ?? 0)
+    }
+
+    var accurateCholesterol: Int {
+        let summed = ingredients.reduce(0) { $0 + ($1.cholesterol ?? 0) }
+        return summed > 0 ? summed : (cholesterol ?? 0)
+    }
+
+    var accurateSaturatedFat: Int {
+        let summed = ingredients.reduce(0) { $0 + ($1.saturatedFat ?? 0) }
+        return summed > 0 ? summed : (saturatedFat ?? 0)
+    }
+
+    var accurateUnsaturatedFat: Int {
+        let summed = ingredients.reduce(0) { $0 + ($1.unsaturatedFat ?? 0) }
+        return summed > 0 ? summed : (unsaturatedFat ?? 0)
+    }
+
+    var accurateVitamins: [String: Int] {
+        var summed: [String: Int] = [:]
+        for ing in ingredients {
+            if let map = ing.vitamins {
+                for (key, value) in map {
+                    summed[key, default: 0] += value
+                }
+            }
+        }
+        if !summed.isEmpty { return summed }
+        return vitamins ?? [:]
+    }
+
+    var accurateMinerals: [String: Int] {
+        var summed: [String: Int] = [:]
+        for ing in ingredients {
+            if let map = ing.minerals {
+                for (key, value) in map {
+                    summed[key, default: 0] += value
+                }
+            }
+        }
+        if !summed.isEmpty { return summed }
+        return minerals ?? [:]
+    }
 }
 
 extension MacraFoodJournalMeal {
@@ -207,7 +349,14 @@ extension MacraFoodJournalMeal {
                     carbs: $0.carbs,
                     fat: $0.fat,
                     fiber: $0.fiber,
-                    sugarAlcohols: $0.sugarAlcohols
+                    sugarAlcohols: $0.sugarAlcohols,
+                    sugars: $0.sugars,
+                    sodium: $0.sodium,
+                    cholesterol: $0.cholesterol,
+                    saturatedFat: $0.saturatedFat,
+                    unsaturatedFat: $0.unsaturatedFat,
+                    vitamins: $0.vitamins,
+                    minerals: $0.minerals
                 )
             }
         } else {
@@ -233,12 +382,20 @@ extension MacraFoodJournalMeal {
             fat: meal.fat,
             fiber: meal.fiber,
             sugarAlcohols: meal.sugarAlcohols,
+            sugars: meal.sugars,
+            sodium: meal.sodium,
+            cholesterol: meal.cholesterol,
+            saturatedFat: meal.saturatedFat,
+            unsaturatedFat: meal.unsaturatedFat,
+            vitamins: meal.vitamins,
+            minerals: meal.minerals,
             imageURL: meal.image.isEmpty ? nil : meal.image,
             entryMethod: MacraFoodJournalEntryMethod(mealEntryMethod: meal.entryMethod),
             ingredients: mappedIngredients,
             notes: "",
             createdAt: meal.createdAt,
-            updatedAt: meal.updatedAt
+            updatedAt: meal.updatedAt,
+            sourcedFrom: meal.sourcedFrom
         )
     }
 }
@@ -292,6 +449,9 @@ struct MacraFoodJournalDailyInsight: Identifiable, Hashable, Codable {
     var query: String
     var icon: String
     var timestamp: Date
+    var type: String?
+    var points: [String]?
+    var action: String?
 
     init(
         id: String = UUID().uuidString,
@@ -299,7 +459,10 @@ struct MacraFoodJournalDailyInsight: Identifiable, Hashable, Codable {
         response: String,
         query: String,
         icon: String,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        type: String? = nil,
+        points: [String]? = nil,
+        action: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -307,6 +470,24 @@ struct MacraFoodJournalDailyInsight: Identifiable, Hashable, Codable {
         self.query = query
         self.icon = icon
         self.timestamp = timestamp
+        self.type = type
+        self.points = points
+        self.action = action
+    }
+}
+
+extension MacraFoodJournalDailyInsight {
+    var typeBadge: (label: String, accent: String)? {
+        guard let raw = type?.lowercased(), !raw.isEmpty else { return nil }
+        switch raw {
+        case "predictive": return ("Predictive", "ahead")
+        case "pattern": return ("Pattern", "trend")
+        case "distribution": return ("Timing", "clock")
+        case "outcome": return ("Outcome", "trend")
+        case "training_coupled", "training": return ("Training", "lift")
+        case "pantry": return ("Personalized", "tap")
+        default: return (raw.capitalized, "neutral")
+        }
     }
 }
 
@@ -714,6 +895,84 @@ struct MacraFoodJournalDaySummary: Identifiable, Hashable {
     }
     var mealCount: Int { meals.count }
     var hasNutritionData: Bool { !meals.isEmpty || !loggedSupplements.isEmpty }
+
+    // MARK: - Daily micronutrient totals
+    // Mirrors `FoodJournalDayDetailView.aggregateDaily*` on FWP. Each meal's
+    // `accurate*` property already prefers ingredient-level sums, so these
+    // roll up the per-meal accurate values across the whole day and then
+    // layer supplements on top for vitamins and minerals.
+
+    var totalSugars: Int { meals.reduce(0) { $0 + $1.accurateSugars } }
+    var totalFiber: Int { meals.reduce(0) { $0 + $1.accurateFiber } }
+    var totalSodium: Int { meals.reduce(0) { $0 + $1.accurateSodium } }
+    var totalCholesterol: Int { meals.reduce(0) { $0 + $1.accurateCholesterol } }
+    var totalSaturatedFat: Int { meals.reduce(0) { $0 + $1.accurateSaturatedFat } }
+    var totalUnsaturatedFat: Int { meals.reduce(0) { $0 + $1.accurateUnsaturatedFat } }
+
+    var totalVitamins: [String: Int] {
+        var totals: [String: Int] = [:]
+        for meal in meals {
+            for (name, value) in meal.accurateVitamins {
+                let key = MacraFoodJournalNutrientNaming.normalized(name)
+                totals[key, default: 0] += value
+            }
+        }
+        for supp in loggedSupplements {
+            if let vitamins = supp.vitamins {
+                for (name, value) in vitamins {
+                    let key = MacraFoodJournalNutrientNaming.normalized(name)
+                    totals[key, default: 0] += value
+                }
+            }
+        }
+        return totals
+    }
+
+    var totalMinerals: [String: Int] {
+        var totals: [String: Int] = [:]
+        for meal in meals {
+            for (name, value) in meal.accurateMinerals {
+                let key = MacraFoodJournalNutrientNaming.normalized(name)
+                totals[key, default: 0] += value
+            }
+        }
+        for supp in loggedSupplements {
+            if let minerals = supp.minerals {
+                for (name, value) in minerals {
+                    let key = MacraFoodJournalNutrientNaming.normalized(name)
+                    totals[key, default: 0] += value
+                }
+            }
+        }
+        return totals
+    }
+
+    var hasDetailedNutrition: Bool {
+        totalSugars > 0 || totalFiber > 0 || totalSodium > 0 || totalCholesterol > 0 ||
+            totalSaturatedFat > 0 || totalUnsaturatedFat > 0 ||
+            !totalVitamins.isEmpty || !totalMinerals.isEmpty
+    }
+
+    var hasAnyIngredientDetailedNutrition: Bool {
+        meals.contains(where: { $0.hasDetailedIngredientNutrition })
+    }
+}
+
+/// Title-cases nutrient keys so "vitamin C" and "Vitamin C" collapse to one
+/// bucket in the daily total. Ported from FWP so cross-app meal logs aggregate
+/// consistently.
+enum MacraFoodJournalNutrientNaming {
+    static func normalized(_ name: String) -> String {
+        name.split(separator: " ")
+            .map { word -> String in
+                let lower = word.lowercased()
+                if lower.count <= 3 && word.first?.isLetter == true && word.contains(where: { $0.isNumber }) {
+                    return word.uppercased()
+                }
+                return word.prefix(1).uppercased() + word.dropFirst().lowercased()
+            }
+            .joined(separator: " ")
+    }
 }
 
 struct MacraFoodJournalMonthDay: Identifiable, Hashable {
@@ -1192,6 +1451,16 @@ final class MacraFoodJournalViewModel: ObservableObject {
     @Published var draftMealCaption: String = ""
     @Published var draftMealNotes: String = ""
     @Published var draftMealImage: UIImage?
+    /// Tracks how the current photo draft was acquired so the saved meal can
+    /// carry that provenance forward (camera vs. uploaded). Set when the
+    /// scan-flow opens — `.camera` for "Scan meal", `.upload` for "Upload
+    /// photo". Reset to `.camera` after each successful save.
+    @Published var draftPhotoCaptureSource: PhotoCaptureSource = .camera
+
+    enum PhotoCaptureSource: String {
+        case camera
+        case upload
+    }
     @Published var voiceTranscript: String = "Tap record to capture a spoken meal entry."
     @Published var searchQuery: String = ""
     @Published var isRecordingVoice: Bool = false
@@ -1307,13 +1576,15 @@ final class MacraFoodJournalViewModel: ObservableObject {
 
     @Published var analysisError: String?
 
-    /// Text / voice entries must go through GPT so we actually get macros.
-    /// Photo / manual / history stay on the direct-save path since their data
-    /// is either already analyzed upstream or captured manually.
+    /// Text / voice / photo entries must go through GPT so we actually get
+    /// macros. History / label / quickLog / manual stay on the direct-save
+    /// path since their data is either already analyzed upstream or captured
+    /// manually. Photo entries additionally upload the captured `UIImage` to
+    /// Firebase Storage before analyzing — see `addMealFromDraft`.
     private func shouldAnalyzeBeforeSaving(_ entryMethod: MacraFoodJournalEntryMethod) -> Bool {
         switch entryMethod {
-        case .text, .voice: return true
-        case .photo, .history, .label, .quickLog, .manual: return false
+        case .text, .voice, .photo: return true
+        case .history, .label, .quickLog, .manual: return false
         }
     }
 
@@ -1351,9 +1622,46 @@ final class MacraFoodJournalViewModel: ObservableObject {
         let caption = draftMealCaption.trimmingCharacters(in: .whitespacesAndNewlines)
         let notes = draftMealNotes.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        print("[Macra][Journal.addMealFromDraft] entryMethod:\(entryMethod.rawValue) title:'\(title)' captionLen:\(caption.count) hasImage:\(imageURL != nil)")
+        print("[Macra][Journal.addMealFromDraft] entryMethod:\(entryMethod.rawValue) title:'\(title)' captionLen:\(caption.count) hasImageURL:\(imageURL != nil) hasDraftImage:\(draftMealImage != nil)")
 
         let logTimestamp = resolvedLogTimestamp()
+
+        // Photo entry with a captured UIImage that hasn't been uploaded yet:
+        // push it to Firebase Storage so both the analyzer and the persisted
+        // meal record get a stable URL. Without this step the image is held
+        // only in memory on `draftMealImage` and is lost when drafts clear.
+        if entryMethod == .photo, imageURL == nil, let uiImage = draftMealImage {
+            isAnalyzing = true
+            analysisError = nil
+            print("[Macra][Journal.addMealFromDraft] Photo entry — uploading captured image before analysis")
+            let storageId = UUID().uuidString
+            FirebaseService.sharedInstance.uploadMealImage(uiImage, mealId: storageId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    switch result {
+                    case .success(let url):
+                        print("[Macra][Journal.addMealFromDraft] ✓ Photo uploaded: \(url)")
+                        self.analyzeAndSaveMealFromDraft(entryMethod: .photo, imageURL: url)
+                    case .failure(let error):
+                        print("[Macra][Journal.addMealFromDraft] ❌ Photo upload failed: \(error.localizedDescription)")
+                        self.isAnalyzing = false
+                        self.analysisError = "Couldn't upload photo: \(error.localizedDescription)"
+                    }
+                }
+            }
+            return MacraFoodJournalMeal(
+                name: title.isEmpty ? "Analyzing…" : title,
+                caption: caption,
+                calories: 0,
+                protein: 0,
+                carbs: 0,
+                fat: 0,
+                entryMethod: entryMethod,
+                notes: notes,
+                createdAt: logTimestamp,
+                updatedAt: Date()
+            )
+        }
 
         if shouldAnalyzeBeforeSaving(entryMethod) {
             // Kick off analysis; return a placeholder meal for the legacy
@@ -1401,23 +1709,38 @@ final class MacraFoodJournalViewModel: ObservableObject {
     /// Runs the draft through the GPT analyzer and only persists the meal once
     /// we have real macros back. Mirrors QuickLifts' load → analyze → confirm
     /// flow for text and voice entries.
+    ///
+    /// Routing:
+    ///  - Photo entries with an `imageURL` go through the vision analyzer
+    ///    (`analyzeMealFromFoodPhoto`), which uses both the photo and any
+    ///    typed title/description to compute macros and visually estimate
+    ///    portion when text is missing or vague.
+    ///  - Everything else (text, voice, photo-without-image) goes through the
+    ///    text-only `analyzeMealNote`.
     func analyzeAndSaveMealFromDraft(entryMethod: MacraFoodJournalEntryMethod, imageURL: String? = nil) {
         let title = draftMealTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         let caption = draftMealCaption.trimmingCharacters(in: .whitespacesAndNewlines)
         let notes = draftMealNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // For text/voice we still require some typed input to send to the
+        // text analyzer. The photo path can run on the image alone, so it
+        // bypasses this guard.
+        let usesVisionAnalyzer = (entryMethod == .photo) && (imageURL?.isEmpty == false)
 
         // The caption is what the user typed as the meal description; fall back
         // to title when caption is empty so single-field entries still analyze.
         let analysisDescription = caption.isEmpty ? title : caption
         let analysisTitle = (caption.isEmpty ? "" : title)
 
-        guard !analysisDescription.isEmpty else {
-            print("[Macra][Journal.analyzeAndSaveMealFromDraft] ❌ both title and caption empty — refusing to analyze")
-            analysisError = "Add a title or description before analyzing."
-            return
+        if !usesVisionAnalyzer {
+            guard !analysisDescription.isEmpty else {
+                print("[Macra][Journal.analyzeAndSaveMealFromDraft] ❌ both title and caption empty — refusing to analyze (no photo to fall back on)")
+                analysisError = "Add a title or description before analyzing."
+                return
+            }
         }
 
-        print("[Macra][Journal.analyzeAndSaveMealFromDraft] ▶️ Starting — entryMethod:\(entryMethod.rawValue) title:'\(analysisTitle)' descLen:\(analysisDescription.count)")
+        print("[Macra][Journal.analyzeAndSaveMealFromDraft] ▶️ Starting — entryMethod:\(entryMethod.rawValue) title:'\(analysisTitle)' descLen:\(analysisDescription.count) vision:\(usesVisionAnalyzer)")
 
         isAnalyzing = true
         analysisError = nil
@@ -1428,7 +1751,27 @@ final class MacraFoodJournalViewModel: ObservableObject {
         let saveDate = selectedDate
         print("[Macra][Journal.analyzeAndSaveMealFromDraft] createdAt resolved to \(createdAt) (selectedDate was \(selectedDate))")
 
-        GPTService.sharedInstance.analyzeMealNote(title: analysisTitle, description: analysisDescription) { [weak self] result in
+        let analyze: (@escaping (Result<GPTService.MealAnalysis, Error>) -> Void) -> Void
+        if usesVisionAnalyzer, let url = imageURL {
+            analyze = { completion in
+                GPTService.sharedInstance.analyzeMealFromFoodPhoto(
+                    imageURL: url,
+                    title: title,
+                    description: caption,
+                    completion: completion
+                )
+            }
+        } else {
+            analyze = { completion in
+                GPTService.sharedInstance.analyzeMealNote(
+                    title: analysisTitle,
+                    description: analysisDescription,
+                    completion: completion
+                )
+            }
+        }
+
+        analyze { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isAnalyzing = false
@@ -1457,6 +1800,13 @@ final class MacraFoodJournalViewModel: ObservableObject {
                         )
                     }
 
+                    // Only stamp a photoCaptureSource on entries that actually
+                    // have a photo backing them. Text/voice/history entries
+                    // leave it nil so it doesn't pollute non-photo analytics.
+                    let captureSource: String? = (entryMethod == .photo)
+                        ? self.draftPhotoCaptureSource.rawValue
+                        : nil
+
                     let meal = MacraFoodJournalMeal(
                         name: resolvedName,
                         caption: caption,
@@ -1471,16 +1821,20 @@ final class MacraFoodJournalViewModel: ObservableObject {
                         ingredients: mappedIngredients,
                         notes: notes,
                         createdAt: createdAt,
-                        updatedAt: Date()
+                        updatedAt: Date(),
+                        photoCaptureSource: captureSource
                     )
 
-                    print("[Macra][Journal.analyzeAndSaveMealFromDraft] ✅ Saving analyzed meal id:\(meal.id) name:'\(meal.name)' \(meal.calories)kcal P:\(meal.protein) C:\(meal.carbs)(net \(meal.netCarbs)) F:\(meal.fat) fiber:\(meal.fiber ?? 0) sugarAlcohols:\(meal.sugarAlcohols ?? 0) ingredients:\(meal.ingredients.count)")
+                    print("[Macra][Journal.analyzeAndSaveMealFromDraft] ✅ Saving analyzed meal id:\(meal.id) name:'\(meal.name)' \(meal.calories)kcal P:\(meal.protein) C:\(meal.carbs)(net \(meal.netCarbs)) F:\(meal.fat) fiber:\(meal.fiber ?? 0) sugarAlcohols:\(meal.sugarAlcohols ?? 0) ingredients:\(meal.ingredients.count) photoSource:\(captureSource ?? "n/a")")
                     self.saveFoodJournalMeal(meal, on: saveDate, detailsDestination: .foodIdentifier(meal.id))
 
                     self.draftMealTitle = ""
                     self.draftMealCaption = ""
                     self.draftMealNotes = ""
                     self.draftMealImage = nil
+                    // Reset to camera as the default for the next session so
+                    // a one-off "Upload photo" doesn't stick around.
+                    self.draftPhotoCaptureSource = .camera
 
                 case .failure(let error):
                     print("[Macra][Journal.analyzeAndSaveMealFromDraft] ❌ Analysis failed: \(error.localizedDescription) — keeping draft so user can retry")
@@ -1498,6 +1852,30 @@ final class MacraFoodJournalViewModel: ObservableObject {
         copy.entryMethod = .history
         print("[Macra][Journal.logMealFromHistory] Re-logging '\(copy.name)' at \(copy.createdAt)")
         saveFoodJournalMeal(copy, on: selectedDate, detailsDestination: .mealDetails(copy.id))
+    }
+
+    /// Bulk-log a batch of meals from history in one tap. Each meal gets its
+    /// own fresh ID, the same wall-clock timestamp (so they ordering follows
+    /// insertion order), and the .history entry method. Sheet dismissal
+    /// behavior follows `shouldReturnHomeAfterMealSave` like single re-logs.
+    func logMealsFromHistory(_ meals: [MacraFoodJournalMeal]) {
+        guard !meals.isEmpty else { return }
+        let baseTimestamp = resolvedLogTimestamp()
+        for (index, meal) in meals.enumerated() {
+            var copy = meal
+            copy.id = UUID().uuidString
+            // Stagger by a second per item so the journal timeline shows them
+            // in selection order instead of stacking at the same minute.
+            copy.createdAt = baseTimestamp.addingTimeInterval(TimeInterval(index))
+            copy.updatedAt = Date()
+            copy.entryMethod = .history
+            store.addMeal(copy, on: selectedDate)
+            onMealSaved?(copy)
+        }
+        print("[Macra][Journal.logMealsFromHistory] Batch re-logged \(meals.count) meals")
+        if shouldReturnHomeAfterMealSave {
+            activeSheet = nil
+        }
     }
 
     func saveFoodJournalMeal(
@@ -1667,7 +2045,17 @@ final class MacraFoodJournalViewModel: ObservableObject {
                 if let urlError {
                     print("[Macra][LabelScan.persist] ⚠️ downloadURL failed: \(urlError.localizedDescription)")
                 }
-                self.writeLabelScanDocument(scanId: scanId, userId: userId, gradeDict: gradeDict, createdAt: createdAt, imageURL: url?.absoluteString)
+                let urlString = url?.absoluteString
+                if let urlString, !urlString.isEmpty {
+                    DispatchQueue.main.async {
+                        if let index = self.labelScanHistory.firstIndex(where: { $0.id == scanId }) {
+                            var updated = self.labelScanHistory[index]
+                            updated.imageURL = urlString
+                            self.labelScanHistory[index] = updated
+                        }
+                    }
+                }
+                self.writeLabelScanDocument(scanId: scanId, userId: userId, gradeDict: gradeDict, createdAt: createdAt, imageURL: urlString)
             }
         }
     }
@@ -1871,6 +2259,11 @@ final class MacraFoodJournalViewModel: ObservableObject {
 
     func openMealDetails(_ meal: MacraFoodJournalMeal) {
         activeSheet = .mealDetails(meal.id)
+    }
+
+    func presentLabelDetail(_ scan: MacraScannedLabel) {
+        labelScanHistory = uniqueLabelScans([scan] + labelScanHistory)
+        activeSheet = .labelDetail(scan.id)
     }
 
     func meal(for id: String?) -> MacraFoodJournalMeal? {

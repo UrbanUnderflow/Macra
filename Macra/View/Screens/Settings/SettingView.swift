@@ -80,6 +80,32 @@ struct SettingsView: View {
                         .onTapGesture {
                             //viewModel.appCoordinator.showAboutScreenModal()
                         }
+                    if userService.isBetaUser {
+                        Button {
+                            viewModel.appCoordinator.showNotificationModal(viewModel: CustomModalViewModel(
+                                type: .confirmation,
+                                title: "Leave Beta",
+                                message: "You'll lose Macra Plus beta access and return to the free plan. You can re-enter the beta later if your access is restored.",
+                                primaryButtonTitle: "Leave beta",
+                                secondaryButtonTitle: "Cancel",
+                                primaryAction: { _ in
+                                    UserService.sharedInstance.revokeLocalMacraBetaAccess()
+                                    PurchaseService.sharedInstance.checkSubscriptionStatus(forceRefresh: true) { _ in }
+                                    viewModel.appCoordinator.hideNotification()
+                                    viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
+                                        message: "You've left the Macra beta.",
+                                        backgroundColor: .secondaryCharcoal,
+                                        textColor: .secondaryWhite
+                                    ))
+                                },
+                                secondaryAction: {
+                                    viewModel.appCoordinator.hideNotification()
+                                }
+                            ))
+                        } label: {
+                            SettingCard(title: "Leave Beta", subtitle: "You're in the Macra beta")
+                        }
+                    }
                     Button {
                         viewModel.appCoordinator.showNotificationModal(viewModel: CustomModalViewModel(type: .field, title: "Delete Account", message: "Are you sure you want to delete your account?", primaryButtonTitle: "Yes, delete my account", secondaryButtonTitle: "Cancel", fieldSubtitle: "Enter your password to confirm deletion.", primaryAction: { message in
                             viewModel.appCoordinator.serviceManager.userService.deleteAccount(email: UserService.sharedInstance.user?.email ?? "", password: message) { result in

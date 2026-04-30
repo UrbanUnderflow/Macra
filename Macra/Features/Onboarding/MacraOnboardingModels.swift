@@ -159,6 +159,9 @@ struct MacraOnboardingAnswers {
     var goalWeightKg: Double?
     var pace: GoalPace?
     var activityLevel: ActivityLevel?
+    var sport: String?
+    var sportName: String?
+    var sportPosition: String?
     var dietaryPreference: DietaryPreference?
     var biggestStruggle: BiggestStruggle?
     var notificationPreferences: MacraNotificationPreferences = .default
@@ -179,6 +182,9 @@ struct MacraOnboardingAnswers {
         if let goalWeightKg = goalWeightKg { dict["goalWeightKg"] = goalWeightKg }
         if let pace = pace { dict["pace"] = pace.rawValue }
         if let activityLevel = activityLevel { dict["activityLevel"] = activityLevel.rawValue }
+        if let sport = sport { dict["sport"] = sport }
+        if let sportName = sportName { dict["sportName"] = sportName }
+        if let sportPosition = sportPosition { dict["sportPosition"] = sportPosition }
         if let dietaryPreference = dietaryPreference { dict["dietaryPreference"] = dietaryPreference.rawValue }
         if let biggestStruggle = biggestStruggle { dict["biggestStruggle"] = biggestStruggle.rawValue }
         if let goalDirection = goalDirection { dict["goalDirection"] = goalDirection.rawValue }
@@ -404,6 +410,10 @@ struct MacraSuggestedMealItem: Codable, Hashable, Identifiable {
     var protein: Int
     var carbs: Int
     var fat: Int
+    /// Set lazily by the Plan tab when a logged meal in the user's history strongly
+    /// matches this item's name. Audited on every Plan tab load — bad matches clear,
+    /// good ones survive. Persisted alongside the parent meal's `imageURL`.
+    var imageURL: String?
 
     var id: String { "\(name)-\(quantity)" }
 }
@@ -411,6 +421,10 @@ struct MacraSuggestedMealItem: Codable, Hashable, Identifiable {
 struct MacraSuggestedMeal: Codable, Hashable, Identifiable {
     var title: String
     var items: [MacraSuggestedMealItem]
+    /// Set lazily by the Plan tab when a logged meal in the user's history matches this
+    /// suggestion's items. Persisted back to `users/{uid}/macraSuggestedMealPlans/current`
+    /// under `plan.meals[*].imageURL` so we don't keep re-matching on every load.
+    var imageURL: String?
 
     var id: String { title }
 

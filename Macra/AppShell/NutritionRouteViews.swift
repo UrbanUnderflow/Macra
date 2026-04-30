@@ -159,6 +159,39 @@ final class NutritionSupplementTrackerViewModel: ObservableObject {
             $0.name == supplement.name && Calendar.current.isDate($0.createdAt, inSameDayAs: selectedDate)
         }
     }
+
+    var unloggedSavedSupplements: [LoggedSupplement] {
+        savedSupplements.filter { !isLoggedOnSelectedDate($0) }
+    }
+
+    func logAll() {
+        let dateForToggle = selectedDate
+        let toLog = unloggedSavedSupplements
+        guard !toLog.isEmpty else { return }
+
+        for supplement in toLog {
+            var logged = supplement
+            logged.id = generateUniqueID(prefix: "supplement")
+            logged.createdAt = dateForToggle
+            logged.updatedAt = Date()
+
+            SupplementService.sharedInstance.addLoggedSupplement(logged, date: dateForToggle) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard Calendar.current.isDate(self.selectedDate, inSameDayAs: dateForToggle) else { return }
+                    switch result {
+                    case .success:
+                        var displaySupplement = logged
+                        displaySupplement.id = "\(dateForToggle.dayMonthYearFormat)\(logged.id)"
+                        self.loggedForSelectedDate.append(displaySupplement)
+                        self.loggedForSelectedDate.sort { $0.createdAt < $1.createdAt }
+                    case .failure(let error):
+                        self.errorMessage = error.localizedDescription
+                    }
+                }
+            }
+        }
+    }
 }
 
 struct NutritionSupplementTrackerRouteView: View {
@@ -303,11 +336,40 @@ struct NutritionSupplementTrackerContentView: View {
 
     private var librarySection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader(
-                label: "YOUR SUPPLEMENTS",
-                count: viewModel.savedSupplements.count,
-                accent: purpleAccent
-            )
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("YOUR SUPPLEMENTS")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .tracking(1.2)
+                    .foregroundColor(purpleAccent)
+
+                Spacer()
+
+                if !viewModel.unloggedSavedSupplements.isEmpty {
+                    Button(action: { viewModel.logAll() }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Log all (\(viewModel.unloggedSavedSupplements.count))")
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(purpleAccent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(purpleAccent.opacity(0.12)))
+                        .overlay(Capsule().strokeBorder(purpleAccent.opacity(0.32), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Log all supplements")
+                }
+
+                Text("\(viewModel.savedSupplements.count)")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(purpleAccent.opacity(0.9))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(purpleAccent.opacity(0.12)))
+                    .overlay(Capsule().strokeBorder(purpleAccent.opacity(0.32), lineWidth: 1))
+            }
 
             if viewModel.savedSupplements.isEmpty {
                 SupplementEmptyCard(

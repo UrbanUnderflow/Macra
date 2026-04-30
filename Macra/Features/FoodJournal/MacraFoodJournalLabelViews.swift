@@ -7,6 +7,7 @@ struct MacraLabelScanView: View {
     @State private var isPhotoPickerPresented = false
     @State private var pickerSourceType: UIImagePickerController.SourceType = .camera
     @State private var pickedImage: UIImage?
+    @State private var isOpeningCamera: Bool = false
 
     var body: some View {
         ZStack {
@@ -76,6 +77,9 @@ struct MacraLabelScanView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .overlay {
+            MacraCameraOpeningOverlay(isVisible: isOpeningCamera, message: pickerSourceType == .camera ? "Opening camera…" : "Opening photos…")
+        }
         .sheet(isPresented: $isPhotoPickerPresented) {
             MacraMealPhotoPicker(sourceType: pickerSourceType, selectedImage: $pickedImage)
                 .ignoresSafeArea()
@@ -85,13 +89,22 @@ struct MacraLabelScanView: View {
             pickedImage = nil
             viewModel.gradeAndSaveLabelFromImage(image)
         }
+        .onChange(of: isPhotoPickerPresented) { presented in
+            if !presented { isOpeningCamera = false }
+        }
     }
 
     private func presentPhotoPicker() {
         guard !viewModel.isAnalyzingLabel else { return }
         viewModel.labelAnalysisError = nil
         pickerSourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
-        isPhotoPickerPresented = true
+        isOpeningCamera = true
+        DispatchQueue.main.async {
+            isPhotoPickerPresented = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            if !isPhotoPickerPresented { isOpeningCamera = false }
+        }
     }
 
     private var previewCard: some View {
@@ -104,7 +117,6 @@ struct MacraLabelScanView: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .fill(Color.black.opacity(0.35))
-                        .frame(height: 280)
 
                     VStack(spacing: 12) {
                         Image(systemName: viewModel.isAnalyzingLabel ? "sparkles" : "barcode.viewfinder")
@@ -129,8 +141,11 @@ struct MacraLabelScanView: View {
                             style: StrokeStyle(lineWidth: 2, dash: [14, 10])
                         )
                         .padding(24)
-                        .frame(height: 280)
+                        .allowsHitTesting(false)
                 }
+                .frame(maxWidth: .infinity)
+                .frame(height: 280)
+                .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             }
             .buttonStyle(.plain)
             .disabled(viewModel.isAnalyzingLabel)
@@ -170,6 +185,18 @@ struct MacraLabelScanView: View {
 
 struct MacraLabelScanHistoryView: View {
     @ObservedObject var viewModel: MacraFoodJournalViewModel
+    var searchText: String = ""
+
+    private var filteredLabelScans: [MacraScannedLabel] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return viewModel.labelScans }
+        let needle = trimmed.lowercased()
+        return viewModel.labelScans.filter { scan in
+            scan.displayTitle.lowercased().contains(needle)
+                || scan.gradeResult.summary.lowercased().contains(needle)
+                || scan.userNotes.lowercased().contains(needle)
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -194,8 +221,13 @@ struct MacraLabelScanHistoryView: View {
                         title: "No label scans yet",
                         message: "Scan a packaged food label to see it listed here."
                     )
+                } else if filteredLabelScans.isEmpty {
+                    MacraFoodJournalEmptyState(
+                        title: "No matches",
+                        message: "No labels match \"\(searchText)\". Try a different search."
+                    )
                 } else {
-                    ForEach(viewModel.labelScans) { scan in
+                    ForEach(filteredLabelScans) { scan in
                         Button {
                             viewModel.activeSheet = .labelDetail(scan.id)
                         } label: {
@@ -257,6 +289,8 @@ struct MacraLabelScanDetailView: View {
     @State var scannedLabel: MacraScannedLabel
     @State private var showMore = false
     @State private var editedTitle: String = ""
+    @State private var isEditingTitle = false
+    @FocusState private var titleFieldFocused: Bool
 
     init(viewModel: MacraFoodJournalViewModel, scannedLabel: MacraScannedLabel) {
         self.viewModel = viewModel
@@ -266,62 +300,222 @@ struct MacraLabelScanDetailView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 18) {
-                    hero
-                    gradeCard
-                    analysisCard
-                    concernsCard
-                    sourcesCard
-                    deepDiveCard
-                    alternativesCard
-                    actions
+            ZStack {
+                MacraFoodJournalTheme.background
+                    .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 16) {
+                        hero
+                        gradeStrip
+                            .padding(.horizontal, 20)
+                        VStack(spacing: 14) {
+                            analysisCard
+                            concernsCard
+                            sourcesCard
+                            deepDiveCard
+                            alternativesCard
+                            actions
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 24)
+                    }
                 }
-                .padding(20)
+                .scrollIndicators(.hidden)
             }
-            .background(MacraFoodJournalTheme.background)
+            .toolbar(.hidden, for: .navigationBar)
+            .onChange(of: viewModel.labelScanHistory) { newValue in
+                guard !isEditingTitle,
+                      let refreshed = newValue.first(where: { $0.id == scannedLabel.id }),
+                      refreshed != scannedLabel else { return }
+                scannedLabel = refreshed
+            }
         }
     }
 
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Button("Done") { viewModel.activeSheet = nil }
-                    .foregroundColor(MacraFoodJournalTheme.textSoft)
-                Spacer()
-                Button("Edit title") { scannedLabel.productTitleEdited.toggle() }
-                    .foregroundColor(MacraFoodJournalTheme.accent2)
+        ZStack(alignment: .top) {
+            ZStack(alignment: .bottomLeading) {
+                heroBackground
+                    .frame(height: 360)
+                    .clipped()
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.0),
+                        Color.black.opacity(0.35),
+                        Color.black.opacity(0.92)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 360)
+
+                heroCaption
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 22)
             }
-            TextField("Product title", text: $editedTitle)
-                .font(.title2.weight(.bold))
-                .foregroundColor(.white)
-            Text("Scanned \(scannedLabel.createdAt.formatted(date: .abbreviated, time: .shortened))")
-                .font(.caption)
-                .foregroundColor(MacraFoodJournalTheme.textMuted)
+            .frame(maxWidth: .infinity)
+            .frame(height: 360)
+
+            heroOverlayChrome
         }
-        .padding(18)
+    }
+
+    @ViewBuilder
+    private var heroBackground: some View {
+        if let imageURL = scannedLabel.imageURL,
+           !imageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            RemoteImage(url: imageURL)
+                .scaledToFill()
+                .frame(maxWidth: .infinity)
+        } else {
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        gradeColor(for: scannedLabel.gradeResult.grade).opacity(0.55),
+                        gradeColor(for: scannedLabel.gradeResult.grade).opacity(0.18),
+                        Color.black.opacity(0.6)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                Image(systemName: "barcode.viewfinder")
+                    .font(.system(size: 86, weight: .light))
+                    .foregroundColor(.white.opacity(0.18))
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var heroCaption: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("SCANNED \(scannedLabel.createdAt.formatted(date: .abbreviated, time: .shortened).uppercased())")
+                .font(.system(size: 11, weight: .heavy, design: .rounded))
+                .tracking(1.4)
+                .foregroundColor(.white.opacity(0.62))
+
+            if isEditingTitle {
+                TextField("Product title", text: $editedTitle)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .focused($titleFieldFocused)
+                    .submitLabel(.done)
+                    .onSubmit { commitTitle() }
+            } else {
+                Text(editedTitle.isEmpty ? "Untitled scan" : editedTitle)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var heroOverlayChrome: some View {
+        HStack {
+            heroChromeButton(systemImage: "chevron.down") {
+                viewModel.activeSheet = nil
+            }
+            Spacer()
+            heroChromeButton(
+                label: isEditingTitle ? "Done" : "Edit title",
+                systemImage: isEditingTitle ? nil : "pencil"
+            ) {
+                if isEditingTitle {
+                    commitTitle()
+                } else {
+                    isEditingTitle = true
+                    titleFieldFocused = true
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private func heroChromeButton(
+        label: String? = nil,
+        systemImage: String?,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 13, weight: .bold))
+                }
+                if let label {
+                    Text(label)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                }
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, label == nil ? 12 : 14)
+            .padding(.vertical, 10)
+            .background(
+                Capsule()
+                    .fill(Color.black.opacity(0.42))
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func commitTitle() {
+        let trimmed = editedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        editedTitle = trimmed
+        scannedLabel.productTitle = trimmed
+        scannedLabel.productTitleEdited = true
+        viewModel.updateLabelScan(scannedLabel)
+        titleFieldFocused = false
+        isEditingTitle = false
+    }
+
+    private var gradeStrip: some View {
+        let color = gradeColor(for: scannedLabel.gradeResult.grade)
+        return HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(color.opacity(0.18))
+                    .frame(width: 64, height: 64)
+                Circle()
+                    .fill(color)
+                    .frame(width: 52, height: 52)
+                Text(scannedLabel.gradeResult.grade.uppercased())
+                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(gradeDescription(for: scannedLabel.gradeResult.grade))
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(color)
+                Text("\(scannedLabel.gradeResult.confidencePercentage)% confidence")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundColor(MacraFoodJournalTheme.textMuted)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
         .background(foodJournalCardBackground)
     }
 
-    private var gradeCard: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [gradeColor(for: scannedLabel.gradeResult.grade).opacity(0.35), gradeColor(for: scannedLabel.gradeResult.grade).opacity(0.12)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .frame(width: 160, height: 160)
-            Circle()
-                .fill(gradeColor(for: scannedLabel.gradeResult.grade))
-                .frame(width: 118, height: 118)
-            Text(scannedLabel.gradeResult.grade)
-                .font(.system(size: 62, weight: .black, design: .rounded))
-                .foregroundColor(.white)
+    private func gradeDescription(for grade: String) -> String {
+        switch grade.uppercased() {
+        case "A": return "Excellent"
+        case "B": return "Good"
+        case "C": return "Moderate"
+        case "D": return "Poor"
+        case "F": return "Avoid"
+        default: return "Unknown"
         }
-        .frame(maxWidth: .infinity)
     }
 
     private var analysisCard: some View {
@@ -440,6 +634,14 @@ struct MacraLabelScanDetailView: View {
             Button {
                 scannedLabel.productTitle = editedTitle
                 viewModel.updateLabelScan(scannedLabel)
+                // Use a real wall-clock timestamp for the log. If the user is on
+                // today's journal it's `Date()`; if they're on a past day we
+                // project current time-of-day onto that day so the log lands
+                // somewhere meaningful instead of midnight.
+                let logTimestamp = MealService.resolveLogTimestamp(
+                    forTargetDay: viewModel.selectedDate,
+                    originalTimestamp: Date()
+                )
                 let meal = MacraFoodJournalMeal(
                     name: editedTitle,
                     caption: scannedLabel.gradeResult.summary,
@@ -452,7 +654,7 @@ struct MacraLabelScanDetailView: View {
                     imageURL: scannedLabel.imageURL,
                     entryMethod: .label,
                     notes: "Logged from label scan",
-                    createdAt: viewModel.selectedDate,
+                    createdAt: logTimestamp,
                     updatedAt: Date()
                 )
                 viewModel.saveFoodJournalMeal(meal, on: viewModel.selectedDate, detailsDestination: .mealDetails(meal.id))

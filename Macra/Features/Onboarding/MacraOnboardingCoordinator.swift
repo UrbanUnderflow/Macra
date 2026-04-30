@@ -154,6 +154,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     enum Step: Int, CaseIterable {
         case welcome
         case meetNora
+        case fwpMacrosHandoff
         case sex
         case age
         case height
@@ -161,6 +162,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case goalWeight
         case pace
         case activityLevel
+        case sportSelection
         case dietaryPreference
         case biggestStruggle
         case generatingPlan
@@ -169,6 +171,14 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case features
         case notificationPreferences
         case commitTrial
+    }
+
+    enum FWPHandoffState: Equatable {
+        case checking
+        case unavailable
+        case available(MacroRecommendations)
+        case accepted
+        case reassessing
     }
 
     @Published var currentStep: Step = .welcome
@@ -182,6 +192,9 @@ final class MacraOnboardingCoordinator: ObservableObject {
     @Published var suggestedMealPlan: MacraSuggestedMealPlan?
     @Published var isLoadingMealPlan: Bool = false
     @Published var mealPlanError: String?
+    @Published var fwpHandoffState: FWPHandoffState = .checking
+    /// True when the user accepted FWP macros — skip biometric steps + use FWP macros verbatim.
+    private(set) var usingFWPMacros: Bool = false
 
     let appCoordinator: AppCoordinator
     let startingStep: Step
@@ -211,6 +224,9 @@ final class MacraOnboardingCoordinator: ObservableObject {
         switch currentStep {
         case .welcome: return true
         case .meetNora: return true
+        case .fwpMacrosHandoff:
+            // The handoff screen drives its own CTA; no global "continue" button.
+            return false
         case .sex: return answers.sex != nil
         case .age: return answers.birthdate != nil
         case .height: return (answers.heightCm ?? 0) > 50
@@ -218,6 +234,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case .goalWeight: return (answers.goalWeightKg ?? 0) > 20
         case .pace: return answers.pace != nil
         case .activityLevel: return answers.activityLevel != nil
+        case .sportSelection: return answers.sport != nil
         case .dietaryPreference: return answers.dietaryPreference != nil
         case .biggestStruggle: return answers.biggestStruggle != nil
         case .generatingPlan: return true
@@ -255,7 +272,69 @@ final class MacraOnboardingCoordinator: ObservableObject {
         }
     }
 
+    // MARK: - FWP Handoff
+
+    /// Called when the user lands on the handoff step. Reads the shared User doc
+    /// from Firestore and either auto-advances past this step (no FWP macros) or
+    /// surfaces the choice card.
+    func loadFWPHandoff() {
+        fwpHandoffState = .checking
+        FWPHandoffService.fetchProfile { [weak self] profile in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                // Always pre-populate answers we know — saves typing either way.
+                self.seedAnswers(from: profile)
+
+                if let macros = profile.personalMacros {
+                    self.fwpHandoffState = .available(macros)
+                } else {
+                    self.fwpHandoffState = .unavailable
+                    // Skip the handoff step entirely when there's nothing to offer.
+                    self.advance()
+                }
+            }
+        }
+    }
+
+    /// User tapped "Use my FWP macros" — pre-populate biometrics, set planMacros
+    /// directly, and skip the biometric steps on next `advance()`.
+    func acceptFWPMacros(_ macros: MacroRecommendations) {
+        usingFWPMacros = true
+        fwpHandoffState = .accepted
+        let userId = UserService.sharedInstance.user?.id ?? Auth.auth().currentUser?.uid ?? ""
+        planMacros = MacroRecommendation(
+            userId: userId,
+            calories: macros.calories,
+            protein: macros.protein,
+            carbs: macros.carbs,
+            fat: macros.fat
+        )
+        advance()
+    }
+
+    /// User tapped "Reassess" — keep the pre-populated answers as starting values
+    /// and proceed through the biometric steps normally.
+    func reassessAfterHandoff() {
+        usingFWPMacros = false
+        fwpHandoffState = .reassessing
+        advance()
+    }
+
+    /// Copies what we can from the FWP profile into Macra's answers dict.
+    private func seedAnswers(from profile: FWPHandoffProfile) {
+        if answers.sex == nil, let sex = profile.sex { answers.sex = sex }
+        if answers.birthdate == nil, let birthdate = profile.birthdate { answers.birthdate = birthdate }
+        if answers.heightCm == nil, let heightCm = profile.heightCm { answers.heightCm = heightCm }
+        if answers.currentWeightKg == nil, let weight = profile.currentWeightKg { answers.currentWeightKg = weight }
+        if answers.activityLevel == nil, let activity = profile.activityLevel { answers.activityLevel = activity }
+    }
+
     func loadPlanMacros() {
+        // When the user accepted FWP macros, planMacros is already set from the
+        // shared User doc — don't overwrite it with a prediction computed from
+        // partially-populated answers.
+        if usingFWPMacros, planMacros != nil { return }
+
         if let prediction = MacraOnboardingPrediction.compute(from: answers) {
             let userId = UserService.sharedInstance.user?.id ?? Auth.auth().currentUser?.uid ?? ""
             planMacros = prediction.toMacroRecommendation(userId: userId)
@@ -328,6 +407,23 @@ final class MacraOnboardingCoordinator: ObservableObject {
             dismissPaywall()
             return
         }
+
+        // When the user accepted FWP macros we skip the FWP-mirrored
+        // biometric steps (sex/age/height/currentWeight/activityLevel)
+        // since those are already populated from the shared User doc.
+        if usingFWPMacros,
+           [.sex, .age, .height, .currentWeight, .activityLevel].contains(nextStep) {
+            currentStep = nextStep
+            advance()
+            return
+        }
+
+        if nextStep == .sportSelection, answers.activityLevel != .athlete {
+            currentStep = nextStep
+            advance()
+            return
+        }
+
         withAnimation(.easeInOut(duration: 0.3)) {
             currentStep = nextStep
         }
@@ -336,6 +432,20 @@ final class MacraOnboardingCoordinator: ObservableObject {
     func back() {
         let prev = currentStep.rawValue - 1
         guard let prevStep = Step(rawValue: prev) else { return }
+
+        if usingFWPMacros,
+           [.sex, .age, .height, .currentWeight, .activityLevel].contains(prevStep) {
+            currentStep = prevStep
+            back()
+            return
+        }
+
+        if prevStep == .sportSelection, answers.activityLevel != .athlete {
+            currentStep = prevStep
+            back()
+            return
+        }
+
         withAnimation(.easeInOut(duration: 0.3)) {
             currentStep = prevStep
         }
@@ -368,16 +478,42 @@ final class MacraOnboardingCoordinator: ObservableObject {
     }
 
     private func saveMacroTargetsFromPrediction(completion: @escaping () -> Void) {
-        guard let prediction = MacraOnboardingPrediction.compute(from: answers),
-              let userId = UserService.sharedInstance.user?.id ?? Auth.auth().currentUser?.uid,
+        guard let userId = UserService.sharedInstance.user?.id ?? Auth.auth().currentUser?.uid,
               !userId.isEmpty else {
             completion()
             return
         }
 
-        let recommendation = prediction.toMacroRecommendation(userId: userId)
-        MacroRecommendationService.sharedInstance.saveMacroRecommendation(recommendation) { _ in
+        // Resolve the recommendation to save: accepted FWP macros take priority,
+        // otherwise compute from the user's own answers.
+        let recommendation: MacroRecommendation
+        if usingFWPMacros, let existing = planMacros {
+            recommendation = MacroRecommendation(
+                userId: userId,
+                calories: existing.calories,
+                protein: existing.protein,
+                carbs: existing.carbs,
+                fat: existing.fat
+            )
+        } else if let prediction = MacraOnboardingPrediction.compute(from: answers) {
+            recommendation = prediction.toMacroRecommendation(userId: userId)
+        } else {
             completion()
+            return
+        }
+
+        MacroRecommendationService.sharedInstance.saveMacroRecommendation(recommendation) { _ in
+            // Mirror back to FWP (`user.macros["personal"]`) so the shared User doc
+            // reflects whatever Macra's onboarding settled on — keeps all 3 apps in sync.
+            let mirrored = MacroRecommendations(
+                calories: recommendation.calories,
+                protein: recommendation.protein,
+                carbs: recommendation.carbs,
+                fat: recommendation.fat
+            )
+            FWPHandoffService.mirrorToFWPPersonal(mirrored) { _ in
+                completion()
+            }
         }
     }
 
@@ -510,6 +646,8 @@ struct MacraOnboardingFlowView: View {
                 WelcomeStepView(coordinator: coordinator)
             case .meetNora:
                 MeetNoraStepView(coordinator: coordinator)
+            case .fwpMacrosHandoff:
+                FWPMacrosHandoffStepView(coordinator: coordinator)
             case .sex:
                 SexStepView(coordinator: coordinator)
             case .age:
@@ -524,6 +662,8 @@ struct MacraOnboardingFlowView: View {
                 PaceStepView(coordinator: coordinator)
             case .activityLevel:
                 ActivityLevelStepView(coordinator: coordinator)
+            case .sportSelection:
+                SportSelectionStepView(coordinator: coordinator)
             case .dietaryPreference:
                 DietaryPreferenceStepView(coordinator: coordinator)
             case .biggestStruggle:

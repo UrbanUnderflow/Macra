@@ -42,6 +42,7 @@ enum MacraNoraThreadCache {
         let userDefaults = UserDefaults.standard
         let k = key(userId: userId, dayKey: dayKey)
         let messages = decodedMessages(forKey: k, userDefaults: userDefaults)
+        print("[Macra][Nora][CACHE-LOAD-RAW] cacheKey=\(k) requestedDayKey=\(dayKey) count=\(messages.count) storedDayKeys=\(messages.map { $0.dayKey })")
 
         guard normalizedUserId(userId) != anonymousUserId else {
             return messages.sorted { $0.timestamp < $1.timestamp }
@@ -57,6 +58,7 @@ enum MacraNoraThreadCache {
             return messages.sorted { $0.timestamp < $1.timestamp }
         }
 
+        print("[Macra][Nora][CACHE-LOAD-ANON-MIGRATE] anonKey=\(anonKey) targetKey=\(k) anonCount=\(anonymousMessages.count)")
         let merged = merge(local: messages, incoming: anonymousMessages)
         save(merged, userId: userId, dayKey: dayKey)
         return merged
@@ -71,6 +73,8 @@ enum MacraNoraThreadCache {
     }
 
     static func append(_ message: MacraNoraMessage, userId: String?) {
+        let bucketKey = key(userId: userId, dayKey: message.dayKey)
+        print("[Macra][Nora][CACHE-APPEND] msgId=\(message.id) bucketKey=\(bucketKey) msgDayKey=\(message.dayKey) ts=\(message.timestamp)")
         var current = load(userId: userId, dayKey: message.dayKey)
         if let existing = current.firstIndex(where: { $0.id == message.id }) {
             current[existing] = message

@@ -60,6 +60,9 @@ final class NoraPlansViewModel: ObservableObject {
                 return
             }
             guard let data = snapshot?.data() else { return }
+            // User-mirrored plans (written by selectPlan) live in the same
+            // doc but aren't Nora-generated — exclude them from this view.
+            if (data["source"] as? String) == "user-selected" { return }
             if let plan = Self.decodePlan(from: data, docId: "current", isCurrent: true) {
                 collected.append(plan)
             }
@@ -74,7 +77,9 @@ final class NoraPlansViewModel: ObservableObject {
             }
             guard let documents = snapshot?.documents else { return }
             for doc in documents {
-                if let plan = Self.decodePlan(from: doc.data(), docId: doc.documentID, isCurrent: false) {
+                let data = doc.data()
+                if (data["source"] as? String) == "user-selected" { continue }
+                if let plan = Self.decodePlan(from: data, docId: doc.documentID, isCurrent: false) {
                     collected.append(plan)
                 }
             }
@@ -168,6 +173,7 @@ final class MealPlanningRootViewModel: ObservableObject {
 
     func loadMealPlans() {
         isLoading = true
+        print("[Macra][Playbook.load] Fetching meal plans for user \(userId)")
         store.fetchMealPlans(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -175,9 +181,50 @@ final class MealPlanningRootViewModel: ObservableObject {
                 switch result {
                 case .success(let plans):
                     self.mealPlans = plans.sorted { $0.updatedAt > $1.updatedAt }
+                    let activePlans = self.mealPlans.filter { $0.isActive }
+                    print("[Macra][Playbook.load] Loaded \(self.mealPlans.count) plans, \(activePlans.count) active: \(activePlans.map { $0.planName })")
+                    self.reconcileActivePlanWithCurrent()
                 case .failure(let error):
+                    print("[Macra][Playbook.load] ❌ Fetch failed: \(error.localizedDescription)")
                     self.errorMessage = error.localizedDescription
                 }
+            }
+        }
+    }
+
+    /// On every load, ensure the playbook's active plan matches what's
+    /// stored at `macraSuggestedMealPlans/current` (which drives Today's fuel).
+    /// If an active plan exists but the current doc was written by a different
+    /// source (or doesn't reflect this plan's name), re-mirror it. This catches
+    /// users whose active flag was set before the mirror code shipped.
+    private func reconcileActivePlanWithCurrent() {
+        guard let active = mealPlans.first(where: { $0.isActive }) else {
+            print("[Macra][Playbook.reconcile] No active plan to reconcile")
+            return
+        }
+        guard !userId.isEmpty else { return }
+
+        let currentRef = Firestore.firestore()
+            .collection("users").document(userId)
+            .collection("macraSuggestedMealPlans").document("current")
+
+        currentRef.getDocument { [weak self] snapshot, error in
+            guard let self else { return }
+            if let error {
+                print("[Macra][Playbook.reconcile] ❌ Failed to read current doc: \(error.localizedDescription)")
+                return
+            }
+            let data = snapshot?.data()
+            let source = data?["source"] as? String ?? "<none>"
+            let mirroredName = data?["planName"] as? String ?? "<none>"
+            print("[Macra][Playbook.reconcile] Active plan='\(active.planName)' | current.source='\(source)' | current.planName='\(mirroredName)'")
+
+            let needsMirror = source != "user-selected" || mirroredName != active.planName
+            if needsMirror {
+                print("[Macra][Playbook.reconcile] ⚠️ Mismatch detected — re-mirroring active plan to current")
+                self.mirrorPlanAsCurrent(active)
+            } else {
+                print("[Macra][Playbook.reconcile] ✓ Already in sync")
             }
         }
     }
@@ -380,6 +427,157 @@ final class MealPlanningRootViewModel: ObservableObject {
         }
     }
 
+    func selectPlan(planId: String, completion: ((Result<MealPlan, Error>) -> Void)? = nil) {
+        guard let target = plan(with: planId) else {
+            print("[Macra][Playbook.selectPlan] ❌ Plan not found: \(planId)")
+            completion?(.failure(MealPlanningStoreError.notFound))
+            return
+        }
+        print("[Macra][Playbook.selectPlan] ▶︎ Selecting '\(target.planName)' (id=\(planId))")
+
+        let group = DispatchGroup()
+        var saveError: Error?
+        let lock = NSLock()
+        var updatedActive: MealPlan = target
+
+        // Deactivate every other plan that's currently active so only one
+        // playbook plan reads as active at a time.
+        for var other in mealPlans where other.isActive && other.id != planId {
+            other.isActive = false
+            other.updatedAt = Date()
+            group.enter()
+            store.saveMealPlan(other) { result in
+                if case .failure(let error) = result {
+                    lock.lock(); if saveError == nil { saveError = error }; lock.unlock()
+                }
+                group.leave()
+            }
+        }
+
+        var promoted = target
+        promoted.isActive = true
+        promoted.updatedAt = Date()
+        group.enter()
+        store.saveMealPlan(promoted) { result in
+            switch result {
+            case .success(let saved):
+                updatedActive = saved
+            case .failure(let error):
+                lock.lock(); if saveError == nil { saveError = error }; lock.unlock()
+            }
+            group.leave()
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self else { return }
+            if let saveError {
+                self.errorMessage = saveError.localizedDescription
+                completion?(.failure(saveError))
+                return
+            }
+            self.mealPlans = self.mealPlans.map { existing in
+                if existing.id == updatedActive.id { return updatedActive }
+                if existing.isActive { var copy = existing; copy.isActive = false; return copy }
+                return existing
+            }
+            self.statusMessage = "Selected \(updatedActive.planName)."
+            // Mirror the selected plan to `macraSuggestedMealPlans/current` so
+            // Today's fuel actually reflects the user's choice. Without this,
+            // selectPlan would only flip the playbook flag and the daily plan
+            // screen would keep showing the old Nora plan.
+            self.mirrorPlanAsCurrent(updatedActive)
+            completion?(.success(updatedActive))
+        }
+    }
+
+    private func mirrorPlanAsCurrent(_ plan: MealPlan) {
+        guard !userId.isEmpty else {
+            print("[Macra][Playbook.mirror] ❌ No userId, skipping mirror")
+            return
+        }
+        let db = Firestore.firestore()
+        let planRoot = db.collection("users").document(userId).collection("macraSuggestedMealPlans")
+        let currentRef = planRoot.document("current")
+
+        let now = Date().timeIntervalSince1970 * 1000
+        let suggestedDict = Self.suggestedPlanDict(from: plan)
+        let mealCount = (suggestedDict["meals"] as? [[String: Any]])?.count ?? 0
+
+        print("[Macra][Playbook.mirror] ▶︎ Mirroring '\(plan.planName)' to macraSuggestedMealPlans/current — \(mealCount) meals, \(plan.totalCalories) cal")
+
+        let payload: [String: Any] = [
+            "userId": userId,
+            "plan": suggestedDict,
+            "inputMacros": [
+                "calories": plan.totalCalories,
+                "protein": plan.totalProtein,
+                "carbs": plan.totalCarbs,
+                "fat": plan.totalFat
+            ],
+            "generatedAt": now,
+            "source": "user-selected",
+            "planName": plan.planName
+        ]
+
+        // Archive the current doc to history before overwriting, mirroring
+        // the netlify generator's behavior so prior plans aren't lost.
+        currentRef.getDocument { snapshot, _ in
+            if let data = snapshot?.data(), data["plan"] != nil {
+                let archiveTimestamp = (data["generatedAt"] as? Double) ?? now
+                let historyId = String(Int(archiveTimestamp))
+                let priorSource = data["source"] as? String ?? "nora"
+                let priorName = data["planName"] as? String ?? "<unnamed>"
+                print("[Macra][Playbook.mirror] Archiving prior current (source='\(priorSource)', name='\(priorName)') → history/\(historyId)")
+                var archived = data
+                archived["archivedAt"] = now
+                planRoot.document("history").collection("items")
+                    .document(historyId)
+                    .setData(archived, merge: false)
+            } else {
+                print("[Macra][Playbook.mirror] No prior current doc to archive")
+            }
+            currentRef.setData(payload, merge: false) { writeError in
+                if let writeError {
+                    print("[Macra][Playbook.mirror] ❌ Write failed: \(writeError.localizedDescription)")
+                } else {
+                    print("[Macra][Playbook.mirror] ✓ Wrote new current doc — broadcasting activePlanDidChange")
+                    DispatchQueue.main.async {
+                        NotificationCenter.default.post(name: NutritionCoreNotification.activePlanDidChange, object: nil)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func suggestedPlanDict(from plan: MealPlan) -> [String: Any] {
+        let meals: [[String: Any]] = plan.orderedMeals.map { plannedMeal in
+            let title: String
+            if plannedMeal.meals.count == 1, let firstName = plannedMeal.meals.first?.name, !firstName.isEmpty {
+                title = firstName
+            } else {
+                title = "Meal \(plannedMeal.order)"
+            }
+            let items: [[String: Any]] = plannedMeal.meals.map { meal in
+                [
+                    "name": meal.name,
+                    "quantity": meal.ingredients.joined(separator: ", "),
+                    "calories": meal.calories,
+                    "protein": meal.protein,
+                    "carbs": meal.carbs,
+                    "fat": meal.fat
+                ]
+            }
+            return [
+                "title": title,
+                "items": items
+            ]
+        }
+        return [
+            "meals": meals,
+            "notes": ""
+        ]
+    }
+
     private func persistPlan(_ plan: MealPlan, completion: ((Result<MealPlan, Error>) -> Void)? = nil) {
         store.saveMealPlan(plan) { [weak self] result in
             DispatchQueue.main.async {
@@ -390,6 +588,10 @@ final class MealPlanningRootViewModel: ObservableObject {
                         self.mealPlans[index] = updatedPlan
                     } else {
                         self.mealPlans.append(updatedPlan)
+                    }
+                    // Keep Today's fuel in sync with edits to the active plan.
+                    if updatedPlan.isActive {
+                        self.mirrorPlanAsCurrent(updatedPlan)
                     }
                     completion?(.success(updatedPlan))
                 case .failure(let error):

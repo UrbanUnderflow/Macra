@@ -19,9 +19,10 @@ final class MealService {
             return
         }
 
-        let documentID = mealLogDocumentID(for: date, mealId: meal.id)
+        let resolvedTimestamp = Self.resolveLogTimestamp(forTargetDay: date, originalTimestamp: meal.createdAt)
+        let documentID = mealLogDocumentID(for: resolvedTimestamp, mealId: meal.id)
         var storedMeal = meal
-        storedMeal.createdAt = date
+        storedMeal.createdAt = resolvedTimestamp
         storedMeal.updatedAt = Date()
 
         db.collection(NutritionCoreConfiguration.usersCollection)
@@ -52,13 +53,13 @@ final class MealService {
         let batch = db.batch()
         let storedMeals = meals.map { meal -> Meal in
             var storedMeal = meal
-            storedMeal.createdAt = date
+            storedMeal.createdAt = Self.resolveLogTimestamp(forTargetDay: date, originalTimestamp: meal.createdAt)
             storedMeal.updatedAt = Date()
             return storedMeal
         }
 
         for meal in storedMeals {
-            let documentID = mealLogDocumentID(for: date, mealId: meal.id)
+            let documentID = mealLogDocumentID(for: meal.createdAt, mealId: meal.id)
             let docRef = db.collection(NutritionCoreConfiguration.usersCollection)
                 .document(resolvedUserId)
                 .collection(NutritionCoreConfiguration.mealLogsCollection)
@@ -648,6 +649,40 @@ final class MealService {
     }
 
     // MARK: - Helpers
+
+    /// Decides what timestamp a logged meal should carry. Callers pass a
+    /// target *day* (often `selectedDate`, which is typically `startOfDay` →
+    /// midnight); naively writing that to `createdAt` makes every meal land
+    /// at 12:00 AM. This helper preserves a meaningful time-of-day:
+    ///
+    /// - If the meal already has a `createdAt` that falls on the target day,
+    ///   trust the caller and keep it (handles "set createdAt = Date() before
+    ///   saving" patterns and same-day re-logs).
+    /// - Else if the target day is today, use right-now.
+    /// - Else project the current wall-clock time-of-day onto the target day
+    ///   so the meal sorts naturally in the past day's timeline.
+    static func resolveLogTimestamp(forTargetDay targetDay: Date, originalTimestamp: Date) -> Date {
+        let calendar = Calendar.current
+        let now = Date()
+
+        if originalTimestamp != .distantPast,
+           originalTimestamp.timeIntervalSince1970 > 0,
+           calendar.isDate(originalTimestamp, inSameDayAs: targetDay) {
+            return originalTimestamp
+        }
+
+        if calendar.isDate(targetDay, inSameDayAs: now) {
+            return now
+        }
+
+        let timeOfDay = calendar.dateComponents([.hour, .minute, .second], from: now)
+        return calendar.date(
+            bySettingHour: timeOfDay.hour ?? 12,
+            minute: timeOfDay.minute ?? 0,
+            second: timeOfDay.second ?? 0,
+            of: targetDay
+        ) ?? targetDay
+    }
 
     private func mealLogDocumentID(for date: Date, mealId: String) -> String {
         // Loaded meals carry the full Firestore document ID as `meal.id` (e.g.

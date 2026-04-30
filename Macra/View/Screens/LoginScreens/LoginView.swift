@@ -1,5 +1,6 @@
 import SwiftUI
 import FirebaseAuth
+import AuthenticationServices
 
 final class LoginViewModel: ObservableObject {
     @Published var appCoordinator: AppCoordinator
@@ -136,6 +137,27 @@ final class LoginViewModel: ObservableObject {
                 case .success:
                     self?.appCoordinator.handleLogin()
                 case .failure(let error):
+                    self?.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func signInWithApple() {
+        errorMessage = nil
+        isWorking = true
+        appCoordinator.signInWithApple { [weak self] result in
+            DispatchQueue.main.async {
+                self?.isWorking = false
+                switch result {
+                case .success:
+                    self?.appCoordinator.handleLogin()
+                case .failure(let error):
+                    let nsError = error as NSError
+                    if nsError.domain == ASAuthorizationError.errorDomain,
+                       nsError.code == ASAuthorizationError.canceled.rawValue {
+                        return
+                    }
                     self?.errorMessage = error.localizedDescription
                 }
             }
@@ -300,8 +322,67 @@ struct LoginView: View {
                     }
                 )
 
+                MacraAuthDivider()
+
+                MacraAppleAuthButton(
+                    isSignUp: viewModel.isSignUp,
+                    isWorking: viewModel.isWorking
+                ) {
+                    focusedField = nil
+                    viewModel.signInWithApple()
+                }
             }
         }
+    }
+}
+
+// MARK: - Apple auth button + divider
+
+struct MacraAuthDivider: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(Color.white.opacity(0.1))
+                .frame(height: 1)
+            Text("OR")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .tracking(1.6)
+                .foregroundColor(Color.white.opacity(0.35))
+            Rectangle()
+                .fill(Color.white.opacity(0.1))
+                .frame(height: 1)
+        }
+    }
+}
+
+struct MacraAppleAuthButton: View {
+    let isSignUp: Bool
+    let isWorking: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "applelogo")
+                    .font(.system(size: 18, weight: .bold))
+                Text(isSignUp ? "Sign up with Apple" : "Sign in with Apple")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+            }
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.black)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isWorking)
+        .opacity(isWorking ? 0.6 : 1)
     }
 }
 
@@ -561,8 +642,9 @@ struct MacraMealFeedBackdrop: View {
         let offsetRaw = CGFloat(t).truncatingRemainder(dividingBy: CGFloat(totalHeight / speed)) * CGFloat(speed)
         let baseOffset = -offsetRaw + CGFloat(seed) * 140
 
+        let looped = entries + entries
         return VStack(spacing: cardSpacing) {
-            ForEach(entries + entries, id: \.self) { entry in
+            ForEach(Array(looped.enumerated()), id: \.offset) { _, entry in
                 MacraMealFeedCard(entry: entry)
                     .frame(height: cardHeight)
             }

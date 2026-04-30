@@ -12,6 +12,7 @@ class ServiceManager: ObservableObject {
     let purchaseService = PurchaseService.sharedInstance
     let gptService = GPTService.sharedInstance
     let entryService = EntryService.sharedInstance
+    let appleSignInService = AppleSignInService.sharedInstance
 
     
     @Published var isConfigured = false

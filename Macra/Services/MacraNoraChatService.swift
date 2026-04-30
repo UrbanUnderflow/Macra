@@ -29,6 +29,7 @@ final class MacraNoraChatService {
             return
         }
 
+        print("[Macra][Nora][FIRESTORE-SAVE] uid=\(resolvedUserId) msgId=\(message.id) dayKey=\(message.dayKey) role=\(message.role.rawValue) ts=\(message.timestamp)")
         db.collection(NutritionCoreConfiguration.usersCollection)
             .document(resolvedUserId)
             .collection(NutritionCoreConfiguration.noraChatCollection)
@@ -38,6 +39,7 @@ final class MacraNoraChatService {
                     print("[Macra][NoraChatService.save] ❌ \(message.id) → \(error.localizedDescription)")
                     completion?(.failure(error))
                 } else {
+                    print("[Macra][Nora][FIRESTORE-SAVE-OK] msgId=\(message.id) dayKey=\(message.dayKey)")
                     completion?(.success(()))
                 }
             }
@@ -55,6 +57,7 @@ final class MacraNoraChatService {
         }
 
         let dayKey = date.macraFoodJournalDayKey
+        print("[Macra][Nora][FIRESTORE-LOAD-START] uid=\(resolvedUserId) requestedDate=\(date) requestedDayKey=\(dayKey)")
         db.collection(NutritionCoreConfiguration.usersCollection)
             .document(resolvedUserId)
             .collection(NutritionCoreConfiguration.noraChatCollection)
@@ -65,9 +68,28 @@ final class MacraNoraChatService {
                     completion(.failure(error))
                     return
                 }
-                let messages = (snapshot?.documents.compactMap {
+                let rawDocs = snapshot?.documents ?? []
+                print("[Macra][Nora][FIRESTORE-LOAD-RAW] requestedDayKey=\(dayKey) docCount=\(rawDocs.count)")
+                for doc in rawDocs {
+                    let data = doc.data()
+                    let storedDayKey = data["dayKey"] as? String ?? "<missing>"
+                    let storedRole = data["role"] as? String ?? "<missing>"
+                    let storedTs: String = {
+                        if let ts = data["timestamp"] as? Double {
+                            return "\(Date(timeIntervalSince1970: ts))"
+                        }
+                        if let ts = data["timestamp"] as? Timestamp {
+                            return "\(ts.dateValue())"
+                        }
+                        return "<missing>"
+                    }()
+                    let preview = (data["content"] as? String).map { String($0.prefix(40)) } ?? "<missing>"
+                    print("[Macra][Nora][FIRESTORE-LOAD-DOC] id=\(doc.documentID) storedDayKey=\(storedDayKey) role=\(storedRole) ts=\(storedTs) preview=\(preview)")
+                }
+                let messages = (rawDocs.compactMap {
                     MacraNoraMessage(id: $0.documentID, dictionary: $0.data())
-                } ?? []).sorted { $0.timestamp < $1.timestamp }
+                }).sorted { $0.timestamp < $1.timestamp }
+                print("[Macra][Nora][FIRESTORE-LOAD-OK] requestedDayKey=\(dayKey) parsedCount=\(messages.count)")
                 completion(.success(messages))
             }
     }

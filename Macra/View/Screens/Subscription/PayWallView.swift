@@ -153,12 +153,22 @@ struct PayWallView_Previews: PreviewProvider {
 }
 
 struct MacraReviewPaywallScreenshotView: View {
+    @ObservedObject private var offering = OfferingViewModel.sharedInstance
+
     private let featureChips = [
         "AI meal scan",
         "Macro tracking",
         "Nutrition insights",
         "Meal planning"
     ]
+
+    private var annualPrice: String? {
+        offering.planOptions.first(where: { $0.periodKind == .year })?.priceLabel
+    }
+
+    private var monthlyPrice: String? {
+        offering.planOptions.first(where: { $0.periodKind == .month })?.priceLabel
+    }
 
     var body: some View {
         ZStack {
@@ -192,7 +202,7 @@ struct MacraReviewPaywallScreenshotView: View {
                             badge: "Most Popular",
                             title: "Annual",
                             subtitle: "A full year of Macra Plus",
-                            price: "$79.99",
+                            price: annualPrice,
                             cadence: "per year",
                             supportingLine: "Best value for everyday tracking"
                         )
@@ -203,7 +213,7 @@ struct MacraReviewPaywallScreenshotView: View {
                             badge: "Flexible",
                             title: "Monthly",
                             subtitle: "Stay consistent month to month",
-                            price: "$12.99",
+                            price: monthlyPrice,
                             cadence: "per month",
                             supportingLine: "Start anytime, cancel anytime"
                         )
@@ -241,6 +251,10 @@ struct MacraReviewPaywallScreenshotView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .onAppear {
+            guard offering.planOptions.isEmpty, !offering.isLoadingPackages else { return }
+            Task { await offering.start() }
+        }
     }
 }
 
@@ -250,7 +264,7 @@ private struct MacraReviewPlanCard: View {
     let badge: String
     let title: String
     let subtitle: String
-    let price: String
+    let price: String?
     let cadence: String
     let supportingLine: String
 
@@ -283,9 +297,16 @@ private struct MacraReviewPlanCard: View {
                 Spacer(minLength: 12)
 
                 VStack(alignment: .trailing, spacing: 8) {
-                    Text(price)
-                        .font(.system(size: 28, weight: .heavy, design: .rounded))
-                        .foregroundColor(.white)
+                    if let price {
+                        Text(price)
+                            .font(.system(size: 28, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                    } else {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(.white)
+                            .frame(height: 34)
+                    }
 
                     Text(cadence)
                         .font(.system(size: 13, weight: .medium))

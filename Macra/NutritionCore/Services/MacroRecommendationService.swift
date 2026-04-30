@@ -34,7 +34,18 @@ final class MacroRecommendationService {
             if let error {
                 completion(.failure(error))
             } else {
-                completion(.success(storedRecommendation))
+                // Mirror to the shared User doc so FWP + PulseCheck see
+                // the same target without having to query Macra's
+                // macro-profile collection.
+                let mirrored = MacroRecommendations(
+                    calories: storedRecommendation.calories,
+                    protein: storedRecommendation.protein,
+                    carbs: storedRecommendation.carbs,
+                    fat: storedRecommendation.fat
+                )
+                FWPHandoffService.mirrorToFWPPersonal(mirrored) { _ in
+                    completion(.success(storedRecommendation))
+                }
             }
         }
     }

@@ -29,6 +29,22 @@ struct MealPlanningRootView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     heroCard
 
+                    // Prefer a user-selected playbook plan (set via "Select
+                    // plan"). Fall back to the current Nora plan, which is
+                    // what actually drives Today's fuel until the user picks
+                    // their own.
+                    if let activeUserPlan = viewModel.mealPlans.first(where: { $0.isActive }) {
+                        ActivePlanSlimCard(
+                            name: activeUserPlan.planName,
+                            mealCount: activeUserPlan.plannedMeals.count
+                        )
+                    } else if let active = noraPlansViewModel.plans.first(where: { $0.isCurrent }) {
+                        ActivePlanSlimCard(
+                            name: "Starter Nora Plan",
+                            mealCount: active.plan.meals.count
+                        )
+                    }
+
                     chromaticTabSwitcher
 
                     if selectedTab == .plans {
@@ -223,24 +239,25 @@ struct MealPlanningRootView: View {
                     activeEditor = .create
                 }
             } else {
-                LazyVStack(spacing: 14) {
+                LazyVStack(spacing: 18) {
                     ForEach(viewModel.orderedMealPlans) { plan in
-                        NavigationLink {
-                            MealPlanDetailView(viewModel: viewModel, planID: plan.id) {
-                                mealSelectionPlan = plan
-                            } onRename: {
-                                activeEditor = .rename(planId: plan.id, currentName: plan.planName)
+                        VStack(spacing: 10) {
+                            NavigationLink {
+                                MealPlanDetailView(viewModel: viewModel, planID: plan.id) {
+                                    mealSelectionPlan = plan
+                                } onRename: {
+                                    activeEditor = .rename(planId: plan.id, currentName: plan.planName)
+                                }
+                            } label: {
+                                MealPlanSummaryCard(plan: plan)
                             }
-                        } label: {
-                            MealPlanSummaryCard(plan: plan) {
-                                mealSelectionPlan = plan
-                            } onRename: {
-                                activeEditor = .rename(planId: plan.id, currentName: plan.planName)
-                            } onDelete: {
-                                viewModel.deletePlan(planId: plan.id) { _ in }
+                            .buttonStyle(.plain)
+
+                            SelectPlanButton(isSelected: plan.isActive) {
+                                print("[Macra][Playbook.UI] Tapped select on '\(plan.planName)' (currently isActive=\(plan.isActive))")
+                                viewModel.selectPlan(planId: plan.id) { _ in }
                             }
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -311,6 +328,92 @@ private struct PlanStatTile: View {
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(color.opacity(0.32), lineWidth: 1)
+        )
+    }
+}
+
+private struct SelectPlanButton: View {
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    private let lime = Color(hex: "E0FE10")
+
+    var body: some View {
+        // Always actionable — re-tapping a selected plan force-syncs it to
+        // Today's fuel, useful if the mirror got out of sync.
+        Button(action: onTap) {
+            HStack(spacing: 8) {
+                Image(systemName: isSelected ? "checkmark.seal.fill" : "circle.dashed")
+                    .font(.system(size: 13, weight: .bold))
+                Text(isSelected ? "Re-apply selected plan" : "Select plan")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+            }
+            .foregroundColor(isSelected ? .black : lime)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                Capsule().fill(isSelected ? lime : lime.opacity(0.10))
+            )
+            .overlay(
+                Capsule().strokeBorder(lime.opacity(isSelected ? 0 : 0.45), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ActivePlanSlimCard: View {
+    let name: String
+    let mealCount: Int
+
+    private let lime = Color(hex: "E0FE10")
+    private let accent = Color(hex: "8B5CF6")
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(lime.opacity(0.18)).frame(width: 36, height: 36)
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(lime)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ACTIVE PLAN")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .tracking(0.9)
+                    .foregroundColor(lime.opacity(0.85))
+                Text(name)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Text("\(mealCount) meals")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .tracking(0.4)
+                .foregroundColor(.white.opacity(0.65))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.white.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(lime.opacity(0.06))
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(lime.opacity(0.32), lineWidth: 1)
         )
     }
 }
@@ -386,9 +489,6 @@ private struct PlansEmptyCard: View {
 
 struct MealPlanSummaryCard: View {
     let plan: MealPlan
-    var onAddMeals: () -> Void
-    var onRename: () -> Void
-    var onDelete: () -> Void
 
     private var accent: Color { Color(hex: "8B5CF6") }
 
@@ -397,26 +497,13 @@ struct MealPlanSummaryCard: View {
     }
 
     var body: some View {
+        // Display-only: this card is for browsing & switching plans. All
+        // structural edits (add meals, rename, delete) live behind the
+        // detail view's Edit toggle so this surface stays focused.
         VStack(alignment: .leading, spacing: 16) {
             header
 
             macroTileRow
-
-            HStack(spacing: 10) {
-                MealPlanSecondaryButton(title: "Add meals", systemImage: "plus.circle", accent: accent, onTap: onAddMeals)
-                MealPlanSecondaryButton(title: "Rename", systemImage: "pencil", accent: accent, onTap: onRename)
-            }
-
-            Button(action: onDelete) {
-                HStack(spacing: 6) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Delete plan")
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                }
-                .foregroundColor(Color(hex: "EF4444"))
-            }
-            .buttonStyle(.plain)
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -430,10 +517,21 @@ struct MealPlanSummaryCard: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(plan.planName)
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(2)
+                HStack(spacing: 8) {
+                    Text(plan.planName)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                    if plan.isActive {
+                        Text("Active")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .tracking(0.6)
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color(hex: "E0FE10")))
+                    }
+                }
                 Text("\(plan.plannedMeals.count) planned meals")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .tracking(0.6)
@@ -468,32 +566,20 @@ struct MealPlanSummaryCard: View {
     }
 
     private var cardBackground: some View {
+        // Solid dark base + subtle accent tint so the card reads cleanly
+        // against the page's blue/charcoal gradient. The previous
+        // `.ultraThinMaterial` version blended into the background.
         ZStack {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color(hex: "13141A"))
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(accent.opacity(0.06))
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.08), .clear, .clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(accent.opacity(0.10))
         }
     }
 
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 22, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [accent.opacity(0.45), accent.opacity(0.14), .clear],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
+            .strokeBorder(plan.isActive ? Color(hex: "E0FE10").opacity(0.55) : accent.opacity(0.45), lineWidth: plan.isActive ? 1.5 : 1)
     }
 }
 
@@ -734,7 +820,7 @@ private struct NoraPlanCard: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(plan.isCurrent ? "Current Nora plan" : "Nora plan")
+                Text(plan.isCurrent ? "Starter Nora Plan" : "Nora plan")
                     .font(.system(size: 18, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                     .lineLimit(2)

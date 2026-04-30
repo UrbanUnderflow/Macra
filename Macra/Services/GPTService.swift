@@ -25,6 +25,7 @@ class GPTService {
     - Split every meal into individual food items. Never put "egg whites + rice cake + almond butter" into one item; create one ingredient/item per food with its own quantity and macros.
     - Use quantity-based nutrition math for each ingredient before summing the meal. Use standard USDA-style values when no brand label is provided.
     - If portion sizes are not specified, use realistic defaults and reflect that assumption in the `quantity` field.
+    - REQUIRED: every ingredient/item in `ingredients` MUST have a non-empty `quantity` string AND non-zero per-ingredient macros (calories, protein, carbs, fat — at least one positive, derived via 4/4/9 from the others). When exact amounts are unknown, output your best estimate using a unit (e.g. "1 large", "~1 cup", "about 3 oz", "100g"). Returning an ingredient with empty `quantity`, or with all per-ingredient macros set to zero while the meal totals are nonzero, is forbidden — split the meal totals across ingredients instead.
     - For prep-style plans, assume meat/fish ounces are cooked edible weight, rice/potato grams are cooked weight unless explicitly raw/dry, cream of rice grams/scoops are dry, egg whites are liquid volume, and "1 scoop" protein powder is one standard scoop unless a brand label is shown.
     - Use these reference anchors when the source does not provide a label: 1 cup liquid egg whites = 126 kcal/26P/2C/0F; 1 large whole egg = 70 kcal/6P/0C/5F; 35g or 1 scoop cream of rice = 130 kcal/2P/28C/0F; 1 plain rice cake = 35 kcal/1P/7C/0F; 1 tbsp almond butter = 98 kcal/3P/3C/9F; cooked chicken breast 1 oz = 47 kcal/9P/0C/1F; cooked white fish 1 oz = 32 kcal/7P/0C/0F; cooked jasmine/white rice 100g = 130 kcal/3P/28C/0F; cooked white potato 100g = 87 kcal/2P/20C/0F.
     - Ground meat reference anchors per 1 oz cooked (use these when unlabeled): ground turkey 99% lean = 37 kcal/8P/0C/0F; ground turkey 93/7 = 50 kcal/7P/0C/3F; ground turkey 85/15 = 60 kcal/7P/0C/4F; ground beef 93/7 = 48 kcal/8P/0C/2F; ground beef 90/10 = 52 kcal/8P/0C/2F; ground beef 85/15 = 62 kcal/7P/0C/4F; ground beef 80/20 = 72 kcal/7P/0C/5F; ground chicken 93/7 = 48 kcal/7P/0C/2F; ground pork standard = 70 kcal/6P/0C/5F; ground lamb standard = 68 kcal/7P/0C/4F.
@@ -135,6 +136,14 @@ class GPTService {
         let fiber: Int?
         let sugarAlcohols: Int?
         let ingredients: [MealAnalysisIngredient]
+        /// "high" | "medium" | "low" — the analyzer's self-rated confidence
+        /// in the macro estimate. Defaults to "medium" when the model omits it.
+        let confidence: String
+        /// True when the food genuinely has zero macros (diet sodas, plain
+        /// water, black coffee, sugar-free gum, etc.). Lets us distinguish
+        /// "all zeros because Coke Zero" from "all zeros because the
+        /// analyzer gave up". Defaults to false when omitted.
+        let isLegitimatelyZero: Bool
     }
 
     enum MealAnalysisError: LocalizedError {
@@ -153,10 +162,15 @@ class GPTService {
     /// ingredient breakdown. Routes through `MacraOpenAIBridge` so the real
     /// OpenAI key stays on the server and the client only sends a Firebase ID
     /// token.
-    func analyzeMealNote(title: String, description: String, completion: @escaping (Result<MealAnalysis, Error>) -> Void) {
-        print("[Macra][GPTService.analyzeMealNote] Starting — title:'\(title)' descLen:\(description.count)")
+    func analyzeMealNote(title: String, description: String, userContext: String? = nil, completion: @escaping (Result<MealAnalysis, Error>) -> Void) {
+        let trimmedContext = userContext?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasContext = !(trimmedContext?.isEmpty ?? true)
+        print("[Macra][GPTService.analyzeMealNote] Starting — title:'\(title)' descLen:\(description.count) ctxLen:\(trimmedContext?.count ?? 0)")
 
         let systemPrompt = Self.mealAnalyzerSystemPrompt
+        let contextBlock = hasContext
+            ? "\n\nUser-provided context (treat as authoritative corrections — trust portion sizes, ingredient swaps, and brand notes from the user over your own guess):\n\"\(trimmedContext!)\"\n"
+            : ""
         let userPrompt = """
         Analyze the meal below and return JSON with this exact shape:
 
@@ -168,6 +182,8 @@ class GPTService {
           "fat": integer_grams,
           "fiber": integer_grams_or_null,
           "sugarAlcohols": integer_grams_or_null,
+          "confidence": "high" | "medium" | "low",
+          "isLegitimatelyZero": boolean,
           "ingredients": [
             {
               "name": "ingredient name",
@@ -189,6 +205,9 @@ class GPTService {
         - All macro fields are integers (round if needed).
         - Meal totals must equal the sum of ingredient macros within ±5%.
         - If the input is ambiguous, estimate with standard USDA-style values instead of returning zeros.
+        - `confidence` reflects how sure you are about the macro numbers: "high" when the food + portion is unambiguous (branded items, exact weights), "medium" for typical estimates with reasonable defaults, "low" when the description is too vague to estimate reliably (e.g. "some chicken", "a snack").
+        - `isLegitimatelyZero` is true ONLY when the food genuinely contains zero calories AND zero protein AND zero carbs AND zero fat — diet sodas (Coke Zero, Diet Coke, Pepsi Zero), plain water, sparkling water, black coffee, plain tea, sugar-free gum, zero-calorie sweeteners, etc. It MUST be false for any food that actually has macros.
+        - When `isLegitimatelyZero` is true, return all macro fields as 0 and set `confidence` to "high".
         - Populate `fiber` whenever a food realistically contains dietary fiber (fruits, vegetables, legumes, whole grains, nuts, seeds).
         - Populate `sugarAlcohols` for any food/ingredient containing sugar alcohols — common in sugar-free products, keto/low-carb baked goods, protein bars, and items sweetened with erythritol, xylitol, maltitol, sorbitol, isomalt, allulose, or monk-fruit blends (e.g. Lakanto). If a product is explicitly labeled "sugar free" or "no sugar added" and has meaningful carbs, assume the bulk of those carbs are sugar alcohols and populate the field accordingly.
         - `fiber` and `sugarAlcohols` are OPTIONAL — omit or use null if truly zero; never invent fiber/sugar alcohols for foods that don't contain them (e.g. plain meats, oils).
@@ -196,7 +215,7 @@ class GPTService {
         - Return only the JSON object — no commentary.
 
         Title: "\(title)"
-        Description: "\(description)"
+        Description: "\(description)"\(contextBlock)
         """
 
         MacraOpenAIBridge.postChat(
@@ -215,12 +234,17 @@ class GPTService {
                 print("[Macra][GPTService.analyzeMealNote] ✅ bridge returned content (\(content.count) chars)")
                 do {
                     let analysis = try Self.parseMealAnalysisJSON(content)
-                    if analysis.calories == 0, analysis.protein == 0, analysis.carbs == 0, analysis.fat == 0 {
-                        print("[Macra][GPTService.analyzeMealNote] ⚠️ analyzer returned all-zero macros for '\(analysis.name)' — rejecting")
+                    let allZero = analysis.calories == 0 && analysis.protein == 0 && analysis.carbs == 0 && analysis.fat == 0
+                    if allZero, !analysis.isLegitimatelyZero {
+                        print("[Macra][GPTService.analyzeMealNote] ⚠️ analyzer returned all-zero macros for '\(analysis.name)' (isLegitimatelyZero=false, confidence=\(analysis.confidence)) — rejecting")
                         completion(.failure(MealAnalysisError.zeroMacros))
                         return
                     }
-                    print("[Macra][GPTService.analyzeMealNote] ✅ parsed — name:'\(analysis.name)' \(analysis.calories)kcal P:\(analysis.protein) C:\(analysis.carbs) F:\(analysis.fat) ingredients:\(analysis.ingredients.count)")
+                    if allZero {
+                        print("[Macra][GPTService.analyzeMealNote] ✅ parsed — name:'\(analysis.name)' legitimately zero-macro food (confidence=\(analysis.confidence))")
+                    } else {
+                        print("[Macra][GPTService.analyzeMealNote] ✅ parsed — name:'\(analysis.name)' \(analysis.calories)kcal P:\(analysis.protein) C:\(analysis.carbs) F:\(analysis.fat) ingredients:\(analysis.ingredients.count) confidence=\(analysis.confidence)")
+                    }
                     completion(.success(analysis))
                 } catch {
                     print("[Macra][GPTService.analyzeMealNote] ❌ parse error: \(error.localizedDescription)")
@@ -229,6 +253,259 @@ class GPTService {
 
             case .failure(let error):
                 print("[Macra][GPTService.analyzeMealNote] ❌ bridge error: \(error.localizedDescription)")
+                completion(.failure(error))
+            }
+        }
+    }
+
+    /// Vision-based macro extraction from a nutrition-label photo. Used to
+    /// back-fill macros for meals that were saved from a scanned label but
+    /// landed in the journal with zero calories (older scans where the
+    /// grading pass didn't return macros, or parse failures). Returns the
+    /// same `MealAnalysis` shape as `analyzeMealNote` so callers can share
+    /// the downstream apply/save path.
+    func analyzeMealFromLabelImage(
+        imageURL: String,
+        title: String,
+        completion: @escaping (Result<MealAnalysis, Error>) -> Void
+    ) {
+        let trimmedURL = imageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty else {
+            completion(.failure(MealAnalysisError.parsingFailed("Missing image URL for label re-analysis")))
+            return
+        }
+
+        print("[Macra][GPTService.analyzeMealFromLabelImage] ▶️ title:'\(title)' url:\(trimmedURL.prefix(80))…")
+
+        let userPromptText = """
+        Extract nutrition facts from this food-label photo and return JSON with this exact shape:
+
+        {
+          "name": "short descriptive product name",
+          "calories": integer_total_kcal,
+          "protein": integer_grams,
+          "carbs": integer_grams,
+          "fat": integer_grams,
+          "fiber": integer_grams_or_null,
+          "sugarAlcohols": integer_grams_or_null,
+          "confidence": "high" | "medium" | "low",
+          "isLegitimatelyZero": boolean,
+          "ingredients": []
+        }
+
+        Shared Macra nutrition accuracy rules:
+        \(Self.mealAnalyzerAccuracyRules)
+
+        Label-specific rules:
+        - Read values from the Nutrition Facts panel in the image. Return macros for ONE serving as listed on the panel.
+        - All macro fields are integers (round if needed).
+        - `confidence` is "high" when the panel is fully readable, "medium" when partially readable / values inferred from the title hint, "low" when the panel is unreadable and you had to guess.
+        - `isLegitimatelyZero` is true ONLY when the panel itself shows zero macros across the board (diet sodas, sparkling water, sugar-free drinks). It MUST be false for any product whose panel shows real macros.
+        - Populate `fiber` from the "Dietary Fiber" row when present.
+        - Populate `sugarAlcohols` from the "Sugar Alcohols"/"Polyols" row, OR infer from ingredients when the panel advertises "sugar free"/"no sugar added"/"keto" and lists erythritol, xylitol, maltitol, sorbitol, allulose, or monk-fruit blends with meaningful total carbs and near-zero sugars.
+        - If the label is unreadable, estimate with standard USDA-style values for the product named "\(title)" rather than returning zeros.
+        - Return only the JSON object — no commentary.
+
+        Title hint: "\(title)"
+        """
+
+        let content: [[String: Any]] = [
+            ["type": "text", "text": userPromptText],
+            ["type": "image_url", "image_url": ["url": trimmedURL]]
+        ]
+
+        MacraOpenAIBridge.postChat(
+            messages: [
+                ["role": "system", "content": Self.mealAnalyzerSystemPrompt],
+                ["role": "user", "content": content]
+            ],
+            model: "gpt-4o",
+            maxTokens: 1500,
+            temperature: 0.1,
+            responseFormat: ["type": "json_object"],
+            organization: "macraLabelReanalyze"
+        ) { result in
+            switch result {
+            case .success(let content):
+                print("[Macra][GPTService.analyzeMealFromLabelImage] ✅ bridge returned content (\(content.count) chars)")
+                do {
+                    let analysis = try Self.parseMealAnalysisJSON(content)
+                    let allZero = analysis.calories == 0 && analysis.protein == 0 && analysis.carbs == 0 && analysis.fat == 0
+                    if allZero, !analysis.isLegitimatelyZero {
+                        print("[Macra][GPTService.analyzeMealFromLabelImage] ⚠️ analyzer returned all-zero macros for '\(analysis.name)' (isLegitimatelyZero=false, confidence=\(analysis.confidence)) — rejecting")
+                        completion(.failure(MealAnalysisError.zeroMacros))
+                        return
+                    }
+                    if allZero {
+                        print("[Macra][GPTService.analyzeMealFromLabelImage] ✅ parsed — name:'\(analysis.name)' legitimately zero-macro product (confidence=\(analysis.confidence))")
+                    } else {
+                        print("[Macra][GPTService.analyzeMealFromLabelImage] ✅ parsed — name:'\(analysis.name)' \(analysis.calories)kcal P:\(analysis.protein) C:\(analysis.carbs) F:\(analysis.fat) confidence=\(analysis.confidence)")
+                    }
+                    completion(.success(analysis))
+                } catch {
+                    print("[Macra][GPTService.analyzeMealFromLabelImage] ❌ parse error: \(error.localizedDescription)")
+                    completion(.failure(error))
+                }
+            case .failure(let error):
+                print("[Macra][GPTService.analyzeMealFromLabelImage] ❌ bridge error: \(error.localizedDescription)")
+                completion(.failure(error))
+            }
+        }
+    }
+
+    /// Vision-based macro extraction from a general food photo (a plate, bowl,
+    /// shake, supplement scoop, etc. — NOT a nutrition label). Designed to be
+    /// the primary analyzer for the Scan Food flow.
+    ///
+    /// Behavior is driven by what the user typed before saving:
+    ///  - If `title` and `description` together specify the dish AND a clear
+    ///    portion/serving size, trust them and use the image only to confirm
+    ///    identity.
+    ///  - If portion info is missing or ambiguous (e.g. user typed "chicken
+    ///    and rice" with no amount), estimate the portion visually from the
+    ///    photo using standard USDA reference values.
+    ///  - If both `title` and `description` are empty, identify the dish and
+    ///    its portion entirely from the photo.
+    ///
+    /// Returns the same `MealAnalysis` shape as `analyzeMealNote` so callers
+    /// share the downstream save path.
+    func analyzeMealFromFoodPhoto(
+        imageURL: String,
+        title: String,
+        description: String,
+        completion: @escaping (Result<MealAnalysis, Error>) -> Void
+    ) {
+        let trimmedURL = imageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty else {
+            completion(.failure(MealAnalysisError.parsingFailed("Missing image URL for food-photo analysis")))
+            return
+        }
+
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasTitle = !trimmedTitle.isEmpty
+        let hasDescription = !trimmedDescription.isEmpty
+
+        print("[Macra][GPTService.analyzeMealFromFoodPhoto] ▶️ title:'\(trimmedTitle)' descLen:\(trimmedDescription.count) url:\(trimmedURL.prefix(80))…")
+
+        let userPromptText = """
+        You are analyzing a photo of a meal (a plate, bowl, shake, supplement
+        scoop, packaged food, etc.). Return JSON with this exact shape:
+
+        {
+          "name": "short descriptive meal name",
+          "calories": integer_total_kcal,
+          "protein": integer_grams,
+          "carbs": integer_grams,
+          "fat": integer_grams,
+          "fiber": integer_grams_or_null,
+          "sugarAlcohols": integer_grams_or_null,
+          "confidence": "high" | "medium" | "low",
+          "isLegitimatelyZero": boolean,
+          "ingredients": [
+            {
+              "name": "ingredient name",
+              "quantity": "amount with unit, e.g. '1 cup', '3 oz', '1 slice'",
+              "calories": integer_kcal,
+              "protein": integer_grams,
+              "carbs": integer_grams,
+              "fat": integer_grams,
+              "fiber": integer_grams_or_null,
+              "sugarAlcohols": integer_grams_or_null
+            }
+          ]
+        }
+
+        Shared Macra nutrition accuracy rules:
+        \(Self.mealAnalyzerAccuracyRules)
+
+        How to weigh the photo vs the user's text:
+        - The user's typed title and description (below) are authoritative for
+          dish identity, brand, and portion size whenever they are specific.
+          Trust "1 scoop", "3 oz", "1 cup", "two slices", "half a bagel" etc.
+          over what you see.
+        - If the user did NOT specify a portion (or only gave vague text like
+          "chicken and rice"), estimate the portion visually: count items,
+          gauge volume against the plate/bowl/utensils in frame, and use
+          standard USDA serving values.
+        - If the user typed nothing, identify the dish and portion entirely
+          from the image.
+        - If the photo and text disagree about identity (e.g. user wrote
+          "salad" but the photo is clearly pasta), prefer what the user typed
+          — they may be logging by memory.
+        - For supplements, powders, and packaged products: trust the brand
+          name and serving size from the user's text, since the photo can't
+          show macros.
+        - All macro fields are integers (round if needed).
+        - Meal totals must equal the sum of ingredient macros within ±5%.
+        - `confidence` is "high" when food + portion are unambiguous (clear
+          photo, branded item, or specific portion in text), "medium" for
+          typical estimates with reasonable defaults, "low" when the photo
+          is poor and the text is too vague to estimate reliably.
+        - `isLegitimatelyZero` is true ONLY when the food genuinely contains
+          zero calories AND zero protein AND zero carbs AND zero fat — diet
+          sodas (Coke Zero, Diet Coke), plain water, sparkling water, black
+          coffee, plain tea, sugar-free gum. It MUST be false for any food
+          that actually has macros. When true, return all macro fields as 0
+          and set `confidence` to "high".
+        - Never return all zeros for a food that has real macros — if the
+          photo is unreadable AND the text is insufficient, estimate with
+          standard USDA-style values, set `isLegitimatelyZero` to false, and
+          set `confidence` to "low" rather than giving up.
+        - Populate `fiber` whenever the food realistically contains fiber
+          (fruits, vegetables, legumes, whole grains, nuts, seeds).
+        - Populate `sugarAlcohols` for sugar-free / keto / low-carb products
+          containing erythritol, xylitol, maltitol, sorbitol, allulose, or
+          monk-fruit blends.
+        - `fiber` and `sugarAlcohols` are OPTIONAL — omit or use null if truly
+          zero; never invent them for plain meats or oils.
+        - Meal-level `fiber` and `sugarAlcohols` should equal the sum of the
+          corresponding ingredient fields.
+        - Return only the JSON object — no commentary.
+
+        User-typed title: "\(hasTitle ? trimmedTitle : "(none)")"
+        User-typed description: "\(hasDescription ? trimmedDescription : "(none)")"
+        """
+
+        let content: [[String: Any]] = [
+            ["type": "text", "text": userPromptText],
+            ["type": "image_url", "image_url": ["url": trimmedURL]]
+        ]
+
+        MacraOpenAIBridge.postChat(
+            messages: [
+                ["role": "system", "content": Self.mealAnalyzerSystemPrompt],
+                ["role": "user", "content": content]
+            ],
+            model: "gpt-4o",
+            maxTokens: 1500,
+            temperature: 0.2,
+            responseFormat: ["type": "json_object"],
+            organization: "macraFoodPhoto"
+        ) { result in
+            switch result {
+            case .success(let content):
+                print("[Macra][GPTService.analyzeMealFromFoodPhoto] ✅ bridge returned content (\(content.count) chars)")
+                do {
+                    let analysis = try Self.parseMealAnalysisJSON(content)
+                    let allZero = analysis.calories == 0 && analysis.protein == 0 && analysis.carbs == 0 && analysis.fat == 0
+                    if allZero, !analysis.isLegitimatelyZero {
+                        print("[Macra][GPTService.analyzeMealFromFoodPhoto] ⚠️ analyzer returned all-zero macros for '\(analysis.name)' (isLegitimatelyZero=false, confidence=\(analysis.confidence)) — rejecting")
+                        completion(.failure(MealAnalysisError.zeroMacros))
+                        return
+                    }
+                    if allZero {
+                        print("[Macra][GPTService.analyzeMealFromFoodPhoto] ✅ parsed — name:'\(analysis.name)' legitimately zero-macro food (confidence=\(analysis.confidence))")
+                    } else {
+                        print("[Macra][GPTService.analyzeMealFromFoodPhoto] ✅ parsed — name:'\(analysis.name)' \(analysis.calories)kcal P:\(analysis.protein) C:\(analysis.carbs) F:\(analysis.fat) ingredients:\(analysis.ingredients.count) confidence=\(analysis.confidence)")
+                    }
+                    completion(.success(analysis))
+                } catch {
+                    print("[Macra][GPTService.analyzeMealFromFoodPhoto] ❌ parse error: \(error.localizedDescription)")
+                    completion(.failure(error))
+                }
+            case .failure(let error):
+                print("[Macra][GPTService.analyzeMealFromFoodPhoto] ❌ bridge error: \(error.localizedDescription)")
                 completion(.failure(error))
             }
         }
@@ -278,6 +555,20 @@ class GPTService {
             return anyPresent ? sum : nil
         }()
 
+        let rawConfidence = (dict["confidence"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        let confidence: String = ["high", "medium", "low"].contains(rawConfidence) ? rawConfidence : "medium"
+
+        let isLegitimatelyZero: Bool = {
+            if let b = dict["isLegitimatelyZero"] as? Bool { return b }
+            if let i = dict["isLegitimatelyZero"] as? Int { return i != 0 }
+            if let s = dict["isLegitimatelyZero"] as? String {
+                return ["true", "yes", "1"].contains(s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            }
+            return false
+        }()
+
         return MealAnalysis(
             name: name,
             calories: resolvedCalories,
@@ -286,7 +577,9 @@ class GPTService {
             fat: resolvedFat,
             fiber: resolvedFiber,
             sugarAlcohols: resolvedSugarAlcohols,
-            ingredients: ingredients
+            ingredients: ingredients,
+            confidence: confidence,
+            isLegitimatelyZero: isLegitimatelyZero
         )
     }
 

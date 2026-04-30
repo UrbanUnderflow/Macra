@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import Combine
 import FirebaseAuth
 import FirebaseFirestore
 
@@ -19,16 +20,59 @@ final class HomeViewModel: ObservableObject {
     @Published var isGeneratingInsight: Bool = false
     @Published var dailyInsightError: String?
     @Published var isLoading = false
+
+    private var insightSubscriptions: Set<AnyCancellable> = []
     @Published var isLoadingScans = false
     @Published var scanHistoryError: String?
     @Published var showLoader = false
     @Published var selectedDate: Date = Calendar.current.startOfDay(for: Date())
 
     private var loadGeneration = 0
+    /// Meals we've already kicked off background reanalysis for. Prevents
+    /// repeated GPT calls on every journal load for meals where the analyzer
+    /// genuinely can't infer macros (e.g. unreadable label, no usable text).
+    private var attemptedAutoReanalysisIDs: Set<String> = []
 
     init(appCoordinator: AppCoordinator, serviceManager: ServiceManager) {
         self.appCoordinator = appCoordinator
         self.serviceManager = serviceManager
+        bindCloudInsight()
+    }
+
+    /// Mirror the cloud-driven insight service into HomeViewModel-published state
+    /// so existing views (HomeDailyInsightCard) keep their bindings unchanged.
+    /// Subscription is keyed to `selectedDate`; the listener auto-rebinds when
+    /// the user navigates days.
+    private func bindCloudInsight() {
+        Task { @MainActor in
+            MacraDailyInsightService.shared.subscribe(to: self.selectedDate)
+        }
+
+        Task { @MainActor in
+            MacraDailyInsightService.shared.$insight
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] insight in self?.dailyInsight = insight }
+                .store(in: &self.insightSubscriptions)
+
+            MacraDailyInsightService.shared.$isRegenerating
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] flag in self?.isGeneratingInsight = flag }
+                .store(in: &self.insightSubscriptions)
+
+            MacraDailyInsightService.shared.$lastError
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] err in self?.dailyInsightError = err }
+                .store(in: &self.insightSubscriptions)
+        }
+
+        $selectedDate
+            .removeDuplicates(by: { Calendar.current.isDate($0, inSameDayAs: $1) })
+            .sink { date in
+                Task { @MainActor in
+                    MacraDailyInsightService.shared.subscribe(to: date)
+                }
+            }
+            .store(in: &insightSubscriptions)
     }
 
     var mealCalories: Int { todaysMeals.reduce(0) { $0 + $1.calories } }
@@ -58,44 +102,103 @@ final class HomeViewModel: ObservableObject {
         todaysMealsAsFoodJournal.reduce(0) { $0 + $1.netCarbs }
     }
 
+    // MARK: - Extended nutrient totals (for the full nutrition modal)
+
+    var totalDietaryFiber: Int { todaysMeals.compactMap { $0.fiber }.reduce(0, +) }
+    var totalSugars: Int { todaysMeals.compactMap { $0.sugars }.reduce(0, +) }
+    var totalSugarAlcohols: Int { todaysMeals.compactMap { $0.sugarAlcohols }.reduce(0, +) }
+    var totalSodium: Int { todaysMeals.compactMap { $0.sodium }.reduce(0, +) }
+    var totalCholesterol: Int { todaysMeals.compactMap { $0.cholesterol }.reduce(0, +) }
+    var totalSaturatedFat: Int { todaysMeals.compactMap { $0.saturatedFat }.reduce(0, +) }
+    var totalUnsaturatedFat: Int { todaysMeals.compactMap { $0.unsaturatedFat }.reduce(0, +) }
+
+    /// Vitamins from meals only — supplement contributions get tracked separately
+    /// so the modal can show "+X" badges next to rows that supplements boost.
+    var mealVitamins: [String: Int] {
+        var bag: [String: Int] = [:]
+        for meal in todaysMeals {
+            guard let v = meal.vitamins else { continue }
+            for (key, value) in v {
+                let normalized = HomeViewModel.normalizeNutrientName(key)
+                bag[normalized, default: 0] += value
+            }
+        }
+        return bag
+    }
+
+    var mealMinerals: [String: Int] {
+        var bag: [String: Int] = [:]
+        for meal in todaysMeals {
+            guard let m = meal.minerals else { continue }
+            for (key, value) in m {
+                let normalized = HomeViewModel.normalizeNutrientName(key)
+                bag[normalized, default: 0] += value
+            }
+        }
+        return bag
+    }
+
+    var supplementVitamins: [String: Int] {
+        var bag: [String: Int] = [:]
+        for supp in loggedSupplements {
+            guard let v = supp.vitamins else { continue }
+            for (key, value) in v {
+                let normalized = HomeViewModel.normalizeNutrientName(key)
+                bag[normalized, default: 0] += value
+            }
+        }
+        return bag
+    }
+
+    var supplementMinerals: [String: Int] {
+        var bag: [String: Int] = [:]
+        for supp in loggedSupplements {
+            guard let m = supp.minerals else { continue }
+            for (key, value) in m {
+                let normalized = HomeViewModel.normalizeNutrientName(key)
+                bag[normalized, default: 0] += value
+            }
+        }
+        return bag
+    }
+
+    /// True if anything beyond core macros has been logged today — drives
+    /// whether the "Full nutrition" card surfaces.
+    var hasFullNutritionDetail: Bool {
+        if totalDietaryFiber > 0 { return true }
+        if totalSugars > 0 { return true }
+        if totalSugarAlcohols > 0 { return true }
+        if totalSodium > 0 { return true }
+        if totalCholesterol > 0 { return true }
+        if totalSaturatedFat > 0 { return true }
+        if totalUnsaturatedFat > 0 { return true }
+        if !mealVitamins.isEmpty || !supplementVitamins.isEmpty { return true }
+        if !mealMinerals.isEmpty || !supplementMinerals.isEmpty { return true }
+        return totalCalories > 0 // always show full table once any meal is logged
+    }
+
+    /// Title-case a nutrient key while preserving vitamin letter+number suffixes
+    /// (e.g. "vitamin b12" → "Vitamin B12", "iron" → "Iron").
+    private static func normalizeNutrientName(_ name: String) -> String {
+        name.split(separator: " ")
+            .map { word -> String in
+                let lower = word.lowercased()
+                if lower.count <= 3, word.first?.isLetter == true, word.contains(where: { $0.isNumber }) {
+                    return word.uppercased()
+                }
+                return word.prefix(1).uppercased() + word.dropFirst().lowercased()
+            }
+            .joined(separator: " ")
+    }
+
     var loggingStats: MacraFoodJournalLoggingStats {
         MacraFoodJournalLoggingStats(loggedDates: mealLoggedDates, referenceDate: Date())
     }
 
     func generateDailyInsight() {
-        guard !isGeneratingInsight else { return }
-        dailyInsightError = nil
-        isGeneratingInsight = true
-
-        let insightDate = selectedDate
-        let mealsForJournal = todaysMealsAsFoodJournal
-        let supplements = loggedSupplements
-        let target = (macroTarget ?? UserService.sharedInstance.currentMacroTarget).map {
-            MacraFoodJournalMacroTarget(
-                calories: $0.calories,
-                protein: $0.protein,
-                carbs: $0.carbs,
-                fat: $0.fat
-            )
-        }
-
-        MacraFoodJournalInsightService.shared.generateInsight(
-            meals: mealsForJournal,
-            supplements: supplements,
-            macroTarget: target,
-            date: insightDate
-        ) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.isGeneratingInsight = false
-                guard Calendar.current.isDate(self.selectedDate, inSameDayAs: insightDate) else { return }
-                switch result {
-                case .success(let insight):
-                    self.dailyInsight = insight
-                case .failure(let error):
-                    self.dailyInsightError = error.localizedDescription
-                }
-            }
+        let date = selectedDate
+        Task { @MainActor in
+            await MacraDailyInsightService.shared.regenerate(for: date)
         }
     }
 
@@ -108,6 +211,7 @@ final class HomeViewModel: ObservableObject {
     func navigateToPreviousDay() {
         guard let previous = Calendar.current.date(byAdding: .day, value: -1, to: selectedDate) else { return }
         selectedDate = Calendar.current.startOfDay(for: previous)
+        print("[Macra][Nora][SELECTED-DATE-CHANGE] navigateToPreviousDay → \(selectedDate) (now=\(Date()))")
         clearSelectedDayContext()
         load()
     }
@@ -117,6 +221,7 @@ final class HomeViewModel: ObservableObject {
               let next = Calendar.current.date(byAdding: .day, value: 1, to: selectedDate) else { return }
         let today = Calendar.current.startOfDay(for: Date())
         selectedDate = min(Calendar.current.startOfDay(for: next), today)
+        print("[Macra][Nora][SELECTED-DATE-CHANGE] navigateToNextDay → \(selectedDate) (now=\(Date()))")
         clearSelectedDayContext()
         load()
     }
@@ -127,6 +232,7 @@ final class HomeViewModel: ObservableObject {
         let capped = normalized > today ? today : normalized
         guard !Calendar.current.isDate(capped, inSameDayAs: selectedDate) else { return }
         selectedDate = capped
+        print("[Macra][Nora][SELECTED-DATE-CHANGE] setSelectedDate(\(date)) → \(selectedDate) (now=\(Date()))")
         clearSelectedDayContext()
         load()
     }
@@ -166,6 +272,12 @@ final class HomeViewModel: ObservableObject {
                 if self.isCurrentLoad(generation, for: requestedDate),
                    case .success(let meals) = result {
                     self.todaysMeals = meals
+                    // Silently reanalyze any meal that landed with all-zero
+                    // macros (e.g. label scans saved before the analyzer
+                    // returned numbers). Runs in background; results are
+                    // written back to Firestore + the source label scan so
+                    // future logs of the same scan pick up the corrected macros.
+                    self.autoReanalyzeZeroMacroMealsIfNeeded(in: meals, userId: userId)
                 }
                 group.leave()
             }
@@ -236,6 +348,166 @@ final class HomeViewModel: ObservableObject {
 
     private func isCurrentLoad(_ generation: Int, for date: Date) -> Bool {
         generation == loadGeneration && Calendar.current.isDate(selectedDate, inSameDayAs: date)
+    }
+
+    // MARK: - Background auto-reanalyze for 0/0/0 meals
+
+    private func autoReanalyzeZeroMacroMealsIfNeeded(in meals: [Meal], userId: String) {
+        let candidates = meals.filter { meal in
+            meal.calories == 0 && meal.protein == 0 && meal.carbs == 0 && meal.fat == 0
+        }
+        for meal in candidates where !attemptedAutoReanalysisIDs.contains(meal.id) {
+            attemptedAutoReanalysisIDs.insert(meal.id)
+            runAutoReanalyze(meal: meal, userId: userId)
+        }
+    }
+
+    private func runAutoReanalyze(meal: Meal, userId: String) {
+        let trimmedImage = meal.image.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasImage = !trimmedImage.isEmpty
+        let trimmedName = meal.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCaption = meal.caption.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let derivedDescription: String = {
+            if !trimmedCaption.isEmpty { return trimmedCaption }
+            if let detailed = meal.detailedIngredients, !detailed.isEmpty {
+                return detailed
+                    .map { "\($0.quantity) \($0.name)".trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: ", ")
+            }
+            if !meal.ingredients.isEmpty {
+                return meal.ingredients.joined(separator: ", ")
+            }
+            return ""
+        }()
+
+        let hasUsableText = !trimmedName.isEmpty || !derivedDescription.isEmpty
+        guard hasImage || hasUsableText else { return }
+
+        print("[Macra][HomeViewModel.autoReanalyze] ▶️ kicking 0/0/0 meal '\(meal.name)' hasImage:\(hasImage)")
+
+        let handler: (Result<GPTService.MealAnalysis, Error>) -> Void = { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let analysis):
+                    self.applyAutoReanalysis(meal: meal, analysis: analysis, userId: userId)
+                case .failure(let error):
+                    print("[Macra][HomeViewModel.autoReanalyze] ❌ \(meal.name): \(error.localizedDescription)")
+                }
+            }
+        }
+
+        // Pick the right analyzer:
+        //   - Label-derived meals get the label-image analyzer (reads the
+        //     nutrition-facts panel directly).
+        //   - Other photo-backed meals → food-photo vision.
+        //   - No image → text fallback.
+        let isLabelOrigin = trimmedCaption.lowercased().contains("label scan")
+            || trimmedCaption.lowercased().contains("logged from label")
+
+        if hasImage, isLabelOrigin {
+            GPTService.sharedInstance.analyzeMealFromLabelImage(
+                imageURL: trimmedImage,
+                title: trimmedName,
+                completion: handler
+            )
+        } else if hasImage {
+            GPTService.sharedInstance.analyzeMealFromFoodPhoto(
+                imageURL: trimmedImage,
+                title: trimmedName,
+                description: derivedDescription,
+                completion: handler
+            )
+        } else {
+            let analysisDescription = derivedDescription.isEmpty ? trimmedName : derivedDescription
+            let analysisTitle = derivedDescription.isEmpty ? "" : trimmedName
+            GPTService.sharedInstance.analyzeMealNote(
+                title: analysisTitle,
+                description: analysisDescription,
+                completion: handler
+            )
+        }
+    }
+
+    private func applyAutoReanalysis(meal originalMeal: Meal, analysis: GPTService.MealAnalysis, userId: String) {
+        var updated = originalMeal
+        updated.calories = analysis.calories
+        updated.protein = analysis.protein
+        updated.carbs = analysis.carbs
+        updated.fat = analysis.fat
+        updated.fiber = analysis.fiber
+        updated.sugarAlcohols = analysis.sugarAlcohols
+
+        let mappedDetailed: [MealIngredientDetail] = analysis.ingredients.map {
+            MealIngredientDetail(
+                name: $0.name,
+                quantity: $0.quantity,
+                calories: $0.calories,
+                protein: $0.protein,
+                carbs: $0.carbs,
+                fat: $0.fat,
+                fiber: $0.fiber,
+                sugarAlcohols: $0.sugarAlcohols
+            )
+        }
+        if !mappedDetailed.isEmpty {
+            updated.detailedIngredients = mappedDetailed
+            updated.ingredients = mappedDetailed.map(\.name)
+        }
+        updated.updatedAt = Date()
+
+        MealService.sharedInstance.updateMeal(updated, userId: userId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let saved):
+                    if let idx = self.todaysMeals.firstIndex(where: { $0.id == saved.id }) {
+                        self.todaysMeals[idx] = saved
+                    }
+                    print("[Macra][HomeViewModel.autoReanalyze] ✅ '\(saved.name)' → \(saved.calories) kcal, \(saved.protein)P \(saved.carbs)C \(saved.fat)F")
+                    self.persistReanalysisToLabelScan(meal: saved)
+                case .failure(let error):
+                    print("[Macra][HomeViewModel.autoReanalyze] ❌ save failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// If the meal was logged from a label scan, push the corrected macros
+    /// back to the source `MacraScannedLabel` so future logs of the same
+    /// scan don't repeat the 0/0/0 problem. Match by image URL — scans
+    /// always have a unique Firebase Storage URL.
+    private func persistReanalysisToLabelScan(meal: Meal) {
+        let trimmedImage = meal.image.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedImage.isEmpty else { return }
+
+        let knownScans = pinnedLabelScans + recentLabelScans
+        guard let scan = knownScans.first(where: { ($0.imageURL ?? "") == trimmedImage }) else {
+            return
+        }
+
+        let macros = LabelNutritionFacts(
+            calories: meal.calories,
+            protein: meal.protein,
+            fat: meal.fat,
+            carbs: meal.carbs,
+            servingSize: scan.gradeResult.servingSize,
+            sugars: nil,
+            dietaryFiber: meal.fiber,
+            sugarAlcohols: meal.sugarAlcohols,
+            sodium: nil
+        )
+
+        LabelScanService.shared.updateMacros(scanId: scan.id, macros: macros) { result in
+            switch result {
+            case .success:
+                print("[Macra][HomeViewModel.persistReanalysisToLabelScan] ✅ updated scan \(scan.id) with reanalyzed macros")
+            case .failure(let error):
+                print("[Macra][HomeViewModel.persistReanalysisToLabelScan] ❌ \(error.localizedDescription)")
+            }
+        }
     }
 
     private func loadMealLoggedDates(completion: @escaping () -> Void) {
@@ -421,7 +693,8 @@ final class HomeViewModel: ObservableObject {
             components.hour = time.hour
             components.minute = time.minute
             components.second = time.second
-            copy.createdAt = calendar.date(from: components) ?? targetDay
+            let preservedTimestamp = calendar.date(from: components) ?? targetDay
+            copy.createdAt = preservedTimestamp
             copy.updatedAt = now
 
             MealService.sharedInstance.saveMeal(copy, for: targetDay, userId: userId) { result in
@@ -441,6 +714,48 @@ final class HomeViewModel: ObservableObject {
                 if let self, calendar.isDate(targetDay, inSameDayAs: self.selectedDate) {
                     self.load()
                 }
+                completion(.success(meals.count))
+            }
+        }
+    }
+
+    func deleteAllTodaysMeals(completion: @escaping (Result<Int, Error>) -> Void) {
+        guard let userId = serviceManager.userService.user?.id ?? Auth.auth().currentUser?.uid,
+              !userId.isEmpty else {
+            completion(.failure(NSError(
+                domain: "HomeViewModel",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Sign in to delete meals."]
+            )))
+            return
+        }
+        let meals = todaysMeals
+        guard !meals.isEmpty else {
+            completion(.success(0))
+            return
+        }
+
+        let group = DispatchGroup()
+        var failure: Error?
+        let failureLock = NSLock()
+
+        for meal in meals {
+            group.enter()
+            MealService.sharedInstance.deleteMeal(meal, for: meal.createdAt, userId: userId) { result in
+                if case .failure(let error) = result {
+                    failureLock.lock()
+                    if failure == nil { failure = error }
+                    failureLock.unlock()
+                }
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            if let failure {
+                completion(.failure(failure))
+            } else {
+                self?.load()
                 completion(.success(meals.count))
             }
         }
@@ -602,8 +917,11 @@ struct HomeView: View {
     @State private var activeMealDetail: Meal?
     @State private var isCopyDayPickerPresented = false
     @State private var copyTargetDate: Date = Calendar.current.startOfDay(for: Date())
+    @State private var isDeleteAllMealsConfirmationPresented = false
     @State private var activeMacroBreakdown: MacraFoodJournalMacroType?
     @State private var isNetCarbInfoPresented = false
+    @State private var isFullNutritionPresented = false
+    @Environment(\.scenePhase) private var scenePhase
 
     init(viewModel: HomeViewModel) {
         _viewModel = ObservedObject(wrappedValue: viewModel)
@@ -676,13 +994,35 @@ struct HomeView: View {
             }
             .confirmationDialog("Log a meal", isPresented: $isLogMenuPresented, titleVisibility: .visible) {
                 Button("Journal note") { presentLogSheet(.mealNotePad) }
-                Button("Scan meal") { presentLogSheet(.scanFood) }
+                Button("Scan meal") {
+                    logFlowViewModel.draftPhotoCaptureSource = .camera
+                    presentLogSheet(.scanFood)
+                }
+                Button("Upload photo") {
+                    // Same downstream flow as "Scan meal", but the scan view
+                    // detects the .upload source on appear and jumps straight
+                    // to the photo library instead of opening the camera.
+                    logFlowViewModel.draftPhotoCaptureSource = .upload
+                    presentLogSheet(.scanFood)
+                }
                 Button("Voice entry") { presentLogSheet(.voiceEntry) }
                 Button("From history") { presentLogSheet(.fromHistory) }
                 Button("Label scan") { presentLogSheet(.labelScan) }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Choose how you want to add this meal.")
+            }
+            .confirmationDialog(
+                deleteAllMealsConfirmationTitle,
+                isPresented: $isDeleteAllMealsConfirmationPresented,
+                titleVisibility: .visible
+            ) {
+                Button("Delete all meals", role: .destructive) {
+                    triggerDeleteAllTodaysMeals()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This can't be undone.")
             }
             .sheet(item: $logFlowViewModel.activeSheet, onDismiss: {
                 viewModel.load()
@@ -707,6 +1047,7 @@ struct HomeView: View {
             .sheet(isPresented: $isCopyDayPickerPresented) {
                 MacraDayPickerSheet(
                     selectedDate: $copyTargetDate,
+                    confirmTitle: "Copy meals",
                     onDone: {
                         isCopyDayPickerPresented = false
                         triggerCopyDay(to: copyTargetDate)
@@ -764,6 +1105,9 @@ struct HomeView: View {
                     selectedDate: viewModel.selectedDate
                 )
             }
+            .sheet(isPresented: $isFullNutritionPresented) {
+                MacraFullNutritionSheet(viewModel: viewModel)
+            }
             .onAppear {
                 configureLogFlow()
                 viewModel.load()
@@ -792,6 +1136,15 @@ struct HomeView: View {
                 viewModel.load()
                 supplementViewModel.setSelectedDate(viewModel.selectedDate)
                 supplementViewModel.load()
+            }
+            .onChange(of: scenePhase) { phase in
+                guard phase == .active else { return }
+                let today = Calendar.current.startOfDay(for: Date())
+                if !Calendar.current.isDate(viewModel.selectedDate, inSameDayAs: today) {
+                    print("[Macra][Nora][SCENE-FOREGROUND-AUTOROLL] selectedDate=\(viewModel.selectedDate) → \(today)")
+                    viewModel.setSelectedDate(today)
+                    supplementViewModel.setSelectedDate(today)
+                }
             }
         }
     }
@@ -968,6 +1321,34 @@ struct HomeView: View {
         }
     }
 
+    private var deleteAllMealsConfirmationTitle: String {
+        let count = viewModel.todaysMeals.count
+        let noun = count == 1 ? "meal" : "meals"
+        return "Delete \(count) \(noun) from \(copyDayLabel(for: viewModel.selectedDate))?"
+    }
+
+    private func triggerDeleteAllTodaysMeals() {
+        let dayLabel = copyDayLabel(for: viewModel.selectedDate)
+        viewModel.deleteAllTodaysMeals { result in
+            switch result {
+            case .success(let count):
+                guard count > 0 else { return }
+                let mealNoun = count == 1 ? "meal" : "meals"
+                viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
+                    message: "Deleted \(count) \(mealNoun) from \(dayLabel).",
+                    backgroundColor: .secondaryCharcoal,
+                    textColor: .secondaryWhite
+                ))
+            case .failure(let error):
+                viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
+                    message: "Couldn't delete meals: \(error.localizedDescription)",
+                    backgroundColor: .secondaryCharcoal,
+                    textColor: .secondaryWhite
+                ))
+            }
+        }
+    }
+
     private func copyDayLabel(for date: Date) -> String {
         let calendar = Calendar.current
         if calendar.isDateInToday(date) { return "today" }
@@ -1005,6 +1386,16 @@ struct HomeView: View {
                 .accessibilityLabel("Net carbs explanation")
             }
 
+            if viewModel.hasFullNutritionDetail {
+                Button {
+                    isFullNutritionPresented = true
+                } label: {
+                    HomeFullNutritionCard()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open full nutrition table")
+            }
+
             MacraFoodJournalStreakStrip(stats: viewModel.loggingStats)
 
             Button {
@@ -1028,7 +1419,7 @@ struct HomeView: View {
                 EmptyMealsState(dayLabel: dayLabel)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack {
+                    HStack(spacing: 10) {
                         Text("\(mealsSectionDayLabel) meals")
                             .font(.title3.bold())
                             .foregroundStyle(.white)
@@ -1036,6 +1427,17 @@ struct HomeView: View {
                         Text("\(viewModel.todaysMeals.count)")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color.white.opacity(0.55))
+                        Button {
+                            isDeleteAllMealsConfirmationPresented = true
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(Color(hex: "FF6B6B"))
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(Color(hex: "FF6B6B").opacity(0.12)))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Delete all meals for this day")
                     }
 
                     MealTimelineList(groups: mealHourGroups) { meal in
@@ -1060,6 +1462,11 @@ struct HomeView: View {
                 userId: viewModel.serviceManager.userService.user?.id ?? Auth.auth().currentUser?.uid,
                 isDayContextLoading: viewModel.isLoading
             )
+            // Pin section identity to the selected day so SwiftUI tears down
+            // the @State (messages, composer text, isAsking) on every day
+            // switch — prevents bubbles from one day rendering under another
+            // day's "TODAY/Yesterday" pill while the async reload is in flight.
+            .id(viewModel.selectedDate.macraFoodJournalDayKey)
         }
     }
 
@@ -1118,6 +1525,7 @@ struct HomeView: View {
             sugarAlcohols: foodJournalMeal.sugarAlcohols,
             image: foodJournalMeal.imageURL ?? "",
             entryMethod: foodJournalMeal.entryMethod.mealEntryMethod,
+            photoCaptureSource: foodJournalMeal.photoCaptureSource,
             createdAt: foodJournalMeal.createdAt,
             updatedAt: foodJournalMeal.updatedAt
         )
@@ -1126,7 +1534,21 @@ struct HomeView: View {
             DispatchQueue.main.async {
                 switch result {
                 case .success(let saved):
-                    MacraHealthKitService.shared.saveMeal(saved, date: saved.createdAt) { _ in }
+                    MacraHealthKitService.shared.saveMeal(saved, date: saved.createdAt) { hkResult in
+                        guard case .failure(let error) = hkResult,
+                              (error as? MacraHealthKitService.HealthKitWriteError) == .noTypesAuthorized,
+                              !MacraHealthKitService.shared.hasWarnedNoTypesAuthorized else { return }
+                        MacraHealthKitService.shared.hasWarnedNoTypesAuthorized = true
+                        DispatchQueue.main.async {
+                            viewModel.appCoordinator.showToast(
+                                viewModel: ToastViewModel(
+                                    message: "Open Health → Sources → Macra to enable meal sync.",
+                                    backgroundColor: .secondaryCharcoal,
+                                    textColor: .secondaryWhite
+                                )
+                            )
+                        }
+                    }
                     viewModel.load()
                 case .failure(let error):
                     viewModel.appCoordinator.showToast(
@@ -1249,7 +1671,11 @@ struct HomeView: View {
                 systemImage: "camera.viewfinder",
                 accent: Color(hex: "3B82F6")
             ) {
-                viewModel.appCoordinator.showNutritionDestination(.journalComposer)
+                // Route through the home-owned log flow (`logFlowViewModel`)
+                // so we don't push the legacy `MacraFoodJournalRootView` /
+                // `MacraFoodJournalDayView` underneath the scanner. Mirrors
+                // how "Scan label" works.
+                presentLogSheet(.scanFood)
             }
 
             scannerActionPill(
@@ -1257,7 +1683,7 @@ struct HomeView: View {
                 systemImage: "barcode.viewfinder",
                 accent: Color(hex: "06B6D4")
             ) {
-                viewModel.appCoordinator.showNutritionTab(.journal)
+                presentLogSheet(.labelScan)
             }
         }
     }
@@ -1371,7 +1797,7 @@ struct HomeView: View {
                             isPinned: viewModel.isLabelPinned(scan.id),
                             onTogglePin: { viewModel.togglePinLabel(scan) }
                         ) {
-                            viewModel.appCoordinator.showNutritionTab(.journal)
+                            logFlowViewModel.presentLabelDetail(scan)
                         }
                     }
                 }
@@ -2031,13 +2457,7 @@ private struct MealPlanningHomeSurface: View {
                                 activeEditor = .rename(planId: plan.id, currentName: plan.planName)
                             }
                         } label: {
-                            MealPlanSummaryCard(plan: plan) {
-                                mealSelectionPlan = plan
-                            } onRename: {
-                                activeEditor = .rename(planId: plan.id, currentName: plan.planName)
-                            } onDelete: {
-                                viewModel.deletePlan(planId: plan.id) { _ in }
-                            }
+                            MealPlanSummaryCard(plan: plan)
                         }
                         .buttonStyle(.plain)
                     }
@@ -2065,14 +2485,89 @@ private struct MealPlanningHomeSurface: View {
 final class MacraPlanHubViewModel: ObservableObject {
     @Published var macroTarget: MacroRecommendation?
     @Published var suggestedPlan: MacraSuggestedMealPlan?
+    @Published var planLabel: String = "Starter Nora Plan"
     @Published var isLoading: Bool = false
     @Published var isGenerating: Bool = false
+    @Published var isAdaptingTargets: Bool = false
     @Published var errorMessage: String?
 
     let userId: String
+    private var cancellables = Set<AnyCancellable>()
 
     init(userId: String) {
         self.userId = userId
+        // Reload Today's fuel whenever the playbook re-mirrors the active
+        // plan. Without this, switching plans wouldn't take effect on this
+        // screen until the user manually backed out and re-entered the tab.
+        NotificationCenter.default.publisher(for: NutritionCoreNotification.activePlanDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                print("[Macra][PlanHub.observer] activePlanDidChange received — reloading")
+                self?.load()
+            }
+            .store(in: &cancellables)
+    }
+
+    struct PlanTotals {
+        let calories: Int
+        let protein: Int
+        let carbs: Int
+        let fat: Int
+    }
+
+    var planTotals: PlanTotals? {
+        guard let plan = suggestedPlan else { return nil }
+        let cal = plan.meals.reduce(0) { $0 + $1.totalCalories }
+        let p = plan.meals.reduce(0) { $0 + $1.totalProtein }
+        let c = plan.meals.reduce(0) { $0 + $1.totalCarbs }
+        let f = plan.meals.reduce(0) { $0 + $1.totalFat }
+        return PlanTotals(calories: cal, protein: p, carbs: c, fat: f)
+    }
+
+    /// True when the user's saved daily macro target diverges from the
+    /// active plan's totals beyond a small tolerance. Used to surface the
+    /// "macros don't match this plan" banner on Today's fuel.
+    var hasTargetMismatch: Bool {
+        guard let totals = planTotals, let target = macroTarget else { return false }
+        let calorieTolerance = 50
+        let macroTolerance = 5
+        return abs(totals.calories - target.calories) > calorieTolerance
+            || abs(totals.protein - target.protein) > macroTolerance
+            || abs(totals.carbs - target.carbs) > macroTolerance
+            || abs(totals.fat - target.fat) > macroTolerance
+    }
+
+    /// Quick-fix: overwrite the user's daily macro target with whatever the
+    /// active plan totals are. Saves a fresh `MacroRecommendation` (dayOfWeek
+    /// nil = all-days) so the banner clears on next load.
+    func adaptTargetsToPlan(completion: (() -> Void)? = nil) {
+        guard let totals = planTotals else { completion?(); return }
+        guard !userId.isEmpty else { completion?(); return }
+        isAdaptingTargets = true
+
+        let recommendation = MacroRecommendation(
+            userId: userId,
+            calories: totals.calories,
+            protein: totals.protein,
+            carbs: totals.carbs,
+            fat: totals.fat,
+            dayOfWeek: nil
+        )
+
+        MacroRecommendationService.sharedInstance.saveMacroRecommendation(recommendation) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isAdaptingTargets = false
+                switch result {
+                case .success(let saved):
+                    self.macroTarget = saved
+                    UserService.sharedInstance.currentMacroTarget = saved
+                case .failure(let error):
+                    self.errorMessage = error.localizedDescription
+                }
+                completion?()
+            }
+        }
     }
 
     func load() {
@@ -2092,37 +2587,242 @@ final class MacraPlanHubViewModel: ObservableObject {
         }
 
         group.enter()
-        fetchCachedPlan { [weak self] plan in
+        fetchCachedPlan { [weak self] plan, label in
             DispatchQueue.main.async {
                 self?.suggestedPlan = plan
+                self?.planLabel = label
                 group.leave()
             }
         }
 
         group.notify(queue: .main) { [weak self] in
             self?.isLoading = false
+            self?.auditAndMatchImages()
         }
     }
 
-    private func fetchCachedPlan(completion: @escaping (MacraSuggestedMealPlan?) -> Void) {
+    /// Audit pass run on every Plan tab load. Re-evaluates every meal and every item:
+    ///  - Existing imageURLs that no longer pass the (stricter) match threshold get cleared.
+    ///  - Meals/items still missing an image get matched against the user's last 90 days
+    ///    of logged meals.
+    /// Updates `suggestedPlan` incrementally so users see images appear (or disappear) in
+    /// real time, then persists the final state to Firestore.
+    func auditAndMatchImages() {
+        guard !userId.isEmpty, suggestedPlan != nil else { return }
+        let cutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? Date()
+        print("[Macra][PlanHub.images] Auditing meal/item images against last 90 days of logs")
+        Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("mealLogs")
+            .whereField("createdAt", isGreaterThanOrEqualTo: cutoff.timeIntervalSince1970)
+            .order(by: "createdAt", descending: true)
+            .getDocuments { [weak self] snapshot, error in
+                guard let self else { return }
+                if let error {
+                    print("[Macra][PlanHub.images] mealLogs fetch failed: \(error.localizedDescription)")
+                    return
+                }
+                let logged = snapshot?.documents.compactMap { doc -> Meal? in
+                    let m = Meal(id: doc.documentID, dictionary: doc.data())
+                    return m.image.isEmpty ? nil : m
+                } ?? []
+                print("[Macra][PlanHub.images] \(logged.count) candidate logs with images")
+                self.runAudit(logged: logged)
+            }
+    }
+
+    private func runAudit(logged: [Meal]) {
+        Task { @MainActor [weak self] in
+            guard let self, var plan = self.suggestedPlan else { return }
+            // Pre-tokenize every logged meal once (name + ingredients + detailedIngredients).
+            let indexed: [(meal: Meal, tokens: Set<String>)] = logged.map { log in
+                var text = log.name + " " + log.ingredients.joined(separator: " ")
+                if let detailed = log.detailedIngredients {
+                    text += " " + detailed.map(\.name).joined(separator: " ")
+                }
+                return (log, Self.tokenize(text))
+            }
+            var changed = false
+
+            for mealIndex in plan.meals.indices {
+                // Meal-level audit: aggregate all item names as the suggested signal.
+                let mealTokens = Self.tokenize(plan.meals[mealIndex].items.map(\.name).joined(separator: " "))
+                let mealMatch = Self.findMealMatch(tokens: mealTokens, in: indexed)
+                let newMealImage = mealMatch?.image
+                if (plan.meals[mealIndex].imageURL ?? "") != (newMealImage ?? "") {
+                    plan.meals[mealIndex].imageURL = newMealImage
+                    changed = true
+                    if let m = mealMatch {
+                        print("[Macra][PlanHub.images] ✓ Meal \(mealIndex + 1) → '\(m.name)'")
+                    } else {
+                        print("[Macra][PlanHub.images] ✗ Meal \(mealIndex + 1) cleared (no strong match)")
+                    }
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        self.suggestedPlan = plan
+                    }
+                    try? await Task.sleep(nanoseconds: 140_000_000)
+                }
+
+                // Item-level audit: each item gets its own matcher with strict rules.
+                for itemIndex in plan.meals[mealIndex].items.indices {
+                    let itemName = plan.meals[mealIndex].items[itemIndex].name
+                    let itemTokens = Self.tokenize(itemName)
+                    let itemMatch = Self.findItemMatch(tokens: itemTokens, in: indexed)
+                    let newItemImage = itemMatch?.image
+                    if (plan.meals[mealIndex].items[itemIndex].imageURL ?? "") != (newItemImage ?? "") {
+                        plan.meals[mealIndex].items[itemIndex].imageURL = newItemImage
+                        changed = true
+                        if let m = itemMatch {
+                            print("[Macra][PlanHub.images] ✓ Item '\(itemName)' → '\(m.name)'")
+                        } else {
+                            print("[Macra][PlanHub.images] ✗ Item '\(itemName)' cleared")
+                        }
+                        withAnimation(.easeInOut(duration: 0.20)) {
+                            self.suggestedPlan = plan
+                        }
+                        try? await Task.sleep(nanoseconds: 80_000_000)
+                    }
+                }
+            }
+
+            if changed {
+                self.persistPlanImages(plan)
+            } else {
+                print("[Macra][PlanHub.images] Audit complete — no changes")
+            }
+        }
+    }
+
+    /// Meal-level match: requires ≥2 overlapping tokens AND ≥40% coverage of the meal's
+    /// distinct tokens. Highest absolute overlap wins. Filters out the "single common
+    /// token" case where one logged photo matches every meal because they all share "rice".
+    private static func findMealMatch(tokens: Set<String>, in indexed: [(meal: Meal, tokens: Set<String>)]) -> Meal? {
+        guard tokens.count >= 2 else { return nil }
+        let coverageThreshold = 0.4
+        var best: (Meal, Int)?
+        for entry in indexed {
+            let overlap = tokens.intersection(entry.tokens).count
+            let coverage = Double(overlap) / Double(tokens.count)
+            if overlap >= 2, coverage >= coverageThreshold, overlap > (best?.1 ?? 0) {
+                best = (entry.meal, overlap)
+            }
+        }
+        return best?.0
+    }
+
+    /// Item-level match: 1-token items (e.g. "almonds") need that 1 token in the log;
+    /// multi-token items (e.g. "egg whites", "chicken breast") need ALL their tokens in
+    /// the log. Conservative on purpose — better to leave an item unillustrated than to
+    /// pin the wrong photo on it.
+    private static func findItemMatch(tokens: Set<String>, in indexed: [(meal: Meal, tokens: Set<String>)]) -> Meal? {
+        guard !tokens.isEmpty else { return nil }
+        let needed = tokens.count
+        var best: (Meal, Int)?
+        for entry in indexed {
+            let overlap = tokens.intersection(entry.tokens).count
+            if overlap >= needed, overlap > (best?.1 ?? 0) {
+                best = (entry.meal, overlap)
+            }
+        }
+        return best?.0
+    }
+
+    private static let matchStopwords: Set<String> = [
+        "a", "an", "the", "of", "with", "and", "or", "to", "in", "on",
+        "cup", "cups", "oz", "ounce", "ounces", "g", "gram", "grams",
+        "tbsp", "tsp", "lb", "lbs", "ml", "l", "kg",
+        "large", "small", "medium", "extra", "whole",
+        "plain", "raw", "cooked", "fresh", "dried"
+    ]
+
+    private static func tokenize(_ text: String) -> Set<String> {
+        let lowered = text.lowercased()
+        let cleaned = lowered.map { ch -> Character in
+            (ch.isLetter || ch.isNumber || ch == " ") ? ch : " "
+        }
+        return Set(
+            String(cleaned)
+                .split(separator: " ")
+                .map(String.init)
+                .filter { $0.count > 1 && !matchStopwords.contains($0) && Int($0) == nil }
+                .map { stem($0) }
+        )
+    }
+
+    /// Naive plural stripper so "almonds"↔"almond", "whites"↔"white", "cakes"↔"cake"
+    /// match. Good enough for the food-vocabulary domain; stays consistent on both sides
+    /// of the comparison even when it produces non-words ("asparagus" → "asparagu").
+    private static func stem(_ word: String) -> String {
+        guard word.count > 3, word.hasSuffix("s"), !word.hasSuffix("ss") else { return word }
+        return String(word.dropLast())
+    }
+
+    private func persistPlanImages(_ plan: MacraSuggestedMealPlan) {
+        guard !userId.isEmpty else { return }
+        do {
+            let data = try JSONEncoder().encode(plan)
+            guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let mealsArray = dict["meals"] as? [[String: Any]] else { return }
+            Firestore.firestore()
+                .collection("users")
+                .document(userId)
+                .collection("macraSuggestedMealPlans")
+                .document("current")
+                .updateData(["plan.meals": mealsArray]) { error in
+                    if let error {
+                        print("[Macra][PlanHub.images] persist failed: \(error.localizedDescription)")
+                    } else {
+                        print("[Macra][PlanHub.images] ✓ Persisted audit result")
+                    }
+                }
+        } catch {
+            print("[Macra][PlanHub.images] encode failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func fetchCachedPlan(completion: @escaping (MacraSuggestedMealPlan?, String) -> Void) {
         let docRef = Firestore.firestore()
             .collection("users")
             .document(userId)
             .collection("macraSuggestedMealPlans")
             .document("current")
 
-        docRef.getDocument { snapshot, _ in
-            guard let data = snapshot?.data() else {
-                completion(nil)
+        print("[Macra][PlanHub.fetch] Reading users/\(userId)/macraSuggestedMealPlans/current")
+        docRef.getDocument { snapshot, error in
+            if let error {
+                print("[Macra][PlanHub.fetch] ❌ Read failed: \(error.localizedDescription)")
+                completion(nil, "Starter Nora Plan")
                 return
             }
+            guard let data = snapshot?.data() else {
+                print("[Macra][PlanHub.fetch] No current doc found")
+                completion(nil, "Starter Nora Plan")
+                return
+            }
+            let source = data["source"] as? String ?? "<none>"
+            let mirroredName = data["planName"] as? String ?? "<none>"
+            print("[Macra][PlanHub.fetch] Doc loaded | source='\(source)' | planName='\(mirroredName)'")
+
             guard let planDict = data["plan"] as? [String: Any],
                   let jsonData = try? JSONSerialization.data(withJSONObject: planDict),
                   let plan = try? JSONDecoder().decode(MacraSuggestedMealPlan.self, from: jsonData) else {
-                completion(nil)
+                print("[Macra][PlanHub.fetch] ❌ Failed to decode plan dict")
+                completion(nil, "Starter Nora Plan")
                 return
             }
-            completion(plan)
+            // User-mirrored plans carry their original playbook name in `planName`.
+            // Nora-generated plans don't, so we keep the stable "Starter Nora Plan" label.
+            let label: String
+            if source == "user-selected",
+               let trimmed = (data["planName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !trimmed.isEmpty {
+                label = trimmed
+            } else {
+                label = "Starter Nora Plan"
+            }
+            print("[Macra][PlanHub.fetch] ✓ Resolved label='\(label)', \(plan.meals.count) meals")
+            completion(plan, label)
         }
     }
 
@@ -2192,6 +2892,7 @@ private struct MacraPlanHubSurface: View {
                 loadingCard
             } else if let plan = viewModel.suggestedPlan {
                 macroSummaryCard
+                macroMismatchBanner
                 planMealsSection(plan: plan)
             } else {
                 emptyStateCard
@@ -2264,6 +2965,20 @@ private struct MacraPlanHubSurface: View {
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .tracking(-0.5)
                     .foregroundColor(.white)
+                if viewModel.suggestedPlan != nil {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 11, weight: .bold))
+                        Text(viewModel.planLabel)
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(accent.opacity(0.12)))
+                    .overlay(Capsule().strokeBorder(accent.opacity(0.32), lineWidth: 1))
+                    .padding(.top, 2)
+                }
                 Text("Macra built this plan from your macro target. Swap anytime.")
                     .font(.system(size: 14, weight: .regular, design: .default))
                     .foregroundColor(.white.opacity(0.68))
@@ -2372,6 +3087,61 @@ private struct MacraPlanHubSurface: View {
     }
 
     @ViewBuilder
+    private var macroMismatchBanner: some View {
+        if viewModel.hasTargetMismatch,
+           let totals = viewModel.planTotals,
+           let target = viewModel.macroTarget {
+            let warn = Color(hex: "FFB454")
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(warn)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Macros don't match this plan")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        Text("Plan: \(totals.calories) cal · \(totals.protein)P / \(totals.carbs)C / \(totals.fat)F")
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.7))
+                        Text("Target: \(target.calories) cal · \(target.protein)P / \(target.carbs)C / \(target.fat)F")
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                Button {
+                    viewModel.adaptTargetsToPlan()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: viewModel.isAdaptingTargets ? "hourglass" : "arrow.triangle.2.circlepath")
+                            .font(.system(size: 12, weight: .bold))
+                        Text(viewModel.isAdaptingTargets ? "Adapting…" : "Match targets to plan")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.black)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
+                    .background(Capsule().fill(warn))
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isAdaptingTargets)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(warn.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(warn.opacity(0.32), lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
     private func planMealsSection(plan: MacraSuggestedMealPlan) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
@@ -2458,7 +3228,31 @@ private struct PlanHubMealCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .center, spacing: 12) {
+                if let urlString = meal.imageURL,
+                   !urlString.isEmpty,
+                   let url = URL(string: urlString) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().scaledToFill()
+                        case .failure:
+                            Color.white.opacity(0.06)
+                        case .empty:
+                            Color.white.opacity(0.04)
+                        @unknown default:
+                            Color.white.opacity(0.04)
+                        }
+                    }
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                    )
+                    .transition(.opacity.combined(with: .scale))
+                }
+
                 Text("Meal \(index + 1)")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
@@ -2468,9 +3262,33 @@ private struct PlanHubMealCard: View {
                     .foregroundColor(.white.opacity(0.6))
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(meal.items) { item in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    HStack(alignment: .center, spacing: 10) {
+                        if let urlString = item.imageURL,
+                           !urlString.isEmpty,
+                           let url = URL(string: urlString) {
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let img):
+                                    img.resizable().scaledToFill()
+                                case .failure:
+                                    Color.white.opacity(0.06)
+                                case .empty:
+                                    Color.white.opacity(0.04)
+                                @unknown default:
+                                    Color.white.opacity(0.04)
+                                }
+                            }
+                            .frame(width: 36, height: 36)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                            )
+                            .transition(.opacity.combined(with: .scale))
+                        }
+
                         VStack(alignment: .leading, spacing: 2) {
                             Text(item.name)
                                 .font(.system(size: 14, weight: .semibold, design: .rounded))
@@ -2912,12 +3730,33 @@ private struct NoraRegenerateSheet: View {
 struct NoraChatService {
     static let shared = NoraChatService()
 
+    private struct IngredientPayload: Encodable {
+        let name: String
+        let quantity: String
+        let calories: Int
+        let protein: Int
+        let carbs: Int
+        let fat: Int
+    }
+
     private struct MealPayload: Encodable {
         let name: String
         let calories: Int
         let protein: Int
         let carbs: Int
         let fat: Int
+        let ingredients: [IngredientPayload]?
+    }
+
+    private struct AttachedMealPayload: Encodable {
+        let name: String
+        let calories: Int
+        let protein: Int
+        let carbs: Int
+        let fat: Int
+        let loggedOnLabel: String?
+        let loggedOnKey: String?
+        let ingredients: [IngredientPayload]?
     }
 
     private struct TargetPayload: Encodable {
@@ -2935,6 +3774,7 @@ struct NoraChatService {
     private struct Request: Encodable {
         let query: String
         let meals: [MealPayload]
+        let attachedMeals: [AttachedMealPayload]?
         let target: TargetPayload?
         let history: [HistoryEntry]?
         let goal: String?
@@ -2957,7 +3797,8 @@ struct NoraChatService {
         meals: [Meal],
         target: MacroRecommendation?,
         history: [MacraNoraMessage] = [],
-        threadDate: Date = Date()
+        threadDate: Date = Date(),
+        attachedMeals: [(meal: Meal, loggedOn: Date)] = []
     ) async throws -> String {
         guard let user = Auth.auth().currentUser else {
             throw MacraMealPlanServiceError.notAuthenticated
@@ -2969,8 +3810,27 @@ struct NoraChatService {
             throw MacraMealPlanServiceError.invalidResponse
         }
 
-        let mealPayloads = meals.map {
-            MealPayload(name: $0.name, calories: $0.calories, protein: $0.protein, carbs: $0.carbs, fat: $0.fat)
+        let mealPayloads = meals.map { meal -> MealPayload in
+            MealPayload(
+                name: meal.name,
+                calories: meal.calories,
+                protein: meal.protein,
+                carbs: meal.carbs,
+                fat: meal.fat,
+                ingredients: NoraChatService.ingredientPayloads(for: meal)
+            )
+        }
+        let attachedPayloads = attachedMeals.map { entry -> AttachedMealPayload in
+            AttachedMealPayload(
+                name: entry.meal.name,
+                calories: entry.meal.calories,
+                protein: entry.meal.protein,
+                carbs: entry.meal.carbs,
+                fat: entry.meal.fat,
+                loggedOnLabel: NoraChatService.attachmentDateLabel(for: entry.loggedOn),
+                loggedOnKey: entry.loggedOn.macraFoodJournalDayKey,
+                ingredients: NoraChatService.ingredientPayloads(for: entry.meal)
+            )
         }
         let targetPayload = target.map {
             TargetPayload(calories: $0.calories, protein: $0.protein, carbs: $0.carbs, fat: $0.fat)
@@ -3002,6 +3862,7 @@ struct NoraChatService {
         let payload = Request(
             query: query,
             meals: mealPayloads,
+            attachedMeals: attachedPayloads.isEmpty ? nil : attachedPayloads,
             target: targetPayload,
             history: historyTail.isEmpty ? nil : historyTail,
             goal: nil,
@@ -3026,6 +3887,32 @@ struct NoraChatService {
 
         let decoded = try JSONDecoder().decode(Response.self, from: data)
         return decoded.reply
+    }
+
+    fileprivate static func attachmentDateLabel(for date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEMMMd")
+        return formatter.string(from: date)
+    }
+
+    private static func ingredientPayloads(for meal: Meal) -> [IngredientPayload]? {
+        guard let detailed = meal.detailedIngredients, !detailed.isEmpty else {
+            return nil
+        }
+        let payloads = detailed.map { detail in
+            IngredientPayload(
+                name: detail.name,
+                quantity: detail.quantity,
+                calories: detail.calories,
+                protein: detail.protein,
+                carbs: detail.carbs,
+                fat: detail.fat
+            )
+        }
+        return payloads.isEmpty ? nil : payloads
     }
 }
 
@@ -3052,6 +3939,10 @@ struct AskNoraSection: View {
     @State private var isLoadingThread: Bool = false
     @State private var errorMessage: String?
     @State private var loadedDayKey: String?
+    @State private var attachedItems: [MealAttachmentItem] = []
+    @State private var showingAttachSheet: Bool = false
+    @State private var copiedToastVisible: Bool = false
+    @State private var copiedToastTask: DispatchWorkItem?
     @FocusState private var focused: Bool
 
     private let noraAccent = Color(hex: "E0FE10")
@@ -3096,6 +3987,7 @@ struct AskNoraSection: View {
         VStack(alignment: .leading, spacing: 14) {
             headerRow
             presetRow
+            attachmentsRow
             composer
             if let error = errorMessage {
                 errorPill(error)
@@ -3124,9 +4016,28 @@ struct AskNoraSection: View {
                 )
                 .shadow(color: noraAccent.opacity(0.18), radius: 20, x: 0, y: 10)
         )
+        .overlay(alignment: .top) {
+            if copiedToastVisible {
+                copiedToastView
+                    .padding(.top, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .onAppear { loadThreadIfNeeded(force: false) }
         .onChange(of: dayKey) { _ in loadThreadIfNeeded(force: true) }
         .onChange(of: userId) { _ in loadThreadIfNeeded(force: true) }
+        .sheet(isPresented: $showingAttachSheet) {
+            MealAttachmentSheet(
+                userId: userId,
+                threadDate: threadDate,
+                currentlyAttached: attachedItems,
+                onConfirm: { items in
+                    attachedItems = items
+                    showingAttachSheet = false
+                },
+                onCancel: { showingAttachSheet = false }
+            )
+        }
     }
 
     private var headerRow: some View {
@@ -3184,7 +4095,39 @@ struct AskNoraSection: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 8) {
+            Button {
+                focused = false
+                showingAttachSheet = true
+            } label: {
+                Image(systemName: "paperclip")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(.white.opacity(attachedItems.isEmpty ? 0.75 : 1.0))
+                    .frame(width: 40, height: 40)
+                    .background(
+                        Circle()
+                            .fill(attachedItems.isEmpty ? Color.white.opacity(0.06) : noraAccent.opacity(0.18))
+                    )
+                    .overlay(
+                        Circle()
+                            .strokeBorder(attachedItems.isEmpty ? Color.white.opacity(0.14) : noraAccent.opacity(0.55), lineWidth: 1)
+                    )
+                    .overlay(alignment: .topTrailing) {
+                        if !attachedItems.isEmpty {
+                            Text("\(attachedItems.count)")
+                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(noraAccent))
+                                .offset(x: 4, y: -2)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .disabled(isAsking || isDayContextLoading)
+            .accessibilityLabel(attachedItems.isEmpty ? "Attach meals from history" : "\(attachedItems.count) meals attached")
+
             TextField(
                 "",
                 text: $query,
@@ -3220,6 +4163,74 @@ struct AskNoraSection: View {
             .disabled(isAsking || isDayContextLoading || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .opacity(isAsking || isDayContextLoading || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.5 : 1)
         }
+    }
+
+    @ViewBuilder
+    private var attachmentsRow: some View {
+        if !attachedItems.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(attachedItems) { item in
+                        HStack(spacing: 6) {
+                            Image(systemName: "fork.knife")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(noraAccent)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(item.meal.name)
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .lineLimit(1)
+                                Text(item.dayLabel.uppercased())
+                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    .tracking(0.6)
+                                    .foregroundColor(noraAccent.opacity(0.75))
+                            }
+                            Button {
+                                attachedItems.removeAll { $0.id == item.id }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(noraAccent.opacity(0.12)))
+                        .overlay(Capsule().strokeBorder(noraAccent.opacity(0.35), lineWidth: 1))
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    private var copiedToastView: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "doc.on.doc.fill")
+                .font(.system(size: 11, weight: .bold))
+            Text("Copied!")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+        }
+        .foregroundColor(.black)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Capsule().fill(noraAccent))
+        .shadow(color: noraAccent.opacity(0.45), radius: 10, x: 0, y: 4)
+    }
+
+    private func showCopiedToast() {
+        copiedToastTask?.cancel()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+            copiedToastVisible = true
+        }
+        let work = DispatchWorkItem {
+            withAnimation(.easeOut(duration: 0.22)) {
+                copiedToastVisible = false
+            }
+        }
+        copiedToastTask = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4, execute: work)
     }
 
     @ViewBuilder
@@ -3323,7 +4334,11 @@ struct AskNoraSection: View {
 
             VStack(spacing: 10) {
                 ForEach(messages) { message in
-                    NoraMessageBubble(message: message, defaultAccentHex: "E0FE10")
+                    NoraMessageBubble(
+                        message: message,
+                        defaultAccentHex: "E0FE10",
+                        onCopy: { showCopiedToast() }
+                    )
                 }
 
                 if isAsking {
@@ -3337,7 +4352,11 @@ struct AskNoraSection: View {
 
     private func loadThreadIfNeeded(force: Bool) {
         let currentKey = dayKey
-        if !force, loadedDayKey == currentKey, errorMessage == nil { return }
+        print("[Macra][Nora][LOAD-START] threadDate=\(threadDate) dayKey=\(currentKey) loadedDayKey=\(loadedDayKey ?? "nil") force=\(force) isToday=\(Calendar.current.isDateInToday(threadDate)) label=\(threadDateLabel) now=\(Date())")
+        if !force, loadedDayKey == currentKey, errorMessage == nil {
+            print("[Macra][Nora][LOAD-SKIP] already loaded for dayKey=\(currentKey), in-memory msgCount=\(messages.count)")
+            return
+        }
 
         errorMessage = nil
         loadedDayKey = currentKey
@@ -3346,9 +4365,14 @@ struct AskNoraSection: View {
         // so the thread shows up instantly (and survives Firestore failures,
         // missing indexes, offline, or a cold-start before auth hydrates).
         messages = MacraNoraThreadCache.load(userId: userId, dayKey: currentKey)
+        print("[Macra][Nora][CACHE-LOAD] requestedDayKey=\(currentKey) returned=\(messages.count)")
+        for m in messages {
+            print("[Macra][Nora][CACHE-LOAD-MSG] id=\(m.id) role=\(m.role.rawValue) dayKey=\(m.dayKey) ts=\(m.timestamp) preview=\(String(m.content.prefix(40)))")
+        }
 
         guard userId != nil else {
             // Not signed in → local-only thread.
+            print("[Macra][Nora][LOAD-ANON] no userId — local-only thread")
             return
         }
 
@@ -3358,7 +4382,10 @@ struct AskNoraSection: View {
             userId: userId
         ) { result in
             DispatchQueue.main.async {
-                guard loadedDayKey == currentKey else { return }
+                guard loadedDayKey == currentKey else {
+                    print("[Macra][Nora][LOAD-RESULT-STALE] callback dayKey=\(currentKey) but loadedDayKey=\(loadedDayKey ?? "nil") — discarding")
+                    return
+                }
                 isLoadingThread = false
                 switch result {
                 case .success(let loaded):
@@ -3370,6 +4397,10 @@ struct AskNoraSection: View {
                         userId: userId,
                         dayKey: currentKey
                     )
+                    print("[Macra][Nora][LOAD-MERGED] dayKey=\(currentKey) finalMsgCount=\(messages.count)")
+                    for m in messages {
+                        print("[Macra][Nora][LOAD-MERGED-MSG] id=\(m.id) role=\(m.role.rawValue) dayKey=\(m.dayKey) ts=\(m.timestamp) preview=\(String(m.content.prefix(40)))")
+                    }
                 case .failure(let error):
                     // Silent fallback — we still have the local cache, so
                     // the user keeps their thread. Only surface the error
@@ -3414,6 +4445,17 @@ struct AskNoraSection: View {
         let mealsSnapshot = meals
         let targetSnapshot = target
         let userIdSnapshot = userId
+        print("[Macra][Nora][WRITE-CTX] threadDate=\(threadDateSnapshot) threadDayKey=\(threadDayKey) askedAt=\(askedAt) deviceNow=\(Date()) askedAtDayKeyFromTs=\(askedAt.macraFoodJournalDayKey) isToday=\(Calendar.current.isDateInToday(threadDateSnapshot))")
+        // Drop any attached meal whose content matches a meal already in
+        // today's log — those reach Nora through `mealsSnapshot` and would
+        // otherwise be duplicated in the prompt context.
+        let primaryKeys: Set<String> = Set(mealsSnapshot.map { meal in
+            let trimmedName = meal.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return "\(trimmedName)|\(meal.calories)|\(meal.protein)|\(meal.carbs)|\(meal.fat)"
+        })
+        let attachmentsSnapshot: [(meal: Meal, loggedOn: Date)] = attachedItems
+            .filter { !primaryKeys.contains($0.dedupeKey) }
+            .map { ($0.meal, $0.loggedOn) }
         let userMessage = MacraNoraMessage(
             role: .user,
             content: text,
@@ -3428,6 +4470,7 @@ struct AskNoraSection: View {
         // first (guaranteed durable) then fire-and-forget Firestore sync.
         messages.append(userMessage)
         query = ""
+        print("[Macra][Nora][WRITE-USER-MSG] id=\(userMessage.id) dayKey=\(userMessage.dayKey) ts=\(userMessage.timestamp) tsDayKey=\(userMessage.timestamp.macraFoodJournalDayKey)")
         MacraNoraThreadCache.append(userMessage, userId: userIdSnapshot)
         MacraNoraChatService.sharedInstance.saveMessage(userMessage, userId: userIdSnapshot) { result in
             if case .failure(let error) = result {
@@ -3444,7 +4487,8 @@ struct AskNoraSection: View {
                     meals: mealsSnapshot,
                     target: targetSnapshot,
                     history: historySnapshot,
-                    threadDate: threadDateSnapshot
+                    threadDate: threadDateSnapshot,
+                    attachedMeals: attachmentsSnapshot
                 )
                 let assistantMessage = MacraNoraMessage(
                     role: .assistant,
@@ -3454,6 +4498,7 @@ struct AskNoraSection: View {
                     accentHex: "E0FE10",
                     iconSystemName: "sparkles"
                 )
+                print("[Macra][Nora][WRITE-ASSISTANT-MSG] id=\(assistantMessage.id) dayKey=\(assistantMessage.dayKey) ts=\(assistantMessage.timestamp) tsDayKey=\(assistantMessage.timestamp.macraFoodJournalDayKey)")
                 await MainActor.run {
                     if dayKey == threadDayKey {
                         messages.append(assistantMessage)
@@ -3478,9 +4523,310 @@ struct AskNoraSection: View {
     }
 }
 
+// MARK: - Meal Attachments (Ask Nora)
+
+struct MealAttachmentItem: Identifiable, Hashable {
+    let id: String
+    let meal: Meal
+    let loggedOn: Date
+
+    var dedupeKey: String {
+        let trimmedName = meal.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return "\(trimmedName)|\(meal.calories)|\(meal.protein)|\(meal.carbs)|\(meal.fat)"
+    }
+
+    var dayLabel: String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(loggedOn) { return "Today" }
+        if calendar.isDateInYesterday(loggedOn) { return "Yesterday" }
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEMMMd")
+        return formatter.string(from: loggedOn)
+    }
+}
+
+struct MealAttachmentSheet: View {
+    let userId: String?
+    let threadDate: Date
+    let currentlyAttached: [MealAttachmentItem]
+    let onConfirm: ([MealAttachmentItem]) -> Void
+    let onCancel: () -> Void
+
+    @State private var allItems: [MealAttachmentItem] = []
+    @State private var selectedKeys: Set<String> = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var hasLoaded = false
+    @State private var searchText: String = ""
+
+    private let store: any MealPlanningStore = FirestoreMealPlanningStore()
+    private let macraBlue = Color(hex: "3B82F6")
+
+    var body: some View {
+        NavigationStack {
+            content
+                .navigationTitle("Attach meals")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { onCancel() }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { confirm() }
+                            .fontWeight(.semibold)
+                    }
+                }
+                .onAppear { loadIfNeeded() }
+        }
+    }
+
+    private var filteredItems: [MealAttachmentItem] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return allItems }
+        return allItems.filter { item in
+            item.meal.name.lowercased().contains(trimmed)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if isLoading && allItems.isEmpty {
+            VStack(spacing: 10) {
+                ProgressView()
+                Text("Loading meal history…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let err = errorMessage, allItems.isEmpty {
+            VStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(.orange)
+                Text("Couldn't load meal history.")
+                    .font(.subheadline)
+                Text(err)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                Button("Retry") { loadIfNeeded(force: true) }
+                    .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if hasLoaded && allItems.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "fork.knife")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Text("No meals logged in the last 24 days.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(spacing: 0) {
+                searchField
+                List {
+                    Section {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(macraBlue)
+                                Text("LAST 24 DAYS")
+                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                    .tracking(1.0)
+                                    .foregroundColor(macraBlue)
+                            }
+                            Text("Pick meals from your last 24 days to give Nora extra context. Duplicates are filtered automatically.")
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    if filteredItems.isEmpty {
+                        Section {
+                            HStack(spacing: 10) {
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundColor(.secondary)
+                                Text("No meals match \u{201C}\(searchText)\u{201D}.")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    } else {
+                        ForEach(groupedItems, id: \.label) { group in
+                            Section(header: Text(group.label)) {
+                                ForEach(group.items) { item in
+                                    attachmentRow(item)
+                                }
+                            }
+                        }
+                    }
+                }
+                .listStyle(.insetGrouped)
+            }
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.secondary)
+            TextField("Search meals", text: $searchText)
+                .font(.system(size: 15))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .submitLabel(.search)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .background(Color(.systemGroupedBackground))
+    }
+
+    @ViewBuilder
+    private func attachmentRow(_ item: MealAttachmentItem) -> some View {
+        let isSelected = selectedKeys.contains(item.dedupeKey)
+        HStack(spacing: 12) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 20))
+                .foregroundColor(isSelected ? macraBlue : Color.secondary.opacity(0.6))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.meal.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(2)
+                Text("\(item.meal.calories) kcal · \(item.meal.protein)P \(item.meal.carbs)C \(item.meal.fat)F")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 8)
+            MealPlanningMealThumbnail(meal: item.meal, size: 44)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            toggle(item)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private struct DayGroup {
+        let label: String
+        let sortDate: Date
+        let items: [MealAttachmentItem]
+    }
+
+    private var groupedItems: [DayGroup] {
+        let grouped = Dictionary(grouping: filteredItems, by: { $0.dayLabel })
+        return grouped.map { (label, items) in
+            let sorted = items.sorted { $0.loggedOn > $1.loggedOn }
+            return DayGroup(
+                label: label,
+                sortDate: sorted.first?.loggedOn ?? .distantPast,
+                items: sorted
+            )
+        }
+        .sorted { $0.sortDate > $1.sortDate }
+    }
+
+    private func toggle(_ item: MealAttachmentItem) {
+        if selectedKeys.contains(item.dedupeKey) {
+            selectedKeys.remove(item.dedupeKey)
+        } else {
+            selectedKeys.insert(item.dedupeKey)
+        }
+    }
+
+    private func confirm() {
+        let chosen = allItems.filter { selectedKeys.contains($0.dedupeKey) }
+        var unique: [String: MealAttachmentItem] = [:]
+        for item in chosen.sorted(by: { $0.loggedOn > $1.loggedOn }) {
+            if unique[item.dedupeKey] == nil {
+                unique[item.dedupeKey] = item
+            }
+        }
+        let result = unique.values.sorted { $0.loggedOn > $1.loggedOn }
+        onConfirm(Array(result))
+    }
+
+    private func loadIfNeeded(force: Bool = false) {
+        guard force || !hasLoaded else { return }
+        guard let userId else {
+            errorMessage = "Sign in to attach meals from history."
+            hasLoaded = true
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        store.fetchRecentMeals(userId: userId, limit: 300) { result in
+            DispatchQueue.main.async {
+                isLoading = false
+                hasLoaded = true
+                switch result {
+                case .success(let meals):
+                    // Window: today + previous 24 days = 25 calendar days inclusive.
+                    let cutoff = Calendar.current.date(
+                        byAdding: .day,
+                        value: -24,
+                        to: Calendar.current.startOfDay(for: Date())
+                    ) ?? .distantPast
+
+                    let candidates = meals
+                        .filter { $0.createdAt >= cutoff }
+                        .map { MealAttachmentItem(id: $0.id, meal: $0, loggedOn: $0.createdAt) }
+
+                    var unique: [String: MealAttachmentItem] = [:]
+                    for item in candidates.sorted(by: { $0.loggedOn > $1.loggedOn }) {
+                        if unique[item.dedupeKey] == nil {
+                            unique[item.dedupeKey] = item
+                        }
+                    }
+
+                    // Carry forward any currently-attached items that fell
+                    // outside the 24-day window so the user doesn't silently
+                    // lose their selection when re-opening the sheet.
+                    for attached in currentlyAttached where unique[attached.dedupeKey] == nil {
+                        unique[attached.dedupeKey] = attached
+                    }
+
+                    allItems = unique.values.sorted { $0.loggedOn > $1.loggedOn }
+                    selectedKeys = Set(currentlyAttached.map { $0.dedupeKey })
+                case .failure(let error):
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
 private struct NoraMessageBubble: View {
     let message: MacraNoraMessage
     let defaultAccentHex: String
+    var onCopy: (() -> Void)? = nil
 
     private var accent: Color {
         Color(hex: message.accentHex ?? defaultAccentHex)
@@ -3547,6 +4893,7 @@ private struct NoraMessageBubble: View {
                 .foregroundColor(.white.opacity(message.role == .user ? 1 : 0.85))
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -3559,6 +4906,12 @@ private struct NoraMessageBubble: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(accent.opacity(message.role == .user ? 0.32 : 0.2), lineWidth: 1)
         )
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onLongPressGesture(minimumDuration: 0.4) {
+            UIPasteboard.general.string = message.content
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onCopy?()
+        }
     }
 }
 
@@ -4488,11 +5841,66 @@ private struct HomeDailyInsightCard: View {
             }
 
             if let insight {
-                Text(insight.response)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.white.opacity(0.82))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineSpacing(3)
+                if let badge = insight.typeBadge {
+                    Text(badge.label.uppercased())
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .tracking(1.0)
+                        .foregroundStyle(Color.primaryGreen)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule().fill(Color.primaryGreen.opacity(0.12))
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(Color.primaryGreen.opacity(0.35), lineWidth: 1)
+                        )
+                }
+                if let points = insight.points, !points.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(points.enumerated()), id: \.offset) { _, point in
+                            HStack(alignment: .top, spacing: 10) {
+                                Circle()
+                                    .fill(Color.primaryGreen)
+                                    .frame(width: 5, height: 5)
+                                    .padding(.top, 7)
+                                Text(point)
+                                    .font(.subheadline)
+                                    .foregroundStyle(Color.white.opacity(0.85))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .lineSpacing(2)
+                            }
+                        }
+                    }
+                } else {
+                    Text(insight.response)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.white.opacity(0.82))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .lineSpacing(3)
+                }
+                if let action = insight.action, !action.isEmpty {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "arrow.right.circle.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.primaryGreen)
+                            .padding(.top, 1)
+                        Text(action)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .lineSpacing(2)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.primaryGreen.opacity(0.08))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.primaryGreen.opacity(0.25), lineWidth: 1)
+                    )
+                }
                 HStack(spacing: 10) {
                     Spacer()
                     Button {
@@ -4579,6 +5987,448 @@ private struct HomeNetCarbChip: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color(hex: "60A5FA").opacity(0.28), lineWidth: 1)
         )
+    }
+}
+
+private struct HomeFullNutritionCard: View {
+    private let macraBlue = Color(hex: "3B82F6")
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "list.bullet.rectangle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(macraBlue)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Full nutrition")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.9))
+                Text("Sugars, fiber, sodium, vitamins & more")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.5))
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.55))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(macraBlue.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(macraBlue.opacity(0.28), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Full Nutrition Sheet
+
+private struct MacraFullNutritionSheet: View {
+    @ObservedObject var viewModel: HomeViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    private let macraBlue = Color(hex: "3B82F6")
+
+    private enum RowKind {
+        /// Standard nutrient row: name on left, big blue value + unit on right.
+        case nutrient
+        /// Supplement breakdown row: name + dosage on left, small descriptive
+        /// macro summary on right (no unit, normal weight).
+        case supplement(subtitle: String?)
+    }
+
+    private struct Row: Identifiable {
+        let id = UUID()
+        let name: String
+        let value: String
+        let unit: String?
+        /// >0 means a supplement contributed to this row; rendered as a +X badge.
+        let supplementContribution: Int
+        /// Optional pre-net value rendered with a strikethrough next to `value`.
+        /// Used for carbs to show "186 (struck) 144 g net" when fiber/sugar
+        /// alcohols pull net carbs below total carbs.
+        let crossedOutValue: String?
+        /// Suffix label rendered after `unit` (e.g. "net"). Tiny accent.
+        let trailingLabel: String?
+        let kind: RowKind
+
+        init(
+            name: String,
+            value: String,
+            unit: String?,
+            supplementContribution: Int,
+            crossedOutValue: String? = nil,
+            trailingLabel: String? = nil,
+            kind: RowKind = .nutrient
+        ) {
+            self.name = name
+            self.value = value
+            self.unit = unit
+            self.supplementContribution = supplementContribution
+            self.crossedOutValue = crossedOutValue
+            self.trailingLabel = trailingLabel
+            self.kind = kind
+        }
+    }
+
+    private struct Section: Identifiable {
+        let id = UUID()
+        let title: String
+        let subtitle: String
+        let rows: [Row]
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 18) {
+                    headerCard
+                    ForEach(sections) { section in
+                        sectionView(section)
+                    }
+                }
+                .padding(20)
+            }
+            .background(Color(hex: "0B1220").ignoresSafeArea())
+            .navigationTitle("Full nutrition")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private var headerCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("FOR \(dateLabel.uppercased())")
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .tracking(1.0)
+                .foregroundStyle(macraBlue)
+            Text("Daily nutrition breakdown")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+            Text("Aggregated across \(viewModel.todaysMeals.count) meal\(viewModel.todaysMeals.count == 1 ? "" : "s") and \(viewModel.loggedSupplements.count) supplement\(viewModel.loggedSupplements.count == 1 ? "" : "s") logged today.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.55))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(macraBlue.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(macraBlue.opacity(0.28), lineWidth: 1)
+        )
+    }
+
+    private var dateLabel: String {
+        let cal = Calendar.current
+        if cal.isDateInToday(viewModel.selectedDate) { return "Today" }
+        if cal.isDateInYesterday(viewModel.selectedDate) { return "Yesterday" }
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEMMMd")
+        return formatter.string(from: viewModel.selectedDate)
+    }
+
+    private var sections: [Section] {
+        var output: [Section] = []
+
+        // Daily totals (always show — these are the macros).
+        // Carbs row collapses fiber/sugar-alcohol adjustments inline:
+        // "186 (struck) 144 g net" instead of a separate Net Carbs row below.
+        let carbsRow: Row = {
+            if viewModel.hasNetCarbAdjustment, viewModel.totalNetCarbs != viewModel.totalCarbs {
+                return Row(
+                    name: "Total Carbohydrates",
+                    value: "\(viewModel.totalNetCarbs)",
+                    unit: "g",
+                    supplementContribution: viewModel.supplementCarbs,
+                    crossedOutValue: "\(viewModel.totalCarbs)",
+                    trailingLabel: "net"
+                )
+            }
+            return Row(
+                name: "Total Carbohydrates",
+                value: "\(viewModel.totalCarbs)",
+                unit: "g",
+                supplementContribution: viewModel.supplementCarbs
+            )
+        }()
+
+        output.append(
+            Section(
+                title: "Daily totals",
+                subtitle: "Calories and macros",
+                rows: [
+                    Row(name: "Total Calories", value: "\(viewModel.totalCalories)", unit: "kcal", supplementContribution: viewModel.supplementCalories),
+                    Row(name: "Total Protein", value: "\(viewModel.totalProtein)", unit: "g", supplementContribution: viewModel.supplementProtein),
+                    carbsRow,
+                    Row(name: "Total Fat", value: "\(viewModel.totalFat)", unit: "g", supplementContribution: viewModel.supplementFat)
+                ]
+            )
+        )
+
+        // Supplements breakdown — itemizes what each logged supplement
+        // contributed today, mirroring FWP's "supplement boosts the daily
+        // table" behavior. Section only renders when at least one supplement
+        // is logged. Inline +X badges on macros/vitamins/minerals stay where
+        // they are; this section is the explicit ledger.
+        if !viewModel.loggedSupplements.isEmpty {
+            let suppRows: [Row] = viewModel.loggedSupplements.map { supp in
+                let macroBits: [String] = {
+                    var bits: [String] = []
+                    if supp.calories > 0 { bits.append("\(supp.calories) kcal") }
+                    if supp.protein > 0 { bits.append("\(supp.protein)P") }
+                    if supp.carbs > 0 { bits.append("\(supp.carbs)C") }
+                    if supp.fat > 0 { bits.append("\(supp.fat)F") }
+                    return bits
+                }()
+                let vitMineralCount = (supp.vitamins?.count ?? 0) + (supp.minerals?.count ?? 0)
+                let contributionSummary: String = {
+                    if !macroBits.isEmpty {
+                        return macroBits.joined(separator: " · ")
+                    }
+                    if vitMineralCount > 0 {
+                        return "\(vitMineralCount) micronutrient\(vitMineralCount == 1 ? "" : "s")"
+                    }
+                    return "logged"
+                }()
+                let totalContribution = supp.calories + supp.protein + supp.carbs + supp.fat
+                return Row(
+                    name: supp.name,
+                    value: contributionSummary,
+                    unit: nil,
+                    supplementContribution: totalContribution,
+                    kind: .supplement(subtitle: supp.dosageDescription)
+                )
+            }
+            output.append(
+                Section(
+                    title: "Supplements",
+                    subtitle: "What each supplement added today",
+                    rows: suppRows
+                )
+            )
+        }
+
+        // Additional nutrients section — only rows that actually have data.
+        // (Net Carbs no longer gets its own row; it's inlined into the carbs
+        // row above.)
+        var extras: [Row] = []
+        if viewModel.totalDietaryFiber > 0 {
+            extras.append(Row(name: "Total Dietary Fiber", value: "\(viewModel.totalDietaryFiber)", unit: "g", supplementContribution: 0))
+        }
+        if viewModel.totalSugars > 0 {
+            extras.append(Row(name: "Total Sugars", value: "\(viewModel.totalSugars)", unit: "g", supplementContribution: 0))
+        }
+        if viewModel.totalSugarAlcohols > 0 {
+            extras.append(Row(name: "Sugar Alcohols", value: "\(viewModel.totalSugarAlcohols)", unit: "g", supplementContribution: 0))
+        }
+        if viewModel.totalSodium > 0 {
+            extras.append(Row(name: "Total Sodium", value: "\(viewModel.totalSodium)", unit: "mg", supplementContribution: 0))
+        }
+        if viewModel.totalCholesterol > 0 {
+            extras.append(Row(name: "Total Cholesterol", value: "\(viewModel.totalCholesterol)", unit: "mg", supplementContribution: 0))
+        }
+        if viewModel.totalSaturatedFat > 0 {
+            extras.append(Row(name: "Total Saturated Fat", value: "\(viewModel.totalSaturatedFat)", unit: "g", supplementContribution: 0))
+        }
+        if viewModel.totalUnsaturatedFat > 0 {
+            extras.append(Row(name: "Total Unsaturated Fat", value: "\(viewModel.totalUnsaturatedFat)", unit: "g", supplementContribution: 0))
+        }
+        if !extras.isEmpty {
+            output.append(Section(title: "Other nutrients", subtitle: "Beyond the core macros", rows: extras))
+        }
+
+        // Vitamins (meals + supplements merged, supplements tracked for badge).
+        let vitaminRows = mergedRows(meals: viewModel.mealVitamins, supplements: viewModel.supplementVitamins, unit: "mg")
+        if !vitaminRows.isEmpty {
+            output.append(Section(title: "Vitamins", subtitle: "Aggregated across meals & supplements", rows: vitaminRows))
+        }
+
+        // Minerals.
+        let mineralRows = mergedRows(meals: viewModel.mealMinerals, supplements: viewModel.supplementMinerals, unit: "mg")
+        if !mineralRows.isEmpty {
+            output.append(Section(title: "Minerals", subtitle: "Aggregated across meals & supplements", rows: mineralRows))
+        }
+
+        return output
+    }
+
+    /// Produces sorted rows that combine meal + supplement values for the same
+    /// nutrient, with the supplement-contribution payload preserved so the
+    /// row UI can show a "+X" badge next to anything supplements added to.
+    private func mergedRows(meals: [String: Int], supplements: [String: Int], unit: String) -> [Row] {
+        let allKeys = Set(meals.keys).union(supplements.keys)
+        return allKeys
+            .sorted()
+            .compactMap { key in
+                let mealValue = meals[key] ?? 0
+                let suppValue = supplements[key] ?? 0
+                let total = mealValue + suppValue
+                guard total > 0 else { return nil }
+                return Row(name: key, value: "\(total)", unit: unit, supplementContribution: suppValue)
+            }
+    }
+
+    @ViewBuilder
+    private func sectionView(_ section: Section) -> some View {
+        VStack(spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(section.title.uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .tracking(1.0)
+                        .foregroundStyle(macraBlue)
+                    Text(section.subtitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.55))
+                }
+                Spacer()
+                if section.rows.contains(where: { $0.supplementContribution > 0 }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "pills.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.purple)
+                        Text("Supplement enhanced")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.purple.opacity(0.9))
+                            .tracking(0.3)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(Color.purple.opacity(0.14)))
+                }
+            }
+
+            VStack(spacing: 0) {
+                ForEach(Array(section.rows.enumerated()), id: \.element.id) { index, row in
+                    rowView(row)
+                    if index < section.rows.count - 1 {
+                        Divider()
+                            .background(Color.white.opacity(0.08))
+                            .padding(.horizontal, 16)
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(macraBlue.opacity(0.18), lineWidth: 1)
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func rowView(_ row: Row) -> some View {
+        switch row.kind {
+        case .nutrient:
+            nutrientRow(row)
+        case .supplement(let subtitle):
+            supplementRow(row, subtitle: subtitle)
+        }
+    }
+
+    @ViewBuilder
+    private func nutrientRow(_ row: Row) -> some View {
+        HStack(alignment: .center) {
+            HStack(spacing: 8) {
+                if row.supplementContribution > 0 {
+                    Circle()
+                        .fill(Color.purple)
+                        .frame(width: 5, height: 5)
+                }
+                Text(row.name)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.88))
+            }
+            Spacer()
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                if let crossed = row.crossedOutValue {
+                    Text(crossed)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.4))
+                        .strikethrough(true, color: Color.white.opacity(0.45))
+                        .monospacedDigit()
+                }
+                Text(row.value)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(macraBlue)
+                    .monospacedDigit()
+                if let unit = row.unit {
+                    Text(unit)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.55))
+                }
+                if let label = row.trailingLabel {
+                    Text(label)
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .tracking(0.6)
+                        .foregroundStyle(macraBlue.opacity(0.85))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(macraBlue.opacity(0.16)))
+                }
+                if row.supplementContribution > 0 {
+                    Text("+\(row.supplementContribution)")
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.purple)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.purple.opacity(0.14)))
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder
+    private func supplementRow(_ row: Row, subtitle: String?) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "pills.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.purple)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.purple.opacity(0.14)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.name)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.92))
+                    .lineLimit(2)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.5))
+                }
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(row.value)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.purple)
+                    .multilineTextAlignment(.trailing)
+                Text("ADDED")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundStyle(.purple.opacity(0.7))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 }
 
@@ -4687,7 +6537,7 @@ private struct MealRow: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .monospacedDigit()
-                Text("P \(meal.protein) · C \(meal.carbs) · F \(meal.fat)")
+                macroLine
                     .font(.caption2)
                     .foregroundStyle(Color.white.opacity(0.5))
                     .monospacedDigit()
@@ -4728,6 +6578,21 @@ private struct MealRow: View {
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(Color.primaryGreen)
             )
+    }
+
+    private var macroLine: Text {
+        let prefix = Text("P \(meal.protein) · C ")
+        let suffix = Text(" · F \(meal.fat)")
+        if meal.hasNetCarbAdjustment, meal.netCarbs != meal.carbs {
+            let original = Text("\(meal.carbs)")
+                .strikethrough(true, color: Color.white.opacity(0.45))
+                .foregroundColor(Color.white.opacity(0.4))
+            let net = Text(" \(meal.netCarbs)")
+                .foregroundColor(Color.primaryGreen)
+            return prefix + original + net + suffix
+        } else {
+            return prefix + Text("\(meal.carbs)") + suffix
+        }
     }
 }
 
@@ -4795,8 +6660,6 @@ private struct NutritionDestinationView: View {
     @ViewBuilder
     private var destinationContent: some View {
         switch destination {
-        case .journalComposer:
-            MacraFoodJournalRootView(initialSheet: .scanFood)
         case .mealPlanning:
             if let userId = serviceManager.userService.user?.id ?? Auth.auth().currentUser?.uid {
                 MealPlanningRootView(userId: userId)
@@ -5149,6 +7012,7 @@ private struct MoreRow: View {
 
 private struct MacraDayPickerSheet: View {
     @Binding var selectedDate: Date
+    let confirmTitle: String
     let onDone: () -> Void
 
     @State private var workingDate: Date
@@ -5157,8 +7021,9 @@ private struct MacraDayPickerSheet: View {
 
     private let calendar = Calendar.current
 
-    init(selectedDate: Binding<Date>, onDone: @escaping () -> Void) {
+    init(selectedDate: Binding<Date>, confirmTitle: String = "Done", onDone: @escaping () -> Void) {
         self._selectedDate = selectedDate
+        self.confirmTitle = confirmTitle
         self.onDone = onDone
         let initial = selectedDate.wrappedValue
         self._workingDate = State(initialValue: initial)
@@ -5173,34 +7038,36 @@ private struct MacraDayPickerSheet: View {
                 weekdayHeader
                 daysGrid
 
-                HStack(spacing: 12) {
-                    Button {
-                        let today = calendar.startOfDay(for: Date())
-                        workingDate = today
-                        selectedDate = today
-                        let monthStart = calendar.dateInterval(of: .month, for: today)?.start ?? today
-                        if monthStart != displayedMonth {
-                            displayedMonth = monthStart
-                            loadLoggedDates()
+                if !calendar.isDateInToday(workingDate) {
+                    HStack(spacing: 12) {
+                        Button {
+                            let today = calendar.startOfDay(for: Date())
+                            workingDate = today
+                            selectedDate = today
+                            let monthStart = calendar.dateInterval(of: .month, for: today)?.start ?? today
+                            if monthStart != displayedMonth {
+                                displayedMonth = monthStart
+                                loadLoggedDates()
+                            }
+                        } label: {
+                            Text("Jump to today")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                .foregroundColor(Color.primaryGreen)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.primaryGreen.opacity(0.12))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .strokeBorder(Color.primaryGreen.opacity(0.35), lineWidth: 1)
+                                )
                         }
-                    } label: {
-                        Text("Jump to today")
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .foregroundColor(Color.primaryGreen)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.primaryGreen.opacity(0.12))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .strokeBorder(Color.primaryGreen.opacity(0.35), lineWidth: 1)
-                            )
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 16)
                 }
-                .padding(.horizontal, 16)
 
                 Spacer()
             }
@@ -5212,7 +7079,7 @@ private struct MacraDayPickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", action: onDone)
+                    Button(confirmTitle, action: onDone)
                         .tint(Color.primaryGreen)
                 }
             }

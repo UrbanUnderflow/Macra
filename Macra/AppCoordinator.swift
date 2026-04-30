@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import RevenueCat
+import AuthenticationServices
 
 protocol Screen {
     func makeView(serviceManager: ServiceManager, appCoordinator: AppCoordinator) -> AnyView
@@ -48,7 +49,6 @@ final class AppCoordinator: ObservableObject {
     }
 
     enum NutritionShellDestination: Hashable {
-        case journalComposer
         case mealPlanning
         case macroTargets
         case supplementTracker
@@ -58,8 +58,6 @@ final class AppCoordinator: ObservableObject {
 
         var title: String {
             switch self {
-            case .journalComposer:
-                return "Log a meal"
             case .mealPlanning:
                 return "Meal planning"
             case .macroTargets:
@@ -77,8 +75,6 @@ final class AppCoordinator: ObservableObject {
 
         var subtitle: String {
             switch self {
-            case .journalComposer:
-                return "Start a new entry from photo, text, or voice."
             case .mealPlanning:
                 return "Plan meals and move them back into today’s journal."
             case .macroTargets:
@@ -96,8 +92,6 @@ final class AppCoordinator: ObservableObject {
 
         var systemImage: String {
             switch self {
-            case .journalComposer:
-                return "plus.circle.fill"
             case .mealPlanning:
                 return "calendar.badge.plus"
             case .macroTargets:
@@ -196,6 +190,37 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    func signInWithApple(completion: @escaping (Result<String, Error>) -> Void) {
+        serviceManager.appleSignInService.onSignIn = { [weak self] result in
+            switch result {
+            case .success(let idTokenString):
+                self?.serviceManager.firebaseService.signInWithApple(idTokenString: idTokenString) { result in
+                    switch result {
+                    case .success:
+                        DispatchQueue.main.async {
+                            self?.serviceManager.showTabBar = true
+                        }
+                        completion(.success("success"))
+                    case .failure(let error):
+                        completion(.failure(error))
+                    }
+                }
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+
+        let appleIDProvider = ASAuthorizationAppleIDProvider()
+        let request = appleIDProvider.createRequest()
+        request.requestedScopes = [.fullName, .email]
+
+        let authorizationController = ASAuthorizationController(authorizationRequests: [request])
+        authorizationController.delegate = serviceManager.appleSignInService
+        authorizationController.presentationContextProvider = serviceManager.appleSignInService
+        serviceManager.firebaseService.currentAuthorizationController = authorizationController
+        authorizationController.performRequests()
+    }
+
     func handleLogout() {
         do {
             try serviceManager.firebaseService.signOut()
@@ -234,18 +259,45 @@ final class AppCoordinator: ObservableObject {
                 return
             }
 
-            self.serviceManager.userService.hasSavedMacraProfile { [weak self] hasSavedProfile in
+            self.detectPriorMacraOnboarding(user: user) { [weak self] hasOnboardedBefore in
                 guard let self else { return }
 
-                guard hasSavedProfile else {
+                guard hasOnboardedBefore else {
                     DispatchQueue.main.async {
                         self.showAppIntro()
                     }
                     return
                 }
 
+                // Self-heal the flag so we don't repeat this check on every login.
                 self.serviceManager.userService.markMacraOnboardingComplete { _ in
                     self.routeMacraSubscriber(user: self.serviceManager.userService.user ?? user)
+                }
+            }
+        }
+    }
+
+    /// Returns true when there is evidence the user already completed Macra
+    /// onboarding in a prior session — shared-doc Macra subscription, beta
+    /// access, saved questionnaire profile, or RevenueCat entitlement.
+    private func detectPriorMacraOnboarding(user: User?, completion: @escaping (Bool) -> Void) {
+        if user?.subscriptionType.grantsMacraAccess == true ||
+           serviceManager.userService.isBetaUser {
+            completion(true)
+            return
+        }
+
+        serviceManager.userService.hasSavedMacraProfile { hasSavedProfile in
+            if hasSavedProfile {
+                completion(true)
+                return
+            }
+
+            PurchaseService.sharedInstance.checkSubscriptionStatus(forceRefresh: true) { result in
+                if case .success(true) = result {
+                    completion(true)
+                } else {
+                    completion(false)
                 }
             }
         }

@@ -106,6 +106,7 @@ struct MacraFoodJournalDayView: View {
                 VStack(spacing: 20) {
                     header
                     heroCard
+                    MacraFoodJournalNutritionBreakdownCard(summary: summary)
                     MacraFoodJournalStreakStrip(stats: viewModel.loggingStats)
                     quickActions
                     pinnedMealsSection
@@ -726,10 +727,12 @@ struct MacraFoodJournalMealDetailsView: View {
 struct MacraFoodJournalFromHistoryView: View {
     @ObservedObject var viewModel: MacraFoodJournalViewModel
     @State private var selection: Int = 0
+    @State private var searchText: String = ""
+    @State private var selectedMealIDs: Set<String> = []
 
     var body: some View {
         NavigationStack {
-            ZStack {
+            ZStack(alignment: .bottom) {
                 MacraFoodJournalTheme.background.ignoresSafeArea()
                 VStack(spacing: 16) {
                     HStack {
@@ -749,21 +752,99 @@ struct MacraFoodJournalFromHistoryView: View {
                         Text("Labels").tag(2)
                     }
                     .pickerStyle(.segmented)
+                    .onChange(of: selection) { _ in
+                        // Clear selection when leaving the meals tab — checkboxes
+                        // only apply there, and showing a stale "Log N" pill on
+                        // Photos/Labels would be confusing.
+                        selectedMealIDs.removeAll()
+                    }
+
+                    MacraFoodJournalHistorySearchBar(text: $searchText, placeholder: searchPlaceholder)
 
                     if selection == 0 {
                         historyMealsList
                     } else if selection == 1 {
-                        MacraFoodJournalPhotoFoodGridView(viewModel: viewModel)
+                        MacraFoodJournalPhotoFoodGridView(viewModel: viewModel, searchText: searchText)
                     } else {
-                        MacraLabelScanHistoryView(viewModel: viewModel)
+                        MacraLabelScanHistoryView(viewModel: viewModel, searchText: searchText)
                     }
                 }
                 .padding(20)
+                // Bottom padding so the floating CTA doesn't cover the last row.
+                .padding(.bottom, selection == 0 && !selectedMealIDs.isEmpty ? 86 : 0)
+
+                if selection == 0, !selectedMealIDs.isEmpty {
+                    bulkLogCTA
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 18)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .animation(.spring(response: 0.32, dampingFraction: 0.82), value: selectedMealIDs.isEmpty)
         }
         .onAppear {
             viewModel.loadMealHistory()
             viewModel.loadLabelScanHistory()
+        }
+    }
+
+    private var bulkLogCTA: some View {
+        HStack(spacing: 12) {
+            Button {
+                selectedMealIDs.removeAll()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white.opacity(0.85))
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Color.white.opacity(0.10)))
+                    .overlay(Circle().strokeBorder(Color.white.opacity(0.18), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Clear selection")
+
+            Button {
+                logSelectedMeals()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "tray.and.arrow.down.fill")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Log \(selectedMealIDs.count) \(selectedMealIDs.count == 1 ? "meal" : "meals")")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.black)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(Capsule().fill(MacraFoodJournalTheme.accent))
+                .shadow(color: MacraFoodJournalTheme.accent.opacity(0.45), radius: 12, x: 0, y: 6)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func logSelectedMeals() {
+        let mealsToLog = filteredMealHistory.filter { selectedMealIDs.contains($0.id) }
+        guard !mealsToLog.isEmpty else { return }
+        viewModel.logMealsFromHistory(mealsToLog)
+        selectedMealIDs.removeAll()
+    }
+
+    private var searchPlaceholder: String {
+        switch selection {
+        case 1: return "Search photos"
+        case 2: return "Search labels"
+        default: return "Search meals"
+        }
+    }
+
+    private var filteredMealHistory: [MacraFoodJournalMeal] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return viewModel.allMealHistory }
+        let needle = trimmed.lowercased()
+        return viewModel.allMealHistory.filter { meal in
+            meal.name.lowercased().contains(needle)
+                || meal.caption.lowercased().contains(needle)
+                || meal.notes.lowercased().contains(needle)
         }
     }
 
@@ -789,24 +870,115 @@ struct MacraFoodJournalFromHistoryView: View {
                 title: "No meal history yet",
                 message: "Meals you log from Home will appear here so you can quickly eat them again."
             )
+        } else if filteredMealHistory.isEmpty {
+            MacraFoodJournalEmptyState(
+                title: "No matches",
+                message: "No meals match \"\(searchText)\". Try a different search."
+            )
         } else {
             ScrollView {
                 VStack(spacing: 12) {
-                    ForEach(viewModel.allMealHistory) { meal in
-                        MacraFoodJournalMealRow(meal: meal, onTap: { viewModel.logMealFromHistory(meal) }) {
-                            viewModel.logMealFromHistory(meal)
-                        } trailingAction: {
-                            viewModel.togglePin(meal)
-                        }
+                    ForEach(filteredMealHistory) { meal in
+                        historyRow(for: meal)
                     }
                 }
             }
         }
     }
+
+    @ViewBuilder
+    private func historyRow(for meal: MacraFoodJournalMeal) -> some View {
+        let isSelected = selectedMealIDs.contains(meal.id)
+        HStack(spacing: 10) {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(isSelected
+                    ? MacraFoodJournalTheme.accent
+                    : MacraFoodJournalTheme.textMuted.opacity(0.7))
+                .frame(width: 28)
+                .contentShape(Rectangle())
+                .onTapGesture { toggleSelection(meal) }
+
+            MacraFoodJournalMealRow(
+                meal: meal,
+                onTap: { toggleSelection(meal) }
+            ) {
+                viewModel.logMealFromHistory(meal)
+            } trailingAction: {
+                viewModel.togglePin(meal)
+            }
+        }
+        .padding(.vertical, 2)
+        .padding(.horizontal, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isSelected ? MacraFoodJournalTheme.accent.opacity(0.08) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(
+                    isSelected ? MacraFoodJournalTheme.accent.opacity(0.45) : Color.clear,
+                    lineWidth: 1
+                )
+        )
+        .animation(.easeInOut(duration: 0.12), value: isSelected)
+    }
+
+    private func toggleSelection(_ meal: MacraFoodJournalMeal) {
+        if selectedMealIDs.contains(meal.id) {
+            selectedMealIDs.remove(meal.id)
+        } else {
+            selectedMealIDs.insert(meal.id)
+        }
+    }
+}
+
+struct MacraFoodJournalHistorySearchBar: View {
+    @Binding var text: String
+    var placeholder: String = "Search"
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(MacraFoodJournalTheme.textMuted)
+            TextField("", text: $text, prompt: Text(placeholder).foregroundColor(MacraFoodJournalTheme.textMuted))
+                .foregroundColor(.white)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled(true)
+                .textInputAutocapitalization(.never)
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(MacraFoodJournalTheme.textMuted)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(MacraFoodJournalTheme.panelSoft)
+        )
+    }
 }
 
 struct MacraFoodJournalPhotoFoodGridView: View {
     @ObservedObject var viewModel: MacraFoodJournalViewModel
+    var searchText: String = ""
+
+    private var filteredPhotos: [MacraFoodJournalMeal] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return viewModel.photoHistory }
+        let needle = trimmed.lowercased()
+        return viewModel.photoHistory.filter { meal in
+            meal.name.lowercased().contains(needle)
+                || meal.caption.lowercased().contains(needle)
+                || meal.notes.lowercased().contains(needle)
+        }
+    }
 
     var body: some View {
         Group {
@@ -819,10 +991,15 @@ struct MacraFoodJournalPhotoFoodGridView: View {
                     title: "No meal photos yet",
                     message: "Meals logged with photos will show up here."
                 )
+            } else if filteredPhotos.isEmpty {
+                MacraFoodJournalEmptyState(
+                    title: "No matches",
+                    message: "No photos match \"\(searchText)\". Try a different search."
+                )
             } else {
                 ScrollView {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
-                        ForEach(viewModel.photoHistory) { meal in
+                        ForEach(filteredPhotos) { meal in
                             FoodJournalPhotoTile(meal: meal) {
                                 viewModel.openMealDetails(meal)
                             }
@@ -1578,10 +1755,14 @@ struct MacraFoodJournalMealRow: View {
         HStack(spacing: 12) {
             FoodJournalThumbnail(meal: meal)
             VStack(alignment: .leading, spacing: 4) {
-                Text(meal.name)
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(meal.name)
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+
+                    sourceBadge
+                }
                 Text(meal.shortSummary)
                     .font(.caption)
                     .foregroundColor(MacraFoodJournalTheme.textMuted)
@@ -1609,6 +1790,34 @@ struct MacraFoodJournalMealRow: View {
         .onTapGesture(perform: onTap)
         .padding(12)
         .background(foodJournalCardBackground)
+    }
+
+    /// Small pill shown when the meal was originally logged in another Pulse
+    /// app. Hidden for Macra-originated or legacy (unlabeled) entries.
+    @ViewBuilder
+    private var sourceBadge: some View {
+        switch meal.sourcedFrom {
+        case "fwp":
+            sourcePill(label: "via FWP",        color: Color(hex: "E0FE10"))
+        case "pulsecheck":
+            sourcePill(label: "via PulseCheck", color: Color(hex: "A78BFA"))
+        default:
+            EmptyView()
+        }
+    }
+
+    private func sourcePill(label: String, color: Color) -> some View {
+        Text(label)
+            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .tracking(0.5)
+            .foregroundColor(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(color.opacity(0.12))
+                    .overlay(Capsule().stroke(color.opacity(0.3), lineWidth: 0.5))
+            )
     }
 }
 
@@ -1791,6 +2000,7 @@ struct FoodJournalSection<Content: View>: View {
             }
             content
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(foodJournalCardBackground)
     }

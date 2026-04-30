@@ -36,6 +36,9 @@ struct MealLogDetailView: View {
     @State private var isReanalyzing = false
     @State private var reanalysisStatusMessage: String?
     @State private var reanalysisErrorMessage: String?
+    @State private var hasAutoReanalyzed = false
+    @State private var reanalyzeContext: String = ""
+    @FocusState private var isReanalyzeContextFocused: Bool
 
     init(meal: Meal, onUpdated: @escaping (Meal) -> Void, onDeleted: (() -> Void)? = nil) {
         self.logDate = meal.createdAt
@@ -139,6 +142,9 @@ struct MealLogDetailView: View {
             Button("OK", role: .cancel) { imageUploadError = nil }
         } message: {
             Text(imageUploadError ?? "")
+        }
+        .onAppear {
+            autoReanalyzeIfNeeded()
         }
     }
 
@@ -368,7 +374,12 @@ struct MealLogDetailView: View {
 
             HStack(spacing: 10) {
                 MacroPill(label: "P", value: meal.protein, color: Color(hex: "60A5FA"))
-                MacroPill(label: "C", value: meal.carbs, color: Color.primaryGreen)
+                MacroPill(
+                    label: "C",
+                    value: meal.carbs,
+                    color: Color.primaryGreen,
+                    netValue: meal.hasNetCarbAdjustment ? meal.netCarbs : nil
+                )
                 MacroPill(label: "F", value: meal.fat, color: Color(hex: "FBBF24"))
             }
 
@@ -441,6 +452,45 @@ struct MealLogDetailView: View {
                     Label("Adjust manually", systemImage: "pencil")
                 }
             }
+
+            HStack(spacing: 8) {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Color.primaryGreen.opacity(0.7))
+                TextField(
+                    "",
+                    text: $reanalyzeContext,
+                    prompt: Text("Add context (e.g. “only ate half”, “used 2 tbsp oil”)")
+                        .foregroundColor(.white.opacity(0.35))
+                )
+                .font(.system(size: 12, weight: .regular, design: .rounded))
+                .foregroundColor(.white.opacity(0.9))
+                .tint(Color.primaryGreen)
+                .textInputAutocapitalization(.sentences)
+                .submitLabel(.done)
+                .focused($isReanalyzeContextFocused)
+                .disabled(isReanalyzing)
+                if !reanalyzeContext.isEmpty {
+                    Button {
+                        reanalyzeContext = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.4))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primaryGreen.opacity(isReanalyzeContextFocused ? 0.35 : 0.14), lineWidth: 1)
+            )
 
             HStack(spacing: 10) {
                 Text("Pulls any recent macro, fiber, or sugar-alcohol improvements into this meal.")
@@ -868,8 +918,88 @@ struct MealLogDetailView: View {
 
     // MARK: - Reanalyze
 
+    /// Back-fill macros for meals that landed in the journal with all-zero
+    /// calories/protein/carbs/fat. Picks the right analyzer based on what the
+    /// meal carries:
+    ///  - Has image → GPT-4o vision via `analyzeMealFromFoodPhoto` (handles
+    ///    food photos AND nutrition labels, with the user's title/caption as
+    ///    additional context).
+    ///  - No image → text-only `analyzeMealNote` using the meal's name +
+    ///    caption + ingredients as the description. This is what catches the
+    ///    pre-fix scan logs that saved with no image at all.
+    /// Either way the user doesn't have to tap Reanalyze manually.
+    private func autoReanalyzeIfNeeded() {
+        guard !hasAutoReanalyzed, !isReanalyzing else { return }
+        let hasZeroMacros = meal.calories == 0
+            && meal.protein == 0
+            && meal.carbs == 0
+            && meal.fat == 0
+        guard hasZeroMacros else { return }
+
+        let trimmedImage = meal.image.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasImage = !trimmedImage.isEmpty
+        let trimmedName = meal.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCaption = meal.caption.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let derivedDescription: String = {
+            if !trimmedCaption.isEmpty { return trimmedCaption }
+            if let detailed = meal.detailedIngredients, !detailed.isEmpty {
+                return detailed
+                    .map { "\($0.quantity) \($0.name)".trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: ", ")
+            }
+            if !meal.ingredients.isEmpty {
+                return meal.ingredients.joined(separator: ", ")
+            }
+            return ""
+        }()
+        let hasUsableText = !trimmedName.isEmpty || !derivedDescription.isEmpty
+
+        guard hasImage || hasUsableText else { return }
+
+        hasAutoReanalyzed = true
+        isReanalyzing = true
+        reanalysisErrorMessage = nil
+        reanalysisStatusMessage = nil
+
+        let handler: (Result<GPTService.MealAnalysis, Error>) -> Void = { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let analysis):
+                    applyReanalysis(analysis)
+                case .failure(let error):
+                    isReanalyzing = false
+                    print("[Macra][MealLogDetailView.autoReanalyze] ❌ \(error.localizedDescription)")
+                }
+            }
+        }
+
+        if hasImage {
+            print("[Macra][MealLogDetailView.autoReanalyze] ▶️ 0-macro meal with image — running food-photo vision analysis name:'\(meal.name)'")
+            GPTService.sharedInstance.analyzeMealFromFoodPhoto(
+                imageURL: trimmedImage,
+                title: trimmedName,
+                description: derivedDescription,
+                completion: handler
+            )
+        } else {
+            // Text-only fallback: catches pre-fix scan logs that saved with no
+            // image but still have a typed title + caption (or ingredients).
+            let analysisDescription = derivedDescription.isEmpty ? trimmedName : derivedDescription
+            let analysisTitle = derivedDescription.isEmpty ? "" : trimmedName
+            print("[Macra][MealLogDetailView.autoReanalyze] ▶️ 0-macro meal without image — running text analysis name:'\(meal.name)' descLen:\(analysisDescription.count)")
+            GPTService.sharedInstance.analyzeMealNote(
+                title: analysisTitle,
+                description: analysisDescription,
+                completion: handler
+            )
+        }
+    }
+
     private func performReanalyze() {
         guard !isReanalyzing else { return }
+        isReanalyzeContextFocused = false
         isReanalyzing = true
         reanalysisErrorMessage = nil
         reanalysisStatusMessage = nil
@@ -889,13 +1019,17 @@ struct MealLogDetailView: View {
             return meal.name
         }()
 
-        print("[Macra][MealLogDetailView.reanalyze] ▶️ name:'\(title)' descLen:\(description.count)")
+        let trimmedContext = reanalyzeContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        let contextToSend = trimmedContext.isEmpty ? nil : trimmedContext
 
-        GPTService.sharedInstance.analyzeMealNote(title: title, description: description) { result in
+        print("[Macra][MealLogDetailView.reanalyze] ▶️ name:'\(title)' descLen:\(description.count) ctxLen:\(contextToSend?.count ?? 0)")
+
+        GPTService.sharedInstance.analyzeMealNote(title: title, description: description, userContext: contextToSend) { result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let analysis):
                     applyReanalysis(analysis)
+                    reanalyzeContext = ""
                 case .failure(let error):
                     isReanalyzing = false
                     reanalysisErrorMessage = error.localizedDescription
@@ -1230,6 +1364,12 @@ private struct MacroPill: View {
     let label: String
     let value: Int
     let color: Color
+    var netValue: Int? = nil
+
+    private var hasNetOverride: Bool {
+        if let netValue { return netValue != value }
+        return false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1237,10 +1377,16 @@ private struct MacroPill: View {
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
                 .tracking(0.8)
                 .foregroundColor(color.opacity(0.7))
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text("\(value)")
-                    .font(.system(size: 20, weight: .heavy, design: .rounded))
-                    .foregroundColor(color)
+                    .font(.system(size: hasNetOverride ? 14 : 20, weight: .heavy, design: .rounded))
+                    .foregroundColor(color.opacity(hasNetOverride ? 0.45 : 1.0))
+                    .strikethrough(hasNetOverride, color: color.opacity(0.55))
+                if let netValue, hasNetOverride {
+                    Text("\(netValue)")
+                        .font(.system(size: 20, weight: .heavy, design: .rounded))
+                        .foregroundColor(color)
+                }
                 Text("g")
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundColor(color.opacity(0.7))
@@ -1267,6 +1413,10 @@ private struct IngredientDetailCard: View {
         ingredient.protein > 0 || ingredient.carbs > 0 || ingredient.fat > 0
     }
 
+    private var quantityIsMissing: Bool {
+        ingredient.quantity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
@@ -1275,11 +1425,10 @@ private struct IngredientDetailCard: View {
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundColor(.white)
                         .lineLimit(2)
-                    if !ingredient.quantity.isEmpty {
-                        Text(ingredient.quantity)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white.opacity(0.55))
-                    }
+                    Text(quantityIsMissing ? "amount unknown" : ingredient.quantity)
+                        .font(.system(size: 12, weight: .medium))
+                        .italic(quantityIsMissing)
+                        .foregroundColor(.white.opacity(quantityIsMissing ? 0.4 : 0.55))
                 }
                 Spacer(minLength: 8)
                 if ingredient.calories > 0 {
@@ -1287,6 +1436,18 @@ private struct IngredientDetailCard: View {
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundColor(Color(hex: "E0FE10"))
                         .monospacedDigit()
+                }
+            }
+
+            if !hasMacros && quantityIsMissing {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(Color(hex: "8B5CF6").opacity(0.85))
+                    Text("Tap Reanalyze above to fill in portion + per-ingredient macros.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 

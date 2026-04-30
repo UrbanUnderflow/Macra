@@ -6,7 +6,10 @@ struct MealPlanDetailView: View {
     var onAddMeals: () -> Void
     var onRename: () -> Void
 
+    @Environment(\.dismiss) private var dismiss
     @State private var logContext: MealLogContext?
+    @State private var isEditing: Bool = false
+    @State private var isConfirmingDelete: Bool = false
 
     private var plan: MealPlan? {
         viewModel.mealPlans.first(where: { $0.id == planID })
@@ -29,16 +32,20 @@ struct MealPlanDetailView: View {
                 VStack(spacing: 16) {
                     if let plan {
                         header(for: plan)
-                        actionRow(for: plan)
+                        if isEditing {
+                            actionRow(for: plan)
+                        } else {
+                            readOnlyActionRow(for: plan)
+                        }
 
                         if plan.orderedMeals.isEmpty {
                             MealPlanningEmptyState(
                                 title: "No planned meals yet",
-                                message: "Add a meal from your history or build this plan from scratch.",
+                                message: isEditing ? "Add a meal from your history or build this plan from scratch." : "Tap Edit to add meals to this plan.",
                                 systemImage: "fork.knife",
-                                actionTitle: "Add meals"
+                                actionTitle: isEditing ? "Add meals" : nil
                             ) {
-                                onAddMeals()
+                                if isEditing { onAddMeals() }
                             }
                         } else {
                             LazyVStack(spacing: 12) {
@@ -47,6 +54,7 @@ struct MealPlanDetailView: View {
                                         plannedMeal: plannedMeal,
                                         plan: plan,
                                         index: index,
+                                        isEditing: isEditing,
                                         onLog: {
                                             logContext = MealLogContext(plan: plan, plannedMeal: plannedMeal)
                                         },
@@ -98,18 +106,21 @@ struct MealPlanDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    onAddMeals()
-                } label: {
-                    Image(systemName: "plus")
-                        .foregroundColor(.secondaryWhite)
+                if isEditing {
+                    Button {
+                        onAddMeals()
+                    } label: {
+                        Image(systemName: "plus")
+                            .foregroundColor(.secondaryWhite)
+                    }
                 }
 
                 Button {
-                    onRename()
+                    isEditing.toggle()
                 } label: {
-                    Image(systemName: "pencil")
-                        .foregroundColor(.secondaryWhite)
+                    Text(isEditing ? "Done" : "Edit")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundColor(isEditing ? .primaryGreen : .secondaryWhite)
                 }
             }
         }
@@ -130,6 +141,20 @@ struct MealPlanDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+        .confirmationDialog(
+            "Delete \(plan?.planName ?? "this plan")?",
+            isPresented: $isConfirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete plan", role: .destructive) {
+                guard let plan else { return }
+                viewModel.deletePlan(planId: plan.id) { _ in }
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This can't be undone.")
         }
     }
 
@@ -199,6 +224,31 @@ struct MealPlanDetailView: View {
                     logAllPendingMeals(in: plan)
                 }
             }
+
+            Button {
+                isConfirmingDelete = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Delete plan")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                }
+                .foregroundColor(Color(hex: "EF4444"))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(Capsule().fill(Color(hex: "EF4444").opacity(0.10)))
+                .overlay(Capsule().strokeBorder(Color(hex: "EF4444").opacity(0.32), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func readOnlyActionRow(for plan: MealPlan) -> some View {
+        // Non-edit mode keeps mass-logging available (a daily action) but
+        // hides structural changes (rename, add, reorder, remove).
+        MealPlanningPrimaryButton(title: "Log all", systemImage: "tray.and.arrow.down") {
+            logAllPendingMeals(in: plan)
         }
     }
 
@@ -226,6 +276,7 @@ struct PlannedMealCardView: View {
     let plannedMeal: PlannedMeal
     let plan: MealPlan
     let index: Int
+    var isEditing: Bool = true
     var onLog: () -> Void
     var onToggleComplete: () -> Void
     var onMoveUp: () -> Void
@@ -303,21 +354,23 @@ struct PlannedMealCardView: View {
 
                 Spacer()
 
-                Menu {
-                    Button("Move up", action: onMoveUp)
-                    Button("Move down", action: onMoveDown)
-                    if plannedMeal.isCombinedMeal {
-                        Button("Separate meal", action: onSeparate)
-                    } else {
-                        Button("Combine with next", action: onCombineWithNext)
+                if isEditing {
+                    Menu {
+                        Button("Move up", action: onMoveUp)
+                        Button("Move down", action: onMoveDown)
+                        if plannedMeal.isCombinedMeal {
+                            Button("Separate meal", action: onSeparate)
+                        } else {
+                            Button("Combine with next", action: onCombineWithNext)
+                        }
+                        Button(role: .destructive, action: onDelete) {
+                            Text("Remove")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(.secondaryWhite.opacity(0.8))
                     }
-                    Button(role: .destructive, action: onDelete) {
-                        Text("Remove")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundColor(.secondaryWhite.opacity(0.8))
                 }
             }
 
