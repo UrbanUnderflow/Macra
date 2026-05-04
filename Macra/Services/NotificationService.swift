@@ -59,8 +59,8 @@ final class NotificationService {
             scheduleDailyRepeating(
                 identifier: Identifier.morningLog,
                 at: preferences.morningReminderTime,
-                title: "Log today's food",
-                body: "Get ahead of today — log your first meal and stay on track with Nora.",
+                title: "Log your first meal",
+                body: "Open Macra so Nora can show you how much protein, carbs, and fat are left for the day.",
                 dataType: "macra_morning_log_reminder"
             )
         }
@@ -69,8 +69,8 @@ final class NotificationService {
             scheduleDailyRepeating(
                 identifier: Identifier.endOfDayCheckin,
                 at: preferences.endOfDayReminderTime,
-                title: "How did eating go today?",
-                body: "Let's check in with Nora on how you ate today. Quick reflection keeps you consistent.",
+                title: "End-of-day check-in",
+                body: "Tell Nora how today's eating went — she'll flag what to adjust tomorrow.",
                 dataType: "macra_end_of_day_checkin"
             )
         }
@@ -82,7 +82,7 @@ final class NotificationService {
                     identifier: Identifier.mealReminder(index: index),
                     at: time,
                     title: "\(label) time",
-                    body: "Log \(label) so Nora can keep your macros on point.",
+                    body: "Log \(label) so Nora can show you how much protein, carbs, and fat are left for the day.",
                     dataType: "macra_meal_reminder",
                     extraInfo: ["mealIndex": "\(index + 1)"]
                 )
