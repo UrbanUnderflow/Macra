@@ -59,6 +59,7 @@ struct MealLogDetailView: View {
                     totalsCard
                     healthBadgesSection
                     ingredientsSection
+                    socialSection
                     eatAgainButton
                     deleteButton
                 }
@@ -646,6 +647,17 @@ struct MealLogDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var socialSection: some View {
+        if let uid = Auth.auth().currentUser?.uid, !uid.isEmpty, !meal.id.isEmpty {
+            MealSocialView(
+                ownerUid: uid,
+                mealId: meal.id,
+                accentColor: Color.primaryGreen
+            )
+        }
+    }
+
     private var deleteButton: some View {
         Button {
             showDeleteConfirm = true
@@ -1047,6 +1059,13 @@ struct MealLogDetailView: View {
         updated.fat = analysis.fat
         updated.fiber = analysis.fiber
         updated.sugarAlcohols = analysis.sugarAlcohols
+        updated.sugars = analysis.sugars
+        updated.sodium = analysis.sodium
+        updated.cholesterol = analysis.cholesterol
+        updated.saturatedFat = analysis.saturatedFat
+        updated.unsaturatedFat = analysis.unsaturatedFat
+        updated.vitamins = analysis.vitamins
+        updated.minerals = analysis.minerals
 
         let mappedDetailed: [MealIngredientDetail] = analysis.ingredients.map {
             MealIngredientDetail(
@@ -1057,7 +1076,14 @@ struct MealLogDetailView: View {
                 carbs: $0.carbs,
                 fat: $0.fat,
                 fiber: $0.fiber,
-                sugarAlcohols: $0.sugarAlcohols
+                sugarAlcohols: $0.sugarAlcohols,
+                sugars: $0.sugars,
+                sodium: $0.sodium,
+                cholesterol: $0.cholesterol,
+                saturatedFat: $0.saturatedFat,
+                unsaturatedFat: $0.unsaturatedFat,
+                vitamins: $0.vitamins,
+                minerals: $0.minerals
             )
         }
         if !mappedDetailed.isEmpty {

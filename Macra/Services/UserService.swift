@@ -45,6 +45,7 @@ enum SubscriptionType: String {
 class UserService: ObservableObject {
     static let sharedInstance = UserService()
     private static let localBetaAccessKey = "macra.localBetaAccess"
+    private static let pendingMacraFcmTokenKey = "macra.pendingFcmToken"
     private var db: Firestore!
     
     @Published var user: User? = nil
@@ -97,18 +98,75 @@ class UserService: ObservableObject {
             }
             
             let userData = document.data() ?? [:]
-            guard let user = User(id: document.documentID, dictionary: userData) else {
+            guard var user = User(id: document.documentID, dictionary: userData) else {
                 completion(nil, nil)
                 return
+            }
+
+            // Backfill username for Macra-only accounts. The user doc may
+            // be co-owned with FWP, where `username` is the authoritative
+            // handle. If FWP never set one (Macra-only signup), persist
+            // the email localpart as the username so every surface that
+            // renders this user (buddy rows, like avatars, comments) has
+            // a stable, non-email-y string to display. FWP will overwrite
+            // this if/when the user goes through FWP onboarding later.
+            if user.username.isEmpty, let localpart = User.emailLocalpart(user.email) {
+                user.username = localpart
+                userRef.updateData(["username": localpart]) { backfillError in
+                    if let backfillError {
+                        print("[Macra][UserService.getUser] username backfill failed: \(backfillError.localizedDescription)")
+                    } else {
+                        print("[Macra][UserService.getUser] ✓ username backfilled to \(localpart)")
+                    }
+                }
             }
 
             DispatchQueue.main.async {
                 self.user = user
                 self.isBetaUser = user.subscriptionType == .beta || UserDefaults.standard.bool(forKey: Self.localBetaAccessKey)
                 self.isSubscribed = user.subscriptionType.grantsMacraAccess || self.isBetaUser
+                self.flushPendingMacraPushTokenIfAuthenticated()
                 completion(user, nil)
             }
         }
+    }
+
+    /// Saves the FCM token minted by the Macra iOS app. This deliberately
+    /// does not touch `users.fcmToken`, which is owned by Pulse.
+    func saveMacraPushToken(_ token: String, completion: ((Error?) -> Void)? = nil) {
+        let normalized = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            completion?(nil)
+            return
+        }
+
+        UserDefaults.standard.set(normalized, forKey: Self.pendingMacraFcmTokenKey)
+
+        guard Auth.auth().currentUser?.uid != nil else {
+            completion?(nil)
+            return
+        }
+
+        updateRootUserPatch([
+            "macraFcmToken": normalized,
+            "pushTokens.macra": normalized,
+            "macraFcmTokenUpdatedAt": Date().timeIntervalSince1970,
+            "pushTokenSources.macra": "macra-ios",
+        ]) { error in
+            if error == nil,
+               UserDefaults.standard.string(forKey: Self.pendingMacraFcmTokenKey) == normalized {
+                UserDefaults.standard.removeObject(forKey: Self.pendingMacraFcmTokenKey)
+            }
+            completion?(error)
+        }
+    }
+
+    func flushPendingMacraPushTokenIfAuthenticated() {
+        guard Auth.auth().currentUser?.uid != nil,
+              let pending = UserDefaults.standard.string(forKey: Self.pendingMacraFcmTokenKey),
+              !pending.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        saveMacraPushToken(pending)
     }
     
     func deleteAccount(email: String, password: String, completion: @escaping (Result<Bool, Error>) -> Void) {
@@ -302,6 +360,34 @@ class UserService: ObservableObject {
         var updates = fields
         updates["updatedAt"] = Date().timeIntervalSince1970
         updateRootUserPatch(updates, completion: completion)
+    }
+
+    /// Persists the resolved coach-assigned meal plan reference on the
+    /// User doc so Macra knows which Pulse plan it has already adopted.
+    /// On next launch we compare the saved reference against the live
+    /// `oneOnOneTrainings` doc — if `attachedAt` (or `trainingId`)
+    /// differs, we re-adopt automatically. Read by
+    /// `CoachMealPlanReference(dictionary:)`.
+    func saveCoachMealPlanReference(_ reference: CoachMealPlanReference,
+                                    completion: ((Error?) -> Void)? = nil) {
+        updateMacraOwnedFields([
+            "coachMealPlanReference": reference.toDictionary(),
+        ], completion: completion)
+    }
+
+    /// Reads the saved coach-plan reference. Returns nil when none has
+    /// been adopted yet (fresh install / never had a coach plan).
+    func loadCoachMealPlanReference(completion: @escaping (CoachMealPlanReference?) -> Void) {
+        guard let userId = Auth.auth().currentUser?.uid else {
+            completion(nil)
+            return
+        }
+        db.collection("users").document(userId).getDocument { snapshot, _ in
+            let data = snapshot?.data() ?? [:]
+            let reference = (data["coachMealPlanReference"] as? [String: Any])
+                .flatMap(CoachMealPlanReference.init(dictionary:))
+            DispatchQueue.main.async { completion(reference) }
+        }
     }
 
     /// Persists Macra push notification preferences to the root user document.

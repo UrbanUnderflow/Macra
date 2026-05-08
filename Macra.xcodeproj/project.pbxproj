@@ -108,16 +108,21 @@
 		351D6F1F1B217A541C2789BF /* FWPHandoffService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80D4C297D9A6F1963FE7D0D3 /* FWPHandoffService.swift */; };
 		356E402BABFDA6043DAB71A5 /* MacraNoraThreadCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 576C9DCD0D49D50CF57DFC2E /* MacraNoraThreadCache.swift */; };
 		37730FF847DAD4AF16E2B86B /* MealService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800972D5438983A6181B0AA3 /* MealService.swift */; };
+		37C9A1B5F6E24C6A91338B5C /* CoachMealPlanService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C9A1B4F6E24C6A91338B5C /* CoachMealPlanService.swift */; };
 		3A6DA97B4A31C971B8486E48 /* MacroTargetsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04A55552BBF560C093C5D914 /* MacroTargetsView.swift */; };
 		3CC26F7CBCF958397DEEE3E2 /* MealPlanningRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9197BBAD8B3FF871D139EEDA /* MealPlanningRootView.swift */; };
+		3E41E3039543DFFA8F01CCAD /* CoachAssignedPlanStepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A304E620E9A3225002CC8468 /* CoachAssignedPlanStepView.swift */; };
 		3E68819FEA22350A8C8DAA12 /* MacraFoodJournalMacroBreakdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70EACC799CAB44842A82728F /* MacraFoodJournalMacroBreakdownView.swift */; };
+		3FCC1B78D57839A007BD3618 /* BuddyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90FD4411BBBAC5DBB985F279 /* BuddyModels.swift */; };
 		40B781E058686A423CBB3BD3 /* MacraOnboardingSteps.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C154DEC44326B9B5E2346A /* MacraOnboardingSteps.swift */; };
 		420E050D6B3600ADD06B9192 /* AppShellCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C1F66B370D471871A36219 /* AppShellCoordinator.swift */; };
 		427AF89189916D010D88A956 /* MealPlanningViewModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7533014F5E968B1345E8BBF /* MealPlanningViewModels.swift */; };
 		4CAD6B30112102D823DF21D2 /* MacraFoodJournalAnalyzeLoaders.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD6E6122ADDDA08803DDE794 /* MacraFoodJournalAnalyzeLoaders.swift */; };
 		4F51C60A9D161FC1852B4D20 /* MacraFoodJournalStreakStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9444BFCBFA4D2CD8A546E2F /* MacraFoodJournalStreakStrip.swift */; };
 		540FC825E240743A28D7B04A /* MacraFoodJournalHealthBadges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70FA55D050BE9821C3560DDE /* MacraFoodJournalHealthBadges.swift */; };
+		65ED3D5DED3B0022ED70EDE4 /* BuddyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6520A800E3E64A277D24ED8E /* BuddyService.swift */; };
 		6713011512062EA06F6FBF71 /* ScannedLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1DCA9555F7BEB2C5B01F33 /* ScannedLabel.swift */; };
+		6E1647D59E1F83D92AA6ADFF /* BuddyMealDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78CE0834738453CB9416E12 /* BuddyMealDetailView.swift */; };
 		73ED05C407D795171417EFFD /* MealSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C912D53FE24240D88E2A87 /* MealSelectionView.swift */; };
 		753E9E8DA4C68D6C4104EB37 /* ManageSubscriptionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FA8B30885C422F84A7DF8FE /* ManageSubscriptionView.swift */; };
 		79957F0624AB16E52019773B /* MacroRecommendationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A9318954916C0E8D8DB927F /* MacroRecommendationService.swift */; };
@@ -127,6 +132,7 @@
 		924A8828C64B67A716E6C7C9 /* MealPlanningStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81E2498270B4AA882CBF4BBF /* MealPlanningStore.swift */; };
 		933B39BB3A26501A31C49136 /* LabelDeepDiveModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55AAEF11387B24366875597E /* LabelDeepDiveModels.swift */; };
 		9355C16B097A6D193D2FC5F5 /* MacraNoraChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DE357C73C24127BDB14696A /* MacraNoraChatService.swift */; };
+		97E01AD6630A575E1A14E333 /* BuddyDayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23135D3FB27204F4AE8F959C /* BuddyDayView.swift */; };
 		9965C426C038DA8EFE54C31C /* NutritionRouteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AACF3BB8D4E63A8871EF992B /* NutritionRouteViews.swift */; };
 		AB235D297DE83DD11117E00A /* MealPlanDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCBA14C27291DEDA7C55767 /* MealPlanDetailView.swift */; };
 		ADCB22C5C48997C105D59C16 /* LabelScanService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD2531834C9985B5B9C686E2 /* LabelScanService.swift */; };
@@ -136,7 +142,12 @@
 		B668979A4772CE4C616F6628 /* MacraOnboardingCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3932C7BCCB07C9E94E47B98 /* MacraOnboardingCoordinator.swift */; };
 		BD29621DE4262B00A1938AE5 /* MealPlanningModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D0B439EC507E306E9AA436 /* MealPlanningModels.swift */; };
 		C6341FDB24E6B3D8891D51FD /* AppleSignInService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32A45687B06E28BEA3FDA58D /* AppleSignInService.swift */; };
+		C6C755A47780A648572C2D84 /* BuddiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1818696A812D008D9EB8F335 /* BuddiesView.swift */; };
+		C6D6E78C644E8AAC3BD25867 /* MealSocialModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD551BFFD594329519C59B4 /* MealSocialModels.swift */; };
+		C7E5E8E22FAA624500E057FB /* AppsFlyerLib-Strict in Frameworks */ = {isa = PBXBuildFile; productRef = C7E5E8E12FAA624500E057FB /* AppsFlyerLib-Strict */; };
+		C7F9A0102F8B100100000001 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = C7F9A0112F8B100100000001 /* FirebaseMessaging */; };
 		C86AAB347F83472293EB9F1F /* MacraNutritionInsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86BC286054F0765ED3EFBF80 /* MacraNutritionInsightsView.swift */; };
+		CA77ADB196E9546ACF7FFD6E /* MealRowSocialObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69DF056D452DE7AF4CB79E6A /* MealRowSocialObserver.swift */; };
 		CEC2AADC05D0FCA0DEE19924 /* AppShellTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0223FEBABF46D81FEC0EEB /* AppShellTypes.swift */; };
 		D157E47FBCFEA98FFD09E461 /* MacraVersionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B89CD153F07287CF1E67B2E2 /* MacraVersionService.swift */; };
 		DDF7B6128A453C304FCAD5E0 /* LoggedSupplement.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6540DFF3EF77D4A371C2788 /* LoggedSupplement.swift */; };
@@ -144,7 +155,10 @@
 		E5E2497DA5EE5A88D4C2A039 /* MacraFoodJournalLabelViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23EC6FADC69951CE83A7073A /* MacraFoodJournalLabelViews.swift */; };
 		EC04C2D87632C3E2AC86AAB0 /* ConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E08F80A7CBA4F1904E0AF6 /* ConfigManager.swift */; };
 		EFB906737EE00A9C63DAC997 /* MacraNotificationPreferencesStepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82DA5FD2EBA38FD63F4E42E9 /* MacraNotificationPreferencesStepView.swift */; };
+		F24DF303A3F235EDEB8106EC /* MealSocialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9365104D5029586850C06738 /* MealSocialView.swift */; };
+		F825C6C5E21C0664CDD88AA5 /* MealSocialService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5697FD5D00AEBB9DB046AA16 /* MealSocialService.swift */; };
 		FB7463B53C73075E5B78E558 /* MacraOnboardingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 762C6C6FC7ED11FD894532CD /* MacraOnboardingModels.swift */; };
+		FD4F240D0B66964A8040B2CA /* MacraDeepLinkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F47375FC5C0BC5CAA9FAF345 /* MacraDeepLinkService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -168,6 +182,7 @@
 		04A55552BBF560C093C5D914 /* MacroTargetsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacroTargetsView.swift; path = Features/MealPlanning/MacroTargetsView.swift; sourceTree = "<group>"; };
 		0B806F81BC381E884F10C517 /* MacraAudioService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraAudioService.swift; path = Services/MacraAudioService.swift; sourceTree = "<group>"; };
 		12EEB949A7E844E068A51B91 /* FWPMacrosHandoffStepView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FWPMacrosHandoffStepView.swift; path = Features/Onboarding/FWPMacrosHandoffStepView.swift; sourceTree = "<group>"; };
+		1818696A812D008D9EB8F335 /* BuddiesView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BuddiesView.swift; path = Features/Buddies/BuddiesView.swift; sourceTree = "<group>"; };
 		19D0B439EC507E306E9AA436 /* MealPlanningModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanningModels.swift; path = Features/MealPlanning/MealPlanningModels.swift; sourceTree = "<group>"; };
 		1AC591607953928EC733EEAE /* LabelGradeResult.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LabelGradeResult.swift; path = NutritionCore/Models/LabelGradeResult.swift; sourceTree = "<group>"; };
 		1DE357C73C24127BDB14696A /* MacraNoraChatService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraNoraChatService.swift; path = Services/MacraNoraChatService.swift; sourceTree = "<group>"; };
@@ -250,23 +265,28 @@
 		21E8FBD02A9EE0D100671B49 /* GPTService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GPTService.swift; sourceTree = "<group>"; };
 		21E8FBD12A9EE0D100671B49 /* FirebaseService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FirebaseService.swift; sourceTree = "<group>"; };
 		21E8FBD22A9EE0D100671B49 /* PurchaseService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PurchaseService.swift; sourceTree = "<group>"; };
+		23135D3FB27204F4AE8F959C /* BuddyDayView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BuddyDayView.swift; path = Features/Buddies/BuddyDayView.swift; sourceTree = "<group>"; };
 		23E08F80A7CBA4F1904E0AF6 /* ConfigManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConfigManager.swift; path = Services/ConfigManager.swift; sourceTree = "<group>"; };
 		23EC6FADC69951CE83A7073A /* MacraFoodJournalLabelViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalLabelViews.swift; path = Features/FoodJournal/MacraFoodJournalLabelViews.swift; sourceTree = "<group>"; };
 		2F9E6467914B898E0F66F010 /* MacraFoodJournalCore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalCore.swift; path = Features/FoodJournal/MacraFoodJournalCore.swift; sourceTree = "<group>"; };
 		3277F0D7BF0712FDDD61C1FC /* MacraNotificationSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraNotificationSettingsView.swift; path = View/Screens/Settings/MacraNotificationSettingsView.swift; sourceTree = "<group>"; };
 		32A45687B06E28BEA3FDA58D /* AppleSignInService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppleSignInService.swift; path = Services/AppleSignInService.swift; sourceTree = "<group>"; };
+		37C9A1B4F6E24C6A91338B5C /* CoachMealPlanService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoachMealPlanService.swift; path = NutritionCore/Services/CoachMealPlanService.swift; sourceTree = "<group>"; };
 		3B0223FEBABF46D81FEC0EEB /* AppShellTypes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppShellTypes.swift; path = AppShell/AppShellTypes.swift; sourceTree = "<group>"; };
 		3B1E5AA5A513A24EF2D7E845 /* NutritionCoreSupport.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NutritionCoreSupport.swift; path = NutritionCore/NutritionCoreSupport.swift; sourceTree = "<group>"; };
 		3FA8B30885C422F84A7DF8FE /* ManageSubscriptionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ManageSubscriptionView.swift; path = View/Screens/Subscription/ManageSubscriptionView.swift; sourceTree = "<group>"; };
 		4F1DCA9555F7BEB2C5B01F33 /* ScannedLabel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ScannedLabel.swift; path = NutritionCore/Models/ScannedLabel.swift; sourceTree = "<group>"; };
 		55AAEF11387B24366875597E /* LabelDeepDiveModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LabelDeepDiveModels.swift; path = NutritionCore/Models/LabelDeepDiveModels.swift; sourceTree = "<group>"; };
+		5697FD5D00AEBB9DB046AA16 /* MealSocialService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealSocialService.swift; path = Features/Buddies/MealSocialService.swift; sourceTree = "<group>"; };
 		576C9DCD0D49D50CF57DFC2E /* MacraNoraThreadCache.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraNoraThreadCache.swift; path = Features/FoodJournal/MacraNoraThreadCache.swift; sourceTree = "<group>"; };
 		59C154DEC44326B9B5E2346A /* MacraOnboardingSteps.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraOnboardingSteps.swift; path = Features/Onboarding/MacraOnboardingSteps.swift; sourceTree = "<group>"; };
 		5D8338612294D092D0F0CCCD /* MacraFoodJournalNetCarbInfoView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalNetCarbInfoView.swift; path = Features/FoodJournal/MacraFoodJournalNetCarbInfoView.swift; sourceTree = "<group>"; };
 		5DCBA14C27291DEDA7C55767 /* MealPlanDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanDetailView.swift; path = Features/MealPlanning/MealPlanDetailView.swift; sourceTree = "<group>"; };
 		63A076FC4659CCF2038EDD18 /* NoraOrb.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NoraOrb.swift; path = View/Components/Atoms/NoraOrb.swift; sourceTree = "<group>"; };
+		6520A800E3E64A277D24ED8E /* BuddyService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BuddyService.swift; path = Features/Buddies/BuddyService.swift; sourceTree = "<group>"; };
 		67D7D59E5735BFC9A718E562 /* MacraFoodJournalNutritionBreakdownCard.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalNutritionBreakdownCard.swift; path = Features/FoodJournal/MacraFoodJournalNutritionBreakdownCard.swift; sourceTree = "<group>"; };
 		699F9F99E2624108399076E7 /* MealPlanEditorView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanEditorView.swift; path = Features/MealPlanning/MealPlanEditorView.swift; sourceTree = "<group>"; };
+		69DF056D452DE7AF4CB79E6A /* MealRowSocialObserver.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealRowSocialObserver.swift; path = Features/Buddies/MealRowSocialObserver.swift; sourceTree = "<group>"; };
 		70EACC799CAB44842A82728F /* MacraFoodJournalMacroBreakdownView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalMacroBreakdownView.swift; path = Features/FoodJournal/MacraFoodJournalMacroBreakdownView.swift; sourceTree = "<group>"; };
 		70FA55D050BE9821C3560DDE /* MacraFoodJournalHealthBadges.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalHealthBadges.swift; path = Features/FoodJournal/MacraFoodJournalHealthBadges.swift; sourceTree = "<group>"; };
 		762C6C6FC7ED11FD894532CD /* MacraOnboardingModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraOnboardingModels.swift; path = Features/Onboarding/MacraOnboardingModels.swift; sourceTree = "<group>"; };
@@ -277,7 +297,10 @@
 		82DA5FD2EBA38FD63F4E42E9 /* MacraNotificationPreferencesStepView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraNotificationPreferencesStepView.swift; path = Features/Onboarding/MacraNotificationPreferencesStepView.swift; sourceTree = "<group>"; };
 		86BC286054F0765ED3EFBF80 /* MacraNutritionInsightsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraNutritionInsightsView.swift; path = Features/FoodJournal/MacraNutritionInsightsView.swift; sourceTree = "<group>"; };
 		8A9318954916C0E8D8DB927F /* MacroRecommendationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacroRecommendationService.swift; path = NutritionCore/Services/MacroRecommendationService.swift; sourceTree = "<group>"; };
+		90FD4411BBBAC5DBB985F279 /* BuddyModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BuddyModels.swift; path = Features/Buddies/BuddyModels.swift; sourceTree = "<group>"; };
 		9197BBAD8B3FF871D139EEDA /* MealPlanningRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanningRootView.swift; path = Features/MealPlanning/MealPlanningRootView.swift; sourceTree = "<group>"; };
+		9365104D5029586850C06738 /* MealSocialView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealSocialView.swift; path = Features/Buddies/MealSocialView.swift; sourceTree = "<group>"; };
+		A304E620E9A3225002CC8468 /* CoachAssignedPlanStepView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CoachAssignedPlanStepView.swift; path = Features/Onboarding/CoachAssignedPlanStepView.swift; sourceTree = "<group>"; };
 		A39C7846784E7C54734FFC9B /* MacraSportConfigService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraSportConfigService.swift; path = Services/MacraSportConfigService.swift; sourceTree = "<group>"; };
 		A7C1F66B370D471871A36219 /* AppShellCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AppShellCoordinator.swift; path = AppShell/AppShellCoordinator.swift; sourceTree = "<group>"; };
 		AACF3BB8D4E63A8871EF992B /* NutritionRouteViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NutritionRouteViews.swift; path = AppShell/NutritionRouteViews.swift; sourceTree = "<group>"; };
@@ -287,6 +310,7 @@
 		B89CD153F07287CF1E67B2E2 /* MacraVersionService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraVersionService.swift; path = Services/MacraVersionService.swift; sourceTree = "<group>"; };
 		B8C912D53FE24240D88E2A87 /* MealSelectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealSelectionView.swift; path = Features/MealPlanning/MealSelectionView.swift; sourceTree = "<group>"; };
 		C7C3E94B2F97813D00170CAE /* Macra.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Macra.entitlements; sourceTree = "<group>"; };
+		CAD551BFFD594329519C59B4 /* MealSocialModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealSocialModels.swift; path = Features/Buddies/MealSocialModels.swift; sourceTree = "<group>"; };
 		D348E064F69ACC18B2C2F98B /* MacraFoodJournalCaptureViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalCaptureViews.swift; path = Features/FoodJournal/MacraFoodJournalCaptureViews.swift; sourceTree = "<group>"; };
 		D46405C8BEBB1FBDD73A958D /* MealPlanningComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanningComponents.swift; path = Features/MealPlanning/MealPlanningComponents.swift; sourceTree = "<group>"; };
 		D6540DFF3EF77D4A371C2788 /* LoggedSupplement.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LoggedSupplement.swift; path = NutritionCore/Models/LoggedSupplement.swift; sourceTree = "<group>"; };
@@ -296,6 +320,8 @@
 		E5B9DB3FDF7700D9C6272E85 /* MealLogDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealLogDetailView.swift; path = Features/FoodJournal/MealLogDetailView.swift; sourceTree = "<group>"; };
 		F2E1F83AF4CF6E2910F5541A /* SupplementService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SupplementService.swift; path = NutritionCore/Services/SupplementService.swift; sourceTree = "<group>"; };
 		F32E903234E3D6E530A3A48D /* MacroRecommendations.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacroRecommendations.swift; path = NutritionCore/Models/MacroRecommendations.swift; sourceTree = "<group>"; };
+		F47375FC5C0BC5CAA9FAF345 /* MacraDeepLinkService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraDeepLinkService.swift; path = Services/MacraDeepLinkService.swift; sourceTree = "<group>"; };
+		F78CE0834738453CB9416E12 /* BuddyMealDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BuddyMealDetailView.swift; path = Features/Buddies/BuddyMealDetailView.swift; sourceTree = "<group>"; };
 		F94DCAE9D00D3643F81C7B73 /* MacraHealthKitService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraHealthKitService.swift; path = Features/FoodJournal/MacraHealthKitService.swift; sourceTree = "<group>"; };
 		FB0296153587DF3F118D9B81 /* MacraDailyInsightService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraDailyInsightService.swift; path = Services/MacraDailyInsightService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -309,10 +335,12 @@
 				21E8FB672A9EDC0800671B49 /* FirebaseCrashlytics in Frameworks */,
 				21E8FB732A9EDC2400671B49 /* Lottie in Frameworks */,
 				21E8FB6B2A9EDC0800671B49 /* FirebasePerformance in Frameworks */,
+				C7E5E8E22FAA624500E057FB /* AppsFlyerLib-Strict in Frameworks */,
 				21E8FB652A9EDC0800671B49 /* FirebaseAuth in Frameworks */,
 				21E8FB702A9EDC1800671B49 /* OpenAISwift in Frameworks */,
 				21E8FB6D2A9EDC0800671B49 /* FirebaseStorage in Frameworks */,
 				21E8FB692A9EDC0800671B49 /* FirebaseFirestore in Frameworks */,
+				C7F9A0102F8B100100000001 /* FirebaseMessaging in Frameworks */,
 				21E8FB602A9EDB8000671B49 /* RevenueCat in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -406,6 +434,7 @@
 				3B1E5AA5A513A24EF2D7E845 /* NutritionCoreSupport.swift */,
 				AD2531834C9985B5B9C686E2 /* LabelScanService.swift */,
 				8A9318954916C0E8D8DB927F /* MacroRecommendationService.swift */,
+				37C9A1B4F6E24C6A91338B5C /* CoachMealPlanService.swift */,
 				800972D5438983A6181B0AA3 /* MealService.swift */,
 				F2E1F83AF4CF6E2910F5541A /* SupplementService.swift */,
 				23E08F80A7CBA4F1904E0AF6 /* ConfigManager.swift */,
@@ -429,6 +458,17 @@
 				A39C7846784E7C54734FFC9B /* MacraSportConfigService.swift */,
 				FB0296153587DF3F118D9B81 /* MacraDailyInsightService.swift */,
 				DD6E6122ADDDA08803DDE794 /* MacraFoodJournalAnalyzeLoaders.swift */,
+				A304E620E9A3225002CC8468 /* CoachAssignedPlanStepView.swift */,
+				1818696A812D008D9EB8F335 /* BuddiesView.swift */,
+				90FD4411BBBAC5DBB985F279 /* BuddyModels.swift */,
+				6520A800E3E64A277D24ED8E /* BuddyService.swift */,
+				23135D3FB27204F4AE8F959C /* BuddyDayView.swift */,
+				F47375FC5C0BC5CAA9FAF345 /* MacraDeepLinkService.swift */,
+				F78CE0834738453CB9416E12 /* BuddyMealDetailView.swift */,
+				CAD551BFFD594329519C59B4 /* MealSocialModels.swift */,
+				5697FD5D00AEBB9DB046AA16 /* MealSocialService.swift */,
+				9365104D5029586850C06738 /* MealSocialView.swift */,
+				69DF056D452DE7AF4CB79E6A /* MealRowSocialObserver.swift */,
 			);
 			path = Macra;
 			sourceTree = "<group>";
@@ -763,8 +803,10 @@
 				21E8FB682A9EDC0800671B49 /* FirebaseFirestore */,
 				21E8FB6A2A9EDC0800671B49 /* FirebasePerformance */,
 				21E8FB6C2A9EDC0800671B49 /* FirebaseStorage */,
+				C7F9A0112F8B100100000001 /* FirebaseMessaging */,
 				21E8FB6F2A9EDC1800671B49 /* OpenAISwift */,
 				21E8FB722A9EDC2400671B49 /* Lottie */,
+				C7E5E8E12FAA624500E057FB /* AppsFlyerLib-Strict */,
 			);
 			productName = Macra;
 			productReference = 21E8FA8D2A9EDB0B00671B49 /* MacraFoodJournal.app */;
@@ -843,6 +885,7 @@
 				21E8FB612A9EDC0800671B49 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 				21E8FB6E2A9EDC1800671B49 /* XCRemoteSwiftPackageReference "OpenAISwift" */,
 				21E8FB712A9EDC2300671B49 /* XCRemoteSwiftPackageReference "lottie-ios" */,
+				C7E5E8E02FAA624500E057FB /* XCRemoteSwiftPackageReference "AppsFlyerFramework-Strict" */,
 			);
 			productRefGroup = 21E8FA8E2A9EDB0B00671B49 /* Products */;
 			projectDirPath = "";
@@ -1028,6 +1071,7 @@
 				B3510BB462181B3109A10D85 /* NutritionCoreSupport.swift in Sources */,
 				ADCB22C5C48997C105D59C16 /* LabelScanService.swift in Sources */,
 				79957F0624AB16E52019773B /* MacroRecommendationService.swift in Sources */,
+				37C9A1B5F6E24C6A91338B5C /* CoachMealPlanService.swift in Sources */,
 				37730FF847DAD4AF16E2B86B /* MealService.swift in Sources */,
 				16F5432EE3D175780A7793A1 /* SupplementService.swift in Sources */,
 				EC04C2D87632C3E2AC86AAB0 /* ConfigManager.swift in Sources */,
@@ -1051,6 +1095,17 @@
 				E4E31F75F22228EAD9D340D3 /* MacraSportConfigService.swift in Sources */,
 				18862A51E921780B030A4AAB /* MacraDailyInsightService.swift in Sources */,
 				4CAD6B30112102D823DF21D2 /* MacraFoodJournalAnalyzeLoaders.swift in Sources */,
+				3E41E3039543DFFA8F01CCAD /* CoachAssignedPlanStepView.swift in Sources */,
+				C6C755A47780A648572C2D84 /* BuddiesView.swift in Sources */,
+				3FCC1B78D57839A007BD3618 /* BuddyModels.swift in Sources */,
+				65ED3D5DED3B0022ED70EDE4 /* BuddyService.swift in Sources */,
+				97E01AD6630A575E1A14E333 /* BuddyDayView.swift in Sources */,
+				FD4F240D0B66964A8040B2CA /* MacraDeepLinkService.swift in Sources */,
+				6E1647D59E1F83D92AA6ADFF /* BuddyMealDetailView.swift in Sources */,
+				C6D6E78C644E8AAC3BD25867 /* MealSocialModels.swift in Sources */,
+				F825C6C5E21C0664CDD88AA5 /* MealSocialService.swift in Sources */,
+				F24DF303A3F235EDEB8106EC /* MealSocialView.swift in Sources */,
+				CA77ADB196E9546ACF7FFD6E /* MealRowSocialObserver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1212,13 +1267,15 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Macra/Preview Content\"";
 				DEVELOPMENT_TEAM = ZG887P86D5;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Macra/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Macra;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Macra uses the camera to scan nutrition labels and capture meal photos for logging.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Macra reads dietary data from Apple Health to confirm which meals have already been synced and avoid duplicates.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Macra writes your logged meals (calories, protein, carbs, fat, and fiber) to Apple Health so they appear alongside other nutrition sources.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Macra needs permission to save shared images and meal photos to your photo library.";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "Macra uses tracking to attribute buddy invite links and measure how the app is performing. Your meal data is never shared with advertisers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -1228,7 +1285,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.03;
+				MARKETING_VERSION = 1.05;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1252,13 +1309,15 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Macra/Preview Content\"";
 				DEVELOPMENT_TEAM = ZG887P86D5;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Macra/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Macra;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Macra uses the camera to scan nutrition labels and capture meal photos for logging.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Macra reads dietary data from Apple Health to confirm which meals have already been synced and avoid duplicates.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Macra writes your logged meals (calories, protein, carbs, fat, and fiber) to Apple Health so they appear alongside other nutrition sources.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Macra needs permission to save shared images and meal photos to your photo library.";
+				INFOPLIST_KEY_NSUserTrackingUsageDescription = "Macra uses tracking to attribute buddy invite links and measure how the app is performing. Your meal data is never shared with advertisers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -1268,7 +1327,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.03;
+				MARKETING_VERSION = 1.05;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1431,6 +1490,14 @@
 				minimumVersion = 4.0.0;
 			};
 		};
+		C7E5E8E02FAA624500E057FB /* XCRemoteSwiftPackageReference "AppsFlyerFramework-Strict" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/AppsFlyerSDK/AppsFlyerFramework-Strict";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 6.18.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1478,6 +1545,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 21E8FB712A9EDC2300671B49 /* XCRemoteSwiftPackageReference "lottie-ios" */;
 			productName = Lottie;
+		};
+		C7E5E8E12FAA624500E057FB /* AppsFlyerLib-Strict */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C7E5E8E02FAA624500E057FB /* XCRemoteSwiftPackageReference "AppsFlyerFramework-Strict" */;
+			productName = "AppsFlyerLib-Strict";
+		};
+		C7F9A0112F8B100100000001 /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 21E8FB612A9EDC0800671B49 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

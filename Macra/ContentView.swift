@@ -63,6 +63,7 @@ struct ContentView: View {
                         ToastView(viewModel: viewModel)
                             .padding()
                             .onTapGesture {
+                                viewModel.performAction()
                                 appCoordinator.hideToast()
                         }
                 }
@@ -123,6 +124,7 @@ struct ContentView: View {
                                 ToastView(viewModel: viewModel)
                                     .padding()
                                     .onTapGesture {
+                                        viewModel.performAction()
                                         appCoordinator.hideToast()
                                 }
                         }

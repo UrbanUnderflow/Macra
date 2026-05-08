@@ -414,27 +414,192 @@ struct MacraSuggestedMealItem: Codable, Hashable, Identifiable {
     /// matches this item's name. Audited on every Plan tab load — bad matches clear,
     /// good ones survive. Persisted alongside the parent meal's `imageURL`.
     var imageURL: String?
+    var imageMatch: MacraSuggestedMealImageMatch?
 
     var id: String { "\(name)-\(quantity)" }
+}
+
+struct MacraSuggestedMealImageMatch: Codable, Hashable, Identifiable {
+    var imageURL: String
+    var title: String
+    var ingredients: [String]
+    var calories: Int
+    var protein: Int
+    var carbs: Int
+    var fat: Int
+
+    var id: String { "\(imageURL)-\(title)" }
 }
 
 struct MacraSuggestedMeal: Codable, Hashable, Identifiable {
     var title: String
     var items: [MacraSuggestedMealItem]
+    /// Meal-level trainer/user context such as "pre-gym meal" or
+    /// "omit on rest days." Mirrored from Fit With Pulse `PlannedMeal.notes`
+    /// and editable from Macra's Plan tab.
+    var notes: String?
     /// Set lazily by the Plan tab when a logged meal in the user's history matches this
     /// suggestion's items. Persisted back to `users/{uid}/macraSuggestedMealPlans/current`
     /// under `plan.meals[*].imageURL` so we don't keep re-matching on every load.
     var imageURL: String?
+    /// Composite meal-level matches. Used when no single logged photo covers every food
+    /// in the planned meal, but multiple history photos cover distinct parts of it
+    /// (for example egg whites/spinach in one photo and rice cakes in another).
+    var imageURLs: [String]?
+    var imageMatches: [MacraSuggestedMealImageMatch]?
+    /// Slot in the day this meal occupies (1, 2, 3 …). When two meals share
+    /// the same `order`, they're variants of the same slot — exactly one
+    /// applies on a given weekday based on `daysActive`. Optional for
+    /// backward compatibility with cached plans written before per-day
+    /// variants existed.
+    var order: Int?
+    /// Weekday abbreviations ("mon"…"sun") for the days this meal applies
+    /// to. `nil` means "every day" (the legacy default). Mirrored from
+    /// `PlannedMeal.daysActive` when the active `MealPlan` is copied to
+    /// `macraSuggestedMealPlans/current`.
+    var daysActive: [String]?
 
-    var id: String { title }
+    var id: String {
+        if let order, let daysActive, !daysActive.isEmpty {
+            return "\(order)-\(daysActive.joined(separator: "_"))-\(title)"
+        }
+        if let order { return "\(order)-\(title)" }
+        return title
+    }
 
     var totalCalories: Int { items.reduce(0) { $0 + $1.calories } }
     var totalProtein: Int { items.reduce(0) { $0 + $1.protein } }
     var totalCarbs: Int { items.reduce(0) { $0 + $1.carbs } }
     var totalFat: Int { items.reduce(0) { $0 + $1.fat } }
+
+    /// True when this meal is scheduled on the given weekday string
+    /// ("mon"…"sun"). Meals without a `daysActive` restriction apply every
+    /// day, matching legacy behavior.
+    func appliesOn(_ day: String) -> Bool {
+        guard let daysActive, !daysActive.isEmpty else { return true }
+        return daysActive.contains(day.lowercased())
+    }
 }
 
 struct MacraSuggestedMealPlan: Codable, Hashable {
     var meals: [MacraSuggestedMeal]
     var notes: String?
+
+    /// Meals scheduled for `day` ("mon"…"sun"), sorted by `order`. Plans
+    /// without per-day variants fall through to the legacy "every meal,
+    /// every day" ordering.
+    func meals(for day: String) -> [MacraSuggestedMeal] {
+        guard hasDayVariants else { return meals }
+        return activeMeals(for: day)
+    }
+
+    /// One meal per displayed slot for the selected weekday. A day-scoped
+    /// variant replaces the broad/default variant for that slot instead of
+    /// being added on top of it.
+    func activeMeals(for day: String) -> [MacraSuggestedMeal] {
+        guard hasDayVariants else { return meals }
+        return slots.compactMap { $0.variant(for: day) }
+    }
+
+    /// True when at least one meal carries a non-default `daysActive`,
+    /// signaling the plan varies by weekday.
+    var hasDayVariants: Bool {
+        meals.contains { meal in
+            guard let days = meal.daysActive else { return false }
+            return !days.isEmpty
+        }
+    }
+
+    /// Distinct weekdays referenced by any meal's `daysActive`. Used to
+    /// build the day-toggle pill row in the Plan tab.
+    var scopedDays: [String] {
+        let order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        let collected = Set(meals.flatMap { $0.daysActive ?? [] }.map { $0.lowercased() })
+        return order.filter(collected.contains)
+    }
+
+    /// Groups meals by their `order` slot so slots with multiple variants
+    /// (e.g. "Meal 1 A" Mon-Thu/Sun + "Meal 1 B" Fri/Sat) render as a
+    /// single swipeable card. Meals without an explicit `order` (legacy
+    /// plans written before per-meal variants existed) each get their own
+    /// slot keyed by position — they were never variants of each other.
+    var slots: [MealSlot] {
+        var buckets: [String: (displayOrder: Int, variants: [MacraSuggestedMeal])] = [:]
+        var insertionOrder: [String] = []
+        for (idx, meal) in meals.enumerated() {
+            // Meals with `order` share a bucket so two `order: 1` rows
+            // become variants. Meals without `order` are keyed by their
+            // raw position, so each gets its own slot — and the display
+            // number is `idx + 1` so the legacy "Meal 1, Meal 2, …" feel
+            // is preserved on plans that pre-date the variant model.
+            let key: String
+            let displayOrder: Int
+            if let order = meal.order {
+                key = "ord:\(order)"
+                displayOrder = order
+            } else {
+                key = "pos:\(idx)"
+                displayOrder = idx + 1
+            }
+            if buckets[key] == nil {
+                insertionOrder.append(key)
+                buckets[key] = (displayOrder, [meal])
+            } else {
+                buckets[key]?.variants.append(meal)
+            }
+        }
+        return insertionOrder.compactMap { key in
+            guard let bucket = buckets[key] else { return nil }
+            // Sort variants: default (no daysActive) first, then by earliest
+            // weekday index (Mon=0, Sun=6) so "Meal 1 A" lands on the
+            // weekday-broadest variant for visual consistency.
+            let sorted = bucket.variants.sorted { lhs, rhs in
+                let lhsDays = lhs.daysActive ?? []
+                let rhsDays = rhs.daysActive ?? []
+                if lhsDays.isEmpty != rhsDays.isEmpty {
+                    return lhsDays.isEmpty // empty (= all days) sorts first
+                }
+                if lhsDays.count != rhsDays.count {
+                    return lhsDays.count > rhsDays.count // broader scope first
+                }
+                let order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+                let lhsFirst = lhsDays.compactMap { order.firstIndex(of: $0.lowercased()) }.min() ?? Int.max
+                let rhsFirst = rhsDays.compactMap { order.firstIndex(of: $0.lowercased()) }.min() ?? Int.max
+                return lhsFirst < rhsFirst
+            }
+            return MealSlot(id: key, order: bucket.displayOrder, variants: sorted)
+        }
+    }
+}
+
+/// A single "Meal N" slot in the plan, optionally with multiple day-scoped
+/// variants. View-only (built on demand from `MacraSuggestedMealPlan.slots`).
+struct MealSlot: Identifiable, Hashable {
+    /// Stable bucket key used for SwiftUI `ForEach` identity. Distinct
+    /// from `order` because two slots can render the same display number
+    /// only when both meals carry an explicit `order` — legacy meals
+    /// without `order` get position-based keys so they never collide.
+    let id: String
+    /// Display number (1, 2, 3 …) used for the "Meal N" title. Mirrors
+    /// `MacraSuggestedMeal.order` when set; falls back to position+1 for
+    /// legacy meals.
+    let order: Int
+    /// Variants of this slot. Always at least one element. When count > 1,
+    /// the view renders a swipeable pager with a dot indicator.
+    let variants: [MacraSuggestedMeal]
+
+    /// Returns the variant that applies on the given weekday — or `nil` if
+    /// the slot is unscoped on that day. Used to default the pager to the
+    /// active variant for the date the user is viewing.
+    func variant(for day: String) -> MacraSuggestedMeal? {
+        let key = day.lowercased()
+        if let dayScoped = variants.first(where: { variant in
+            guard let days = variant.daysActive, !days.isEmpty else { return false }
+            return days.contains(key)
+        }) {
+            return dayScoped
+        }
+        return variants.first { ($0.daysActive ?? []).isEmpty }
+            ?? variants.first { $0.appliesOn(key) }
+    }
 }

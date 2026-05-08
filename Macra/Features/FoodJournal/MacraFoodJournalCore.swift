@@ -23,11 +23,21 @@ extension Date {
     }
 
     var macraFoodJournalDayKey: String {
+        macraFoodJournalDayKey(in: TimeZone.current)
+    }
+
+    /// Day-key in the supplied timezone. Pass the timezone the meal was *logged*
+    /// in to keep meals anchored to the calendar day the user actually ate them
+    /// on, even after crossing timezones.
+    func macraFoodJournalDayKey(in timeZone: TimeZone) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
         let formatter = DateFormatter()
-        formatter.calendar = Calendar.current
-        formatter.locale = .current
+        formatter.calendar = calendar
+        formatter.timeZone = timeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "MMddyyyy"
-        return formatter.string(from: self.macraFoodJournalStartOfDay)
+        return formatter.string(from: self)
     }
 
     var macraFoodJournalMonthKey: String {
@@ -166,6 +176,18 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
     /// future scoring/incentive logic that rewards real-time captures over
     /// uploads.
     var photoCaptureSource: String?
+    /// IANA timezone identifier captured at log time (e.g. "America/Los_Angeles").
+    /// Anchors the meal to the calendar day the user actually ate it on, regardless
+    /// of where the device travels later. `nil` for legacy rows logged before the
+    /// field existed — those fall back to the device's current timezone.
+    var loggedTimeZoneIdentifier: String?
+    /// Mirrors `Meal.likeCount` — denormalized count of buddy reactions
+    /// on this meal so journal rows can render a heart indicator without
+    /// an extra Firestore listener per row.
+    var likeCount: Int = 0
+    /// Mirrors `Meal.commentCount` — drives the comment icon + count on
+    /// the journal row.
+    var commentCount: Int = 0
 
     init(
         id: String = UUID().uuidString,
@@ -193,7 +215,8 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
         isPinned: Bool = false,
         colorSeed: Double = Double.random(in: 0.1...0.95),
         sourcedFrom: String? = nil,
-        photoCaptureSource: String? = nil
+        photoCaptureSource: String? = nil,
+        loggedTimeZoneIdentifier: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -221,6 +244,7 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
         self.colorSeed = colorSeed
         self.sourcedFrom = sourcedFrom
         self.photoCaptureSource = photoCaptureSource
+        self.loggedTimeZoneIdentifier = loggedTimeZoneIdentifier
     }
 
     var totalMacroCalories: Int {
@@ -229,6 +253,23 @@ struct MacraFoodJournalMeal: Identifiable, Hashable, Codable {
 
     var hasPhoto: Bool {
         imageURL?.isEmpty == false
+    }
+
+    /// The timezone the meal was logged in. Falls back to the device's current
+    /// timezone for legacy rows that pre-date the field — matches the original
+    /// (TZ-naive) bucketing for non-traveling users.
+    var loggedTimeZone: TimeZone {
+        if let identifier = loggedTimeZoneIdentifier, let tz = TimeZone(identifier: identifier) {
+            return tz
+        }
+        return TimeZone.current
+    }
+
+    /// Day-key for bucketing in the meal's logged timezone — keeps the meal
+    /// anchored to the calendar day the user actually ate it on, even after
+    /// the device crosses timezones.
+    var loggedDayKey: String {
+        createdAt.macraFoodJournalDayKey(in: loggedTimeZone)
     }
 
     var displayTime: String {
@@ -395,8 +436,11 @@ extension MacraFoodJournalMeal {
             notes: "",
             createdAt: meal.createdAt,
             updatedAt: meal.updatedAt,
-            sourcedFrom: meal.sourcedFrom
+            sourcedFrom: meal.sourcedFrom,
+            loggedTimeZoneIdentifier: meal.loggedTimeZoneIdentifier
         )
+        self.likeCount = meal.likeCount
+        self.commentCount = meal.commentCount
     }
 }
 
@@ -1104,18 +1148,20 @@ final class MacraFoodJournalStore: ObservableObject, MacraFoodJournalStoreProvid
     }
 
     func addMeal(_ meal: MacraFoodJournalMeal, on date: Date) {
-        let key = date.macraFoodJournalDayKey
         var nextMeal = meal
         nextMeal.updatedAt = Date()
         if nextMeal.createdAt == .distantPast {
             nextMeal.createdAt = date
         }
-        mealsByDay[key, default: []].append(nextMeal)
+        if nextMeal.loggedTimeZoneIdentifier?.isEmpty ?? true {
+            nextMeal.loggedTimeZoneIdentifier = TimeZone.current.identifier
+        }
+        mealsByDay[nextMeal.loggedDayKey, default: []].append(nextMeal)
         objectWillChange.send()
     }
 
     func updateMeal(_ meal: MacraFoodJournalMeal) {
-        let newKey = meal.createdAt.macraFoodJournalDayKey
+        let newKey = meal.loggedDayKey
         let currentKey = mealsByDay.first(where: { $0.value.contains(where: { $0.id == meal.id }) })?.key
 
         guard let currentKey else { return }
@@ -1215,11 +1261,22 @@ final class MacraFoodJournalStore: ObservableObject, MacraFoodJournalStoreProvid
     }
 
     func datesWithLoggedMeals() -> Set<Date> {
-        let calendar = Calendar.current
+        // Bucket each meal in its logged TZ so calendar dots reflect the day
+        // the user actually ate the meal (not where the device is now). Project
+        // each logged-day midnight back into the device's current TZ so the
+        // streak strip — which compares against `Calendar.current` — matches.
+        let deviceCalendar = Calendar.current
         var result: Set<Date> = []
-        for (_, meals) in mealsByDay where !meals.isEmpty {
-            if let first = meals.first {
-                result.insert(calendar.startOfDay(for: first.createdAt))
+        for (_, meals) in mealsByDay {
+            for meal in meals {
+                var loggedCalendar = Calendar(identifier: .gregorian)
+                loggedCalendar.timeZone = meal.loggedTimeZone
+                let startOfLoggedDay = loggedCalendar.startOfDay(for: meal.createdAt)
+                var components = loggedCalendar.dateComponents([.year, .month, .day], from: startOfLoggedDay)
+                components.timeZone = TimeZone.current
+                if let normalized = deviceCalendar.date(from: components) {
+                    result.insert(deviceCalendar.startOfDay(for: normalized))
+                }
             }
         }
         return result
@@ -1754,7 +1811,7 @@ final class MacraFoodJournalViewModel: ObservableObject {
         let analyze: (@escaping (Result<GPTService.MealAnalysis, Error>) -> Void) -> Void
         if usesVisionAnalyzer, let url = imageURL {
             analyze = { completion in
-                GPTService.sharedInstance.analyzeMealFromFoodPhoto(
+                GPTService.sharedInstance.analyzeMealFromFoodPhotoWithTextVerification(
                     imageURL: url,
                     title: title,
                     description: caption,
@@ -1796,7 +1853,14 @@ final class MacraFoodJournalViewModel: ObservableObject {
                             carbs: $0.carbs,
                             fat: $0.fat,
                             fiber: $0.fiber,
-                            sugarAlcohols: $0.sugarAlcohols
+                            sugarAlcohols: $0.sugarAlcohols,
+                            sugars: $0.sugars,
+                            sodium: $0.sodium,
+                            cholesterol: $0.cholesterol,
+                            saturatedFat: $0.saturatedFat,
+                            unsaturatedFat: $0.unsaturatedFat,
+                            vitamins: $0.vitamins,
+                            minerals: $0.minerals
                         )
                     }
 
@@ -1816,6 +1880,13 @@ final class MacraFoodJournalViewModel: ObservableObject {
                         fat: analysis.fat,
                         fiber: analysis.fiber,
                         sugarAlcohols: analysis.sugarAlcohols,
+                        sugars: analysis.sugars,
+                        sodium: analysis.sodium,
+                        cholesterol: analysis.cholesterol,
+                        saturatedFat: analysis.saturatedFat,
+                        unsaturatedFat: analysis.unsaturatedFat,
+                        vitamins: analysis.vitamins,
+                        minerals: analysis.minerals,
                         imageURL: imageURL,
                         entryMethod: entryMethod,
                         ingredients: mappedIngredients,

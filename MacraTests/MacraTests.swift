@@ -33,6 +33,69 @@ final class MacraTests: XCTestCase {
         }
     }
 
+    func testUpdateModalTreatsLeadingZeroVersionSegmentsAsOlder() throws {
+        XCTAssertEqual(MacraVersionService.compareVersionStrings("6.01", "6.1"), .orderedAscending)
+
+        XCTAssertTrue(
+            MacraVersionService.shouldShowUpdate(
+                installedVersion: "6.01",
+                installedBuild: "1",
+                latestVersion: "6.1",
+                latestBuild: nil,
+                lastSeenReleaseKey: "6.01 (1)",
+                isCriticalUpdate: false
+            )
+        )
+
+        XCTAssertFalse(
+            MacraVersionService.shouldShowUpdate(
+                installedVersion: "6.1",
+                installedBuild: "1",
+                latestVersion: "6.01",
+                latestBuild: nil,
+                lastSeenReleaseKey: "6.0",
+                isCriticalUpdate: true
+            )
+        )
+    }
+
+    func testUpdateModalDoesNotShowWhenInstalledReleaseMatchesLatestRelease() throws {
+        XCTAssertFalse(
+            MacraVersionService.shouldShowUpdate(
+                installedVersion: "6.01",
+                installedBuild: "12",
+                latestVersion: "6.01",
+                latestBuild: "12",
+                lastSeenReleaseKey: "6.0",
+                isCriticalUpdate: true
+            )
+        )
+    }
+
+    func testUpdateModalUsesBuildNumberWhenVersionMatches() throws {
+        XCTAssertTrue(
+            MacraVersionService.shouldShowUpdate(
+                installedVersion: "6.01",
+                installedBuild: "12",
+                latestVersion: "6.01",
+                latestBuild: "13",
+                lastSeenReleaseKey: "6.01 (12)",
+                isCriticalUpdate: false
+            )
+        )
+
+        XCTAssertFalse(
+            MacraVersionService.shouldShowUpdate(
+                installedVersion: "6.01",
+                installedBuild: "14",
+                latestVersion: "6.01",
+                latestBuild: "13",
+                lastSeenReleaseKey: "6.0",
+                isCriticalUpdate: true
+            )
+        )
+    }
+
     func testMacroRecommendationResolverFallsBackToLatestTargetWhenNoGlobalExists() {
         let olderTarget = MacroRecommendation(
             id: "monday",
@@ -86,6 +149,231 @@ final class MacraTests: XCTestCase {
         XCTAssertEqual(resolved?.id, "tuesday")
     }
 
+    func testPlanHubImageMatcherRejectsFishPhotoForChickenMeal() async {
+        let tilapiaPhotoMeal = Self.matchCandidateMeal(
+            name: "Tilapia",
+            ingredients: ["jasmine rice", "asparagus"],
+            image: "https://example.com/tilapia.jpg"
+        )
+        let indexed = [(meal: tilapiaPhotoMeal, tokens: Set(["tilapia", "jasmine", "rice", "asparagu"]))]
+
+        let match = await MainActor.run {
+            MacraPlanHubViewModel.findMealMatch(
+                tokens: Set(["chicken", "breast", "jasmine", "rice"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertNil(match)
+    }
+
+    func testPlanHubImageMatcherAllowsTilapiaForWhiteFishMeal() async {
+        let tilapiaPhotoMeal = Self.matchCandidateMeal(
+            name: "Tilapia",
+            ingredients: [],
+            image: "https://example.com/tilapia.jpg"
+        )
+        let indexed = [(meal: tilapiaPhotoMeal, tokens: Set(["tilapia"]))]
+
+        let match = await MainActor.run {
+            MacraPlanHubViewModel.findMealMatch(
+                tokens: Set(["white", "fish"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertEqual(match?.image, "https://example.com/tilapia.jpg")
+    }
+
+    func testPlanHubImageMatcherAllowsPartialCleanMealPhotoWhenSideIsMissing() async {
+        let fishAsparagusPhotoMeal = Self.matchCandidateMeal(
+            name: "10.2 oz grouper with 2 oz asparagus",
+            ingredients: ["grouper", "asparagus"],
+            image: "https://example.com/fish-asparagus.jpg"
+        )
+        let indexed = [(meal: fishAsparagusPhotoMeal, tokens: Set(["grouper", "asparagu"]))]
+
+        let match = await MainActor.run {
+            MacraPlanHubViewModel.findMealMatch(
+                tokens: Set(["white", "fish", "asparagu", "almond"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertEqual(match?.image, "https://example.com/fish-asparagus.jpg")
+    }
+
+    func testPlanHubItemMatcherUsesQuantityFoodTextForGenericMealNames() async {
+        let tilapiaPhotoMeal = Self.matchCandidateMeal(
+            name: "Tilapia",
+            ingredients: ["jasmine rice", "asparagus"],
+            image: "https://example.com/tilapia.jpg"
+        )
+        let indexed = [(meal: tilapiaPhotoMeal, tokens: Set(["tilapia", "jasmine", "rice", "asparagu"]))]
+
+        let match = await MainActor.run {
+            MacraPlanHubViewModel.findItemMatch(
+                tokens: Set(["pre", "workout", "meal", "chicken", "breast", "jasmine", "rice"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertNil(match)
+    }
+
+    func testPlanHubImageMatcherRejectsChickenEggPhotoForChickenPotatoMeal() async {
+        let chickenEggPhotoMeal = Self.matchCandidateMeal(
+            name: "Egg whites, whole egg, spinach, chicken breast",
+            ingredients: ["egg whites", "whole egg", "spinach", "chicken breast"],
+            image: "https://example.com/chicken-egg.jpg"
+        )
+        let indexed = [(meal: chickenEggPhotoMeal, tokens: Set(["egg", "white", "spinach", "chicken", "breast"]))]
+
+        let match = await MainActor.run {
+            MacraPlanHubViewModel.findMealMatch(
+                tokens: Set(["post", "workout", "meal", "chicken", "breast", "white", "potato"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertNil(match)
+    }
+
+    func testPlanHubImageMatcherAllowsChickenRicePhotoForChickenRiceMeal() async {
+        let chickenRicePhotoMeal = Self.matchCandidateMeal(
+            name: "6 oz Chicken Breast with Rice",
+            ingredients: ["chicken breast", "rice"],
+            image: "https://example.com/chicken-rice.jpg"
+        )
+        let indexed = [(meal: chickenRicePhotoMeal, tokens: Set(["chicken", "breast", "rice"]))]
+
+        let match = await MainActor.run {
+            MacraPlanHubViewModel.findMealMatch(
+                tokens: Set(["pre", "workout", "meal", "chicken", "breast", "jasmine", "rice"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertEqual(match?.image, "https://example.com/chicken-rice.jpg")
+    }
+
+    func testPlanHubImageMatcherRejectsChickenRicePhotoWithUnplannedAsparagus() async {
+        let chickenRiceAsparagusPhotoMeal = Self.matchCandidateMeal(
+            name: "6 oz Chicken Breast with Rice and Asparagus",
+            ingredients: ["chicken breast", "rice", "asparagus"],
+            image: "https://example.com/chicken-rice-asparagus.jpg"
+        )
+        let indexed = [(meal: chickenRiceAsparagusPhotoMeal, tokens: Set(["chicken", "breast", "rice", "asparagu"]))]
+
+        let match = await MainActor.run {
+            MacraPlanHubViewModel.findMealMatch(
+                tokens: Set(["pre", "workout", "meal", "chicken", "breast", "jasmine", "rice"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertNil(match)
+    }
+
+    func testPlanHubImageMatcherBuildsCompositeForSplitBreakfast() async {
+        let eggPhotoMeal = Self.matchCandidateMeal(
+            name: "Egg whites, whole egg, spinach",
+            ingredients: ["egg whites", "whole egg", "spinach"],
+            image: "https://example.com/eggs.jpg"
+        )
+        let riceCakePhotoMeal = Self.matchCandidateMeal(
+            name: "Plain rice cakes",
+            ingredients: ["rice cakes"],
+            image: "https://example.com/rice-cakes.jpg"
+        )
+        let indexed = [
+            (meal: eggPhotoMeal, tokens: Set(["egg", "white", "spinach"])),
+            (meal: riceCakePhotoMeal, tokens: Set(["rice", "cake"]))
+        ]
+
+        let matches = await MainActor.run {
+            MacraPlanHubViewModel.findCompositeMealMatches(
+                tokens: Set(["egg", "white", "spinach", "rice", "cake"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertEqual(matches.map(\.image), [
+            "https://example.com/eggs.jpg",
+            "https://example.com/rice-cakes.jpg"
+        ])
+    }
+
+    func testPlanHubImageMatcherRejectsCompositeWhenCarbIsMissing() async {
+        let eggPhotoMeal = Self.matchCandidateMeal(
+            name: "Egg whites, whole egg, spinach",
+            ingredients: ["egg whites", "whole egg", "spinach"],
+            image: "https://example.com/eggs.jpg"
+        )
+        let indexed = [(meal: eggPhotoMeal, tokens: Set(["egg", "white", "spinach"]))]
+
+        let matches = await MainActor.run {
+            MacraPlanHubViewModel.findCompositeMealMatches(
+                tokens: Set(["egg", "white", "spinach", "rice", "cake"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertTrue(matches.isEmpty)
+    }
+
+    func testPlanHubImageMatcherRejectsCompositeCandidateWithExtraFoods() async {
+        let steakEggPancakeMeal = Self.matchCandidateMeal(
+            name: "NY Strip Steak, Eggs, Keto Pancakes, and Salad",
+            ingredients: ["strip steak", "eggs", "keto pancakes", "salad"],
+            image: "https://example.com/steak-eggs-pancakes.jpg"
+        )
+        let riceCakePhotoMeal = Self.matchCandidateMeal(
+            name: "Plain rice cakes",
+            ingredients: ["rice cakes"],
+            image: "https://example.com/rice-cakes.jpg"
+        )
+        let indexed = [
+            (meal: steakEggPancakeMeal, tokens: Set(["strip", "steak", "egg", "keto", "pancake", "salad"])),
+            (meal: riceCakePhotoMeal, tokens: Set(["rice", "cake"]))
+        ]
+
+        let matches = await MainActor.run {
+            MacraPlanHubViewModel.findCompositeMealMatches(
+                tokens: Set(["egg", "white", "spinach", "rice", "cake"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertTrue(matches.isEmpty)
+    }
+
+    func testPlanHubImageMatcherRejectsCompositeSideWithUnplannedAlmondButter() async {
+        let eggPhotoMeal = Self.matchCandidateMeal(
+            name: "Egg whites, whole egg, spinach",
+            ingredients: ["egg whites", "whole egg", "spinach"],
+            image: "https://example.com/eggs.jpg"
+        )
+        let riceCakeAlmondButterMeal = Self.matchCandidateMeal(
+            name: "Rice cake with almond butter",
+            ingredients: ["rice cake", "almond butter"],
+            image: "https://example.com/rice-cake-almond-butter.jpg"
+        )
+        let indexed = [
+            (meal: eggPhotoMeal, tokens: Set(["egg", "white", "spinach"])),
+            (meal: riceCakeAlmondButterMeal, tokens: Set(["rice", "cake", "almond", "butter"]))
+        ]
+
+        let matches = await MainActor.run {
+            MacraPlanHubViewModel.findCompositeMealMatches(
+                tokens: Set(["egg", "white", "spinach", "rice", "cake"]),
+                in: indexed
+            )
+        }
+
+        XCTAssertTrue(matches.isEmpty)
+    }
+
     func testNoraAnalysisParsesDoubleEncodedJSONContent() throws {
         let rawJSON = Self.noraAnalysisJSON()
         let encoded = try XCTUnwrap(String(
@@ -99,6 +387,19 @@ final class MacraTests: XCTestCase {
         XCTAssertEqual(analysis.macros.protein, 180)
         XCTAssertEqual(analysis.planName, "Prep day")
         XCTAssertEqual(analysis.meals.first?.items.first?.name, "Chicken breast")
+    }
+
+    private static func matchCandidateMeal(name: String, ingredients: [String], image: String) -> Meal {
+        Meal(
+            name: name,
+            ingredients: ingredients,
+            caption: "",
+            calories: 400,
+            protein: 50,
+            fat: 8,
+            carbs: 30,
+            image: image
+        )
     }
 
     func testNoraAnalysisParsesFencedJSONContent() throws {
@@ -390,6 +691,57 @@ final class MacraTests: XCTestCase {
         }
 
         wait(for: [saveExpectation], timeout: 1)
+    }
+
+    func testBuddyShareURLUsesFirstPartyUniversalLinkUntilOneLinkAASAIsAssociated() {
+        let token = "AbCdEfGh23456789"
+
+        XCTAssertEqual(
+            BuddyInvite.shareURL(forToken: token)?.absoluteString,
+            "https://fitwithpulse.ai/macra/buddy/\(token)"
+        )
+    }
+
+    func testBuddyURLParserReadsFirstPartyUniversalLink() {
+        XCTAssertEqual(
+            BuddyURLParser.token(from: "https://fitwithpulse.ai/macra/buddy/AbCdEfGh23456789"),
+            "AbCdEfGh23456789"
+        )
+    }
+
+    func testBuddyURLParserReadsCustomSchemeFallback() {
+        XCTAssertEqual(
+            BuddyURLParser.token(from: "macra://buddy/AbCdEfGh23456789"),
+            "AbCdEfGh23456789"
+        )
+    }
+
+    func testBuddyURLParserReadsOneLinkQueryPayloads() {
+        XCTAssertEqual(
+            BuddyURLParser.token(from: "https://macra.onelink.me/iwHk?deep_link_value=buddy&buddy_token=AbCdEfGh23456789"),
+            "AbCdEfGh23456789"
+        )
+
+        XCTAssertEqual(
+            BuddyURLParser.token(from: "https://macra.onelink.me/iwHk?deep_link_value=buddy&deep_link_sub1=ZYXwvuTS76543210"),
+            "ZYXwvuTS76543210"
+        )
+    }
+
+    func testBuddyURLParserReadsNestedOneLinkFallbacks() {
+        XCTAssertEqual(
+            BuddyURLParser.token(from: "https://macra.onelink.me/iwHk?af_dp=macra%3A%2F%2Fbuddy%2FAbCdEfGh23456789"),
+            "AbCdEfGh23456789"
+        )
+
+        XCTAssertEqual(
+            BuddyURLParser.token(from: "https://macra.onelink.me/iwHk?af_r=https%3A%2F%2Ffitwithpulse.ai%2Fmacra%2Fbuddy%2FZYXwvuTS76543210"),
+            "ZYXwvuTS76543210"
+        )
+    }
+
+    func testBuddyURLParserDoesNotTreatOneLinkShortCodeAsInviteToken() {
+        XCTAssertNil(BuddyURLParser.token(from: "https://macra.onelink.me/iwHk/5kdshl1e"))
     }
 
     private static func noraAnalysisJSON() -> String {

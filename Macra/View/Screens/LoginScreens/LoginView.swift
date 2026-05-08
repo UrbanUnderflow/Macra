@@ -496,59 +496,68 @@ struct MacraBrandMark: View {
 
 // MARK: - Atmosphere (warm dark background)
 
+/// Four blurred radial blobs drifting on a 28s period. Each blob is a
+/// `MacraAtmosphereBlob` — a stable, equatable subview wrapped in
+/// `.drawingGroup()` so the (very expensive) Gaussian blur is rasterized
+/// once per layout. Per frame we only update each blob's `.position`,
+/// which Core Animation can do without recomputing the blur. Drift is
+/// slow enough that 12fps reads as continuous motion.
 struct MacraLoginAtmosphere: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
-            GeometryReader { geo in
-                let t = context.date.timeIntervalSinceReferenceDate
-                ZStack {
-                    Color(hex: "0B0C0E")
-
-                    radialBlob(
-                        color: Color.primaryGreen,
-                        diameter: geo.size.width * 1.1,
-                        center: driftingPoint(t: t, phase: 0, size: geo.size, originX: 0.05, originY: -0.05, amplitude: 0.10),
-                        opacity: 0.22
-                    )
-
-                    radialBlob(
-                        color: Color(hex: "E8A33D"),
-                        diameter: geo.size.width * 1.3,
-                        center: driftingPoint(t: t, phase: 2.2, size: geo.size, originX: 1.05, originY: 0.0, amplitude: 0.08),
-                        opacity: 0.18
-                    )
-
-                    radialBlob(
-                        color: Color(hex: "E05F4A"),
-                        diameter: geo.size.width * 1.0,
-                        center: driftingPoint(t: t, phase: 4.1, size: geo.size, originX: 0.85, originY: 0.55, amplitude: 0.08),
-                        opacity: 0.14
-                    )
-
-                    radialBlob(
-                        color: Color.primaryPurple,
-                        diameter: geo.size.width * 1.2,
-                        center: driftingPoint(t: t, phase: 5.7, size: geo.size, originX: -0.1, originY: 1.05, amplitude: 0.08),
-                        opacity: 0.22
+        Group {
+            if reduceMotion {
+                atmosphereContent(t: 0, isAnimated: false)
+            } else {
+                TimelineView(.periodic(from: .now, by: 1.0 / 12.0)) { context in
+                    atmosphereContent(
+                        t: context.date.timeIntervalSinceReferenceDate,
+                        isAnimated: true
                     )
                 }
             }
         }
     }
 
-    private func radialBlob(color: Color, diameter: CGFloat, center: CGPoint, opacity: Double) -> some View {
-        Circle()
-            .fill(
-                RadialGradient(
-                    colors: [color.opacity(opacity), color.opacity(0)],
-                    center: .center,
-                    startRadius: 0,
-                    endRadius: diameter / 2
+    private func atmosphereContent(t: TimeInterval, isAnimated: Bool) -> some View {
+        GeometryReader { geo in
+            ZStack {
+                Color(hex: "0B0C0E")
+
+                MacraAtmosphereBlob(
+                    color: Color.primaryGreen,
+                    diameter: geo.size.width * 1.1,
+                    opacity: 0.22
                 )
-            )
-            .frame(width: diameter, height: diameter)
-            .blur(radius: diameter * 0.25)
-            .position(center)
+                .equatable()
+                .position(driftingPoint(t: t, phase: 0, size: geo.size, originX: 0.05, originY: -0.05, amplitude: isAnimated ? 0.10 : 0))
+
+                MacraAtmosphereBlob(
+                    color: Color(hex: "E8A33D"),
+                    diameter: geo.size.width * 1.3,
+                    opacity: 0.18
+                )
+                .equatable()
+                .position(driftingPoint(t: t, phase: 2.2, size: geo.size, originX: 1.05, originY: 0.0, amplitude: isAnimated ? 0.08 : 0))
+
+                MacraAtmosphereBlob(
+                    color: Color(hex: "E05F4A"),
+                    diameter: geo.size.width * 1.0,
+                    opacity: 0.14
+                )
+                .equatable()
+                .position(driftingPoint(t: t, phase: 4.1, size: geo.size, originX: 0.85, originY: 0.55, amplitude: isAnimated ? 0.08 : 0))
+
+                MacraAtmosphereBlob(
+                    color: Color.primaryPurple,
+                    diameter: geo.size.width * 1.2,
+                    opacity: 0.22
+                )
+                .equatable()
+                .position(driftingPoint(t: t, phase: 5.7, size: geo.size, originX: -0.1, originY: 1.05, amplitude: isAnimated ? 0.08 : 0))
+            }
+        }
     }
 
     private func driftingPoint(t: TimeInterval, phase: Double, size: CGSize, originX: CGFloat, originY: CGFloat, amplitude: Double) -> CGPoint {
@@ -561,6 +570,39 @@ struct MacraLoginAtmosphere: View {
             x: size.width * originX + CGFloat(dx),
             y: size.height * originY + CGFloat(dy)
         )
+    }
+}
+
+/// Single blurred blob, captured into a Metal-backed bitmap by
+/// `.drawingGroup()`. The outer `.frame` enlarges the view's bounds so the
+/// blur halo isn't clipped during rasterization. Equatable so SwiftUI skips
+/// rebuilding the body when only the parent's `.position` changes.
+private struct MacraAtmosphereBlob: View, Equatable {
+    let color: Color
+    let diameter: CGFloat
+    let opacity: Double
+
+    var body: some View {
+        let halo = diameter * 0.5
+        return Circle()
+            .fill(
+                RadialGradient(
+                    colors: [color.opacity(opacity), color.opacity(0)],
+                    center: .center,
+                    startRadius: 0,
+                    endRadius: diameter / 2
+                )
+            )
+            .frame(width: diameter, height: diameter)
+            .blur(radius: diameter * 0.25)
+            .frame(width: diameter + halo * 2, height: diameter + halo * 2)
+            .drawingGroup()
+    }
+
+    static func == (lhs: MacraAtmosphereBlob, rhs: MacraAtmosphereBlob) -> Bool {
+        lhs.color == rhs.color
+            && lhs.diameter == rhs.diameter
+            && lhs.opacity == rhs.opacity
     }
 }
 
@@ -583,7 +625,15 @@ struct MacraLoginVignette: View {
 
 // MARK: - Drifting meal-log feed
 
+/// Two columns of meal cards drifting upward at different speeds. Each column
+/// renders the looped card stack as `MacraScrollingCardStrip`, which is
+/// `Equatable` (its inputs never change) and wrapped in `.drawingGroup()`.
+/// That collapses the 48-card SwiftUI hierarchy into a single cached layer,
+/// so per frame we only update each column's `.offset(y:)` — Core Animation
+/// translates the bitmap, no view rebuild, no layout pass.
 struct MacraMealFeedBackdrop: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private static let entries: [MacraMealCardEntry] = [
         .init(emoji: "🥗", name: "Thai chicken salad", macros: "38P · 22C · 20F", kcal: 450, when: "2 min ago"),
         .init(emoji: "🍣", name: "Tuna sashimi", macros: "28P · 4C · 6F", kcal: 190, when: "6 min ago"),
@@ -600,48 +650,105 @@ struct MacraMealFeedBackdrop: View {
     ]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { context in
-            GeometryReader { geo in
-                let t = context.date.timeIntervalSinceReferenceDate
-
-                ZStack {
-                    column(entries: Self.entries, speed: 22, seed: 0, size: geo.size, t: t)
-                        .frame(width: geo.size.width * 0.5 - 6, alignment: .leading)
-                        .position(x: geo.size.width * 0.25, y: geo.size.height / 2)
-                        .opacity(0.55)
-                        .blur(radius: 0.3)
-
-                    column(entries: Array(Self.entries.reversed()), speed: 30, seed: 1, size: geo.size, t: t)
-                        .frame(width: geo.size.width * 0.5 - 6, alignment: .leading)
-                        .position(x: geo.size.width * 0.75, y: geo.size.height / 2)
-                        .opacity(0.45)
-                        .blur(radius: 0.3)
-                }
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0.0),
-                            .init(color: .black.opacity(0.7), location: 0.18),
-                            .init(color: .black.opacity(0.75), location: 0.48),
-                            .init(color: .clear, location: 0.62),
-                            .init(color: .clear, location: 1.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
+        Group {
+            if reduceMotion {
+                feedContent(t: 0, isAnimated: false)
+            } else {
+                TimelineView(.periodic(from: .now, by: 1.0 / 24.0)) { context in
+                    feedContent(
+                        t: context.date.timeIntervalSinceReferenceDate,
+                        isAnimated: true
                     )
-                )
+                }
             }
         }
     }
 
-    private func column(entries: [MacraMealCardEntry], speed: Double, seed: Int, size: CGSize, t: TimeInterval) -> some View {
+    private func feedContent(t: TimeInterval, isAnimated: Bool) -> some View {
+        GeometryReader { geo in
+            ZStack {
+                column(
+                    entries: Self.entries,
+                    speed: 22,
+                    seed: 0,
+                    t: t,
+                    isAnimated: isAnimated
+                )
+                .frame(width: geo.size.width * 0.5 - 6, alignment: .leading)
+                .position(x: geo.size.width * 0.25, y: geo.size.height / 2)
+                .opacity(0.55)
+                .blur(radius: 0.3)
+
+                column(
+                    entries: Array(Self.entries.reversed()),
+                    speed: 30,
+                    seed: 1,
+                    t: t,
+                    isAnimated: isAnimated
+                )
+                .frame(width: geo.size.width * 0.5 - 6, alignment: .leading)
+                .position(x: geo.size.width * 0.75, y: geo.size.height / 2)
+                .opacity(0.45)
+                .blur(radius: 0.3)
+            }
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.0),
+                        .init(color: .black.opacity(0.7), location: 0.18),
+                        .init(color: .black.opacity(0.75), location: 0.48),
+                        .init(color: .clear, location: 0.62),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+        }
+    }
+
+    private func column(
+        entries: [MacraMealCardEntry],
+        speed: Double,
+        seed: Int,
+        t: TimeInterval,
+        isAnimated: Bool
+    ) -> some View {
         let cardSpacing: CGFloat = 12
         let cardHeight: CGFloat = 64
         let stride: CGFloat = cardHeight + cardSpacing
         let totalHeight = stride * CGFloat(entries.count)
-        let offsetRaw = CGFloat(t).truncatingRemainder(dividingBy: CGFloat(totalHeight / speed)) * CGFloat(speed)
-        let baseOffset = -offsetRaw + CGFloat(seed) * 140
+        let baseOffset: CGFloat
+        if isAnimated {
+            let offsetRaw = CGFloat(t)
+                .truncatingRemainder(dividingBy: CGFloat(totalHeight / speed))
+                * CGFloat(speed)
+            baseOffset = -offsetRaw + CGFloat(seed) * 140
+        } else {
+            baseOffset = CGFloat(seed) * 140
+        }
 
+        return MacraScrollingCardStrip(
+            entries: entries,
+            cardSpacing: cardSpacing,
+            cardHeight: cardHeight
+        )
+        .equatable()
+        .drawingGroup()
+        .offset(y: baseOffset)
+    }
+}
+
+/// The looped (entries + entries) card column, rendered once and cached.
+/// Inputs are constant for the lifetime of the screen, so the equality
+/// check returns true on every TimelineView tick — SwiftUI reuses the
+/// same view tree and `.drawingGroup()`'s rasterized bitmap.
+private struct MacraScrollingCardStrip: View, Equatable {
+    let entries: [MacraMealCardEntry]
+    let cardSpacing: CGFloat
+    let cardHeight: CGFloat
+
+    var body: some View {
         let looped = entries + entries
         return VStack(spacing: cardSpacing) {
             ForEach(Array(looped.enumerated()), id: \.offset) { _, entry in
@@ -649,7 +756,12 @@ struct MacraMealFeedBackdrop: View {
                     .frame(height: cardHeight)
             }
         }
-        .offset(y: baseOffset)
+    }
+
+    static func == (lhs: MacraScrollingCardStrip, rhs: MacraScrollingCardStrip) -> Bool {
+        lhs.entries == rhs.entries
+            && lhs.cardSpacing == rhs.cardSpacing
+            && lhs.cardHeight == rhs.cardHeight
     }
 }
 

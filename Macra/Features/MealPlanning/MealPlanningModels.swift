@@ -271,8 +271,22 @@ struct Meal: Identifiable, Hashable {
     /// history, label) or legacy rows. Used by future scoring/incentive logic
     /// that rewards real-time captures over uploads.
     var photoCaptureSource: String?
+    /// IANA timezone identifier captured at log time (e.g. "America/Los_Angeles").
+    /// Anchors the meal to the calendar day the user actually ate it on, regardless
+    /// of where the device travels later. `nil` for legacy rows logged before the
+    /// field existed — those fall back to the device's current timezone.
+    var loggedTimeZoneIdentifier: String?
     var createdAt: Date
     var updatedAt: Date
+    /// Aggregated count of buddies who liked this meal. Maintained
+    /// server-side via `FieldValue.increment` from `MealSocialService`;
+    /// readers should treat it as eventually-consistent (the actual likes
+    /// subcollection is the source of truth). Defaults to 0 for legacy
+    /// meals logged before the social layer existed.
+    var likeCount: Int = 0
+    /// Aggregated count of buddy comments on this meal. Same maintenance
+    /// pattern as `likeCount`.
+    var commentCount: Int = 0
 
     init(
         id: String = MealPlanningIDs.make(prefix: "meal"),
@@ -300,6 +314,7 @@ struct Meal: Identifiable, Hashable {
         sourceReferences: [MealSourceReference]? = nil,
         sourcedFrom: String? = nil,
         photoCaptureSource: String? = nil,
+        loggedTimeZoneIdentifier: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -328,6 +343,7 @@ struct Meal: Identifiable, Hashable {
         self.sourceReferences = sourceReferences
         self.sourcedFrom = sourcedFrom
         self.photoCaptureSource = photoCaptureSource
+        self.loggedTimeZoneIdentifier = loggedTimeZoneIdentifier
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -369,6 +385,11 @@ struct Meal: Identifiable, Hashable {
         }
         self.sourcedFrom = dictionary["sourcedFrom"] as? String
         self.photoCaptureSource = dictionary["photoCaptureSource"] as? String
+        self.loggedTimeZoneIdentifier = dictionary["loggedTimeZoneIdentifier"] as? String
+        // Aggregated social counts. Read defensively — older meal docs
+        // pre-date the social subcollections so the field will be absent.
+        self.likeCount = dictionary["likeCount"] as? Int ?? 0
+        self.commentCount = dictionary["commentCount"] as? Int ?? 0
     }
 
     func toDictionary() -> [String: Any] {
@@ -443,6 +464,10 @@ struct Meal: Identifiable, Hashable {
             dict["photoCaptureSource"] = photoCaptureSource
         }
 
+        if let loggedTimeZoneIdentifier, !loggedTimeZoneIdentifier.isEmpty {
+            dict["loggedTimeZoneIdentifier"] = loggedTimeZoneIdentifier
+        }
+
         return dict
     }
 
@@ -474,6 +499,29 @@ struct Meal: Identifiable, Hashable {
     var hasNetCarbAdjustment: Bool {
         (fiber ?? 0) > 0 || (sugarAlcohols ?? 0) > 0
     }
+
+    /// The timezone the meal was logged in. Falls back to the device's current
+    /// timezone for legacy rows that pre-date the field.
+    var loggedTimeZone: TimeZone {
+        if let identifier = loggedTimeZoneIdentifier, let tz = TimeZone(identifier: identifier) {
+            return tz
+        }
+        return TimeZone.current
+    }
+
+    /// `MMddyyyy` day-key for bucketing in the meal's logged timezone — keeps
+    /// the meal anchored to the calendar day the user actually ate it on, even
+    /// after the device crosses timezones.
+    var loggedDayKey: String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = loggedTimeZone
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = loggedTimeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMddyyyy"
+        return formatter.string(from: createdAt)
+    }
 }
 
 struct PlannedMeal: Identifiable, Hashable {
@@ -483,6 +531,11 @@ struct PlannedMeal: Identifiable, Hashable {
     var notes: String?
     var isCompleted: Bool
     var completedAt: Date?
+    /// Days this meal applies to. `nil` (or empty after decode) means the
+    /// meal applies every day — the default for legacy plans. When a Fri/Sat
+    /// substitution or "omit on Sunday" rule is captured, callers populate
+    /// the active days here so the plan view can filter by weekday.
+    var daysActive: [Weekday]?
 
     init(
         id: String = MealPlanningIDs.make(prefix: "planned_meal"),
@@ -490,7 +543,8 @@ struct PlannedMeal: Identifiable, Hashable {
         order: Int,
         notes: String? = nil,
         isCompleted: Bool = false,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        daysActive: [Weekday]? = nil
     ) {
         self.id = id
         self.meals = meals
@@ -498,6 +552,7 @@ struct PlannedMeal: Identifiable, Hashable {
         self.notes = notes
         self.isCompleted = isCompleted
         self.completedAt = completedAt
+        self.daysActive = Self.normalize(daysActive)
     }
 
     init(
@@ -506,9 +561,10 @@ struct PlannedMeal: Identifiable, Hashable {
         order: Int,
         notes: String? = nil,
         isCompleted: Bool = false,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        daysActive: [Weekday]? = nil
     ) {
-        self.init(id: id, meals: [meal], order: order, notes: notes, isCompleted: isCompleted, completedAt: completedAt)
+        self.init(id: id, meals: [meal], order: order, notes: notes, isCompleted: isCompleted, completedAt: completedAt, daysActive: daysActive)
     }
 
     init(dictionary: [String: Any]) {
@@ -533,6 +589,12 @@ struct PlannedMeal: Identifiable, Hashable {
         } else {
             self.meals = []
         }
+
+        if let rawDays = dictionary["daysActive"] as? [String] {
+            self.daysActive = Self.normalize(rawDays.compactMap(Weekday.from))
+        } else {
+            self.daysActive = nil
+        }
     }
 
     func toDictionary() -> [String: Any] {
@@ -551,7 +613,34 @@ struct PlannedMeal: Identifiable, Hashable {
             dict["completedAt"] = completedAt.timeIntervalSince1970
         }
 
+        if let daysActive, !daysActive.isEmpty {
+            dict["daysActive"] = daysActive.map(\.firestoreValue)
+        }
+
         return dict
+    }
+
+    /// `nil` and "all 7 days" both mean "applies every day" — collapse to
+    /// `nil` so dictionary round-trips and equality checks stay consistent.
+    private static func normalize(_ days: [Weekday]?) -> [Weekday]? {
+        guard let days, !days.isEmpty else { return nil }
+        let unique = Array(NSOrderedSet(array: days)) as? [Weekday] ?? days
+        if Set(unique) == Set(Weekday.allCases) { return nil }
+        return unique
+    }
+
+    /// True when this meal applies on the given weekday (or has no
+    /// restriction set, in which case it applies every day).
+    func appliesOn(_ day: Weekday) -> Bool {
+        guard let daysActive, !daysActive.isEmpty else { return true }
+        return daysActive.contains(day)
+    }
+
+    /// True when the meal has a non-default day scope. UI uses this to
+    /// surface a "Fri/Sat only" badge.
+    var hasDayScope: Bool {
+        guard let daysActive else { return false }
+        return !daysActive.isEmpty
     }
 
     var name: String {
@@ -595,7 +684,8 @@ struct PlannedMeal: Identifiable, Hashable {
                 order: baseOrder + index,
                 notes: notes,
                 isCompleted: false,
-                completedAt: nil
+                completedAt: nil,
+                daysActive: daysActive
             )
         }
     }
@@ -688,6 +778,34 @@ struct MealPlan: Identifiable, Hashable {
     var totalProtein: Int { plannedMeals.reduce(0) { $0 + $1.protein } }
     var totalCarbs: Int { plannedMeals.reduce(0) { $0 + $1.carbs } }
     var totalFat: Int { plannedMeals.reduce(0) { $0 + $1.fat } }
+
+    /// Meals scheduled for `day`, sorted by `order`. Meals with no `daysActive`
+    /// restriction apply every day, matching legacy single-day plan behavior.
+    func orderedMeals(for day: Weekday) -> [PlannedMeal] {
+        plannedMeals
+            .filter { $0.appliesOn(day) }
+            .sorted { $0.order < $1.order }
+    }
+
+    func totalCalories(for day: Weekday) -> Int { orderedMeals(for: day).reduce(0) { $0 + $1.calories } }
+    func totalProtein(for day: Weekday) -> Int { orderedMeals(for: day).reduce(0) { $0 + $1.protein } }
+    func totalCarbs(for day: Weekday) -> Int { orderedMeals(for: day).reduce(0) { $0 + $1.carbs } }
+    func totalFat(for day: Weekday) -> Int { orderedMeals(for: day).reduce(0) { $0 + $1.fat } }
+
+    /// True when at least one planned meal carries a non-default `daysActive`,
+    /// signaling that the plan varies by day. Used to decide whether to
+    /// render the day-toggle pill row in the plan detail view.
+    var hasDayVariants: Bool {
+        plannedMeals.contains(where: \.hasDayScope)
+    }
+
+    /// Distinct weekdays referenced by any meal's `daysActive`. Empty if the
+    /// plan has no day-scoped meals.
+    var scopedDays: [Weekday] {
+        let collected = plannedMeals.flatMap { $0.daysActive ?? [] }
+        let unique = Array(NSOrderedSet(array: collected)) as? [Weekday] ?? []
+        return Weekday.displayOrder.filter { unique.contains($0) }
+    }
 
     mutating func addMeal(_ meal: Meal) -> PlannedMeal {
         let nextOrder = (plannedMeals.map(\.order).max() ?? 0) + 1
@@ -877,6 +995,69 @@ enum MacroActivityLevel: String, CaseIterable, Identifiable {
     case veryActive = "Very Active"
 
     var id: String { rawValue }
+}
+
+/// Day-of-week tag used to scope `PlannedMeal.daysActive` and to derive
+/// the active day for plan rendering. Raw values match the Firestore strings
+/// used by `MacroRecommendation.dayOfWeek` and Nora's `scopedMacros[].days`,
+/// so the same string round-trips end-to-end without translation.
+enum Weekday: String, CaseIterable, Identifiable, Hashable {
+    case mon, tue, wed, thu, fri, sat, sun
+
+    var id: String { rawValue }
+
+    var shortLabel: String {
+        switch self {
+        case .mon: return "Mon"
+        case .tue: return "Tue"
+        case .wed: return "Wed"
+        case .thu: return "Thu"
+        case .fri: return "Fri"
+        case .sat: return "Sat"
+        case .sun: return "Sun"
+        }
+    }
+
+    var firestoreValue: String { rawValue }
+
+    /// Parses both short ("fri") and long ("friday") forms; whitespace and
+    /// case are normalized. Returns nil for anything else.
+    static func from(_ raw: String?) -> Weekday? {
+        guard let raw else { return nil }
+        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let direct = Weekday(rawValue: normalized) { return direct }
+        return longFormMap[normalized]
+    }
+
+    private static let longFormMap: [String: Weekday] = [
+        "monday": .mon,
+        "tuesday": .tue,
+        "tues": .tue,
+        "wednesday": .wed,
+        "thursday": .thu,
+        "thur": .thu,
+        "thurs": .thu,
+        "friday": .fri,
+        "saturday": .sat,
+        "sunday": .sun
+    ]
+
+    static func from(date: Date, calendar: Calendar = .current) -> Weekday {
+        // Calendar.component(.weekday, ...) returns 1=Sun … 7=Sat.
+        switch calendar.component(.weekday, from: date) {
+        case 1: return .sun
+        case 2: return .mon
+        case 3: return .tue
+        case 4: return .wed
+        case 5: return .thu
+        case 6: return .fri
+        case 7: return .sat
+        default: return .mon
+        }
+    }
+
+    /// Conventional Mon–Sun ordering used by the day-toggle pill row.
+    static let displayOrder: [Weekday] = [.mon, .tue, .wed, .thu, .fri, .sat, .sun]
 }
 
 enum MacroTargetScope: String, CaseIterable, Identifiable {

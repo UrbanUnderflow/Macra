@@ -23,14 +23,16 @@ struct SettingsView: View {
             Text("Settings")
                 .font(.largeTitle)
                 .fontWeight(.bold)
-                .foregroundColor(.secondaryWhite)
+                .foregroundColor(.black)
             Spacer()
         }
     }
 
     var body: some View {
         ZStack {
-            Color.primaryPurple
+            LinearGradient.macraGreen
+                .ignoresSafeArea(.all)
+            Color.black.opacity(0.08)
                 .ignoresSafeArea(.all)
 
             ScrollView {
@@ -137,7 +139,7 @@ struct SettingsView: View {
             
             VStack {
                 HStack {
-                    IconImage(.sfSymbol(.close, color: .gray))
+                    IconImage(.sfSymbol(.close, color: .black.opacity(0.55)))
                         .padding(.leading, 30)
                         .onTapGesture {
                             viewModel.appCoordinator.closeModals()
@@ -166,26 +168,26 @@ private struct SettingsProfileHeader: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Profile")
                     .font(.title2.weight(.bold))
-                    .foregroundColor(.secondaryWhite)
+                    .foregroundColor(.white)
 
                 Text(email)
                     .font(.subheadline.weight(.medium))
-                    .foregroundColor(.secondaryWhite.opacity(0.72))
+                    .foregroundColor(.white.opacity(0.72))
                     .lineLimit(1)
                     .truncationMode(.middle)
 
                 Text(isSubscribed ? "Macra Plus active" : "Free plan")
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(.primaryGreen)
+                    .foregroundColor(.white.opacity(0.86))
             }
 
             Spacer()
         }
         .padding(18)
-        .background(Color.secondaryWhite.opacity(0.12))
+        .background(Color.black.opacity(0.92))
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.secondaryWhite.opacity(0.18), lineWidth: 1)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
@@ -213,17 +215,17 @@ private struct ProfileImageBubble: View {
             } else if initials.isEmpty {
                 Image(systemName: "person.fill")
                     .font(.title3.weight(.bold))
-                    .foregroundColor(.primaryPurple)
+                    .foregroundColor(.black)
             } else {
                 Text(initials)
                     .font(.title3.weight(.bold))
-                    .foregroundColor(.primaryPurple)
+                    .foregroundColor(.black)
             }
         }
         .frame(width: 62, height: 62)
         .overlay(
             Circle()
-                .strokeBorder(Color.primaryGreen.opacity(0.85), lineWidth: 2)
+                .strokeBorder(Color.white.opacity(0.72), lineWidth: 2)
         )
     }
 }
@@ -237,17 +239,17 @@ struct SettingCard: View {
             HStack {
                 VStack(alignment:.leading, spacing: 0) {
                     Text(title)
-                        .foregroundColor(.secondaryWhite)
+                        .foregroundColor(.black)
                         .font(.headline)
                         .bold()
                     if subtitle != "" {
                         Text(subtitle)
                             .font(.subheadline)
-                            .foregroundColor(.secondaryWhite.opacity(0.5))
+                            .foregroundColor(.black.opacity(0.54))
                     }
                 }
                 Spacer()
-                IconImage(.sfSymbol(.chevRight, color: Color.secondaryWhite), width: 14, height: 14)
+                IconImage(.sfSymbol(.chevRight, color: Color.black), width: 14, height: 14)
 
             }
             .padding()

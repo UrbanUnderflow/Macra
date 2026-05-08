@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import UserNotifications
 
 /// Schedules Macra's on-device reminders and mirrors user preferences to
@@ -29,6 +30,9 @@ final class NotificationService {
     func requestAuthorization() async -> Bool {
         do {
             let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+            if granted {
+                await registerForRemoteNotificationsIfAuthorized()
+            }
             return granted
         } catch {
             print("NotificationService: authorization request failed — \(error.localizedDescription)")
@@ -45,6 +49,17 @@ final class NotificationService {
         }
     }
 
+    /// Registers with APNs only after the user has granted notification access.
+    /// Firebase Messaging then mints a Macra app token in `MacraAppDelegate`.
+    func registerForRemoteNotificationsIfAuthorized() async {
+        let status = await authorizationStatus()
+        guard Self.canRegisterForRemoteNotifications(status) else { return }
+
+        await MainActor.run {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
+
     // MARK: - Sync
 
     /// Replaces Macra's scheduled notifications to match the given preferences.
@@ -54,6 +69,10 @@ final class NotificationService {
         removeAllMacraNotifications()
 
         guard preferences.hasAnyEnabled else { return }
+
+        Task {
+            await registerForRemoteNotificationsIfAuthorized()
+        }
 
         if preferences.morningLogReminder {
             scheduleDailyRepeating(
@@ -133,6 +152,17 @@ final class NotificationService {
             if let error = error {
                 print("NotificationService: failed to schedule \(identifier) — \(error.localizedDescription)")
             }
+        }
+    }
+
+    private static func canRegisterForRemoteNotifications(_ status: UNAuthorizationStatus) -> Bool {
+        switch status {
+        case .authorized, .provisional, .ephemeral:
+            return true
+        case .denied, .notDetermined:
+            return false
+        @unknown default:
+            return false
         }
     }
 }

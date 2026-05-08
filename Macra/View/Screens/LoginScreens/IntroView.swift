@@ -3,35 +3,29 @@ import SwiftUI
 final class IntroViewViewModel: ObservableObject {
     var serviceManager: ServiceManager
     var appCoordinator: AppCoordinator
-    @Published var loginPressed = false
-    @Published var newUser = false
 
     init(serviceManager: ServiceManager, appCoordinator: AppCoordinator) {
         self.serviceManager = serviceManager
         self.appCoordinator = appCoordinator
     }
-
-    func newUserButtonPressed() {
-        loginPressed = true
-        newUser = true
-    }
-
-    func existingUserButtonPressed() {
-        loginPressed = true
-        newUser = false
-    }
 }
 
 struct IntroView: View {
     @ObservedObject var viewModel: IntroViewViewModel
+    // Owned by the view, not the VM, so that re-renders of ContentView
+    // (e.g. when ServiceManager publishes showTabBar/isConfigured) don't
+    // recreate the VM and reset us to the hero. That reset is what made
+    // sign-in look like it bounced back to the welcome screen.
+    @State private var loginPressed = false
+    @State private var newUser = false
 
     var body: some View {
         ZStack {
-            if viewModel.loginPressed {
+            if loginPressed {
                 LoginView(
                     viewModel: LoginViewModel(
                         appCoordinator: viewModel.appCoordinator,
-                        isSignUp: viewModel.newUser
+                        isSignUp: newUser
                     )
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -114,13 +108,15 @@ struct IntroView: View {
 
     private func primaryPressed() {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-            viewModel.newUserButtonPressed()
+            newUser = true
+            loginPressed = true
         }
     }
 
     private func secondaryPressed() {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-            viewModel.existingUserButtonPressed()
+            newUser = false
+            loginPressed = true
         }
     }
 }

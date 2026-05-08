@@ -4,11 +4,17 @@ class ToastViewModel: ObservableObject {
     @Published var message: String
     @Published var backgroundColor: Color
     @Published var textColor: Color
+    let action: (() -> Void)?
     
-    init(message: String, backgroundColor: Color, textColor: Color) {
+    init(message: String, backgroundColor: Color, textColor: Color, action: (() -> Void)? = nil) {
         self.message = message
         self.backgroundColor = backgroundColor
         self.textColor = textColor
+        self.action = action
+    }
+
+    func performAction() {
+        action?()
     }
 }
 

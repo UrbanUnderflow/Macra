@@ -252,14 +252,8 @@ final class HomeViewModel: ObservableObject {
         let group = DispatchGroup()
 
         group.enter()
-        MacroRecommendationService.sharedInstance.getCurrentMacroRecommendation(for: userId) { [weak self] result in
-            DispatchQueue.main.async {
-                if case .success(let rec) = result, let rec = rec {
-                    self?.macroTarget = rec
-                    UserService.sharedInstance.currentMacroTarget = rec
-                }
-                group.leave()
-            }
+        loadPlanBackedMacroTarget(for: requestedDate, userId: userId, generation: generation) {
+            group.leave()
         }
 
         group.enter()
@@ -348,6 +342,88 @@ final class HomeViewModel: ObservableObject {
 
     private func isCurrentLoad(_ generation: Int, for date: Date) -> Bool {
         generation == loadGeneration && Calendar.current.isDate(selectedDate, inSameDayAs: date)
+    }
+
+    private func loadPlanBackedMacroTarget(
+        for date: Date,
+        userId: String,
+        generation: Int,
+        completion: @escaping () -> Void
+    ) {
+        fetchCurrentSuggestedPlan(userId: userId) { [weak self] plan in
+            guard let self else {
+                completion()
+                return
+            }
+
+            if let planTarget = self.macroTarget(from: plan, date: date, userId: userId) {
+                DispatchQueue.main.async {
+                    if self.isCurrentLoad(generation, for: date) {
+                        self.macroTarget = planTarget
+                        UserService.sharedInstance.currentMacroTarget = planTarget
+                    }
+                    completion()
+                }
+                return
+            }
+
+            MacroRecommendationService.sharedInstance.getMacroRecommendation(for: date, userId: userId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self else {
+                        completion()
+                        return
+                    }
+                    if self.isCurrentLoad(generation, for: date),
+                       case .success(let rec) = result {
+                        self.macroTarget = rec
+                        if let rec {
+                            UserService.sharedInstance.currentMacroTarget = rec
+                        }
+                    }
+                    completion()
+                }
+            }
+        }
+    }
+
+    private func fetchCurrentSuggestedPlan(userId: String, completion: @escaping (MacraSuggestedMealPlan?) -> Void) {
+        Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("macraSuggestedMealPlans")
+            .document("current")
+            .getDocument { snapshot, error in
+                if let error {
+                    print("[Macra][HomeViewModel.planTarget] plan read failed: \(error.localizedDescription)")
+                    completion(nil)
+                    return
+                }
+
+                guard let data = snapshot?.data(),
+                      let planDict = data["plan"] as? [String: Any],
+                      let jsonData = try? JSONSerialization.data(withJSONObject: planDict),
+                      let plan = try? JSONDecoder().decode(MacraSuggestedMealPlan.self, from: jsonData) else {
+                    completion(nil)
+                    return
+                }
+                completion(plan)
+            }
+    }
+
+    private func macroTarget(from plan: MacraSuggestedMealPlan?, date: Date, userId: String) -> MacroRecommendation? {
+        guard let plan else { return nil }
+        let dayKey = Weekday.from(date: date).firestoreValue
+        let activeMeals = plan.activeMeals(for: dayKey)
+        guard !activeMeals.isEmpty else { return nil }
+
+        return MacroRecommendation(
+            userId: userId,
+            calories: activeMeals.reduce(0) { $0 + $1.totalCalories },
+            protein: activeMeals.reduce(0) { $0 + $1.totalProtein },
+            carbs: activeMeals.reduce(0) { $0 + $1.totalCarbs },
+            fat: activeMeals.reduce(0) { $0 + $1.totalFat },
+            dayOfWeek: dayKey
+        )
     }
 
     // MARK: - Background auto-reanalyze for 0/0/0 meals
@@ -439,6 +515,13 @@ final class HomeViewModel: ObservableObject {
         updated.fat = analysis.fat
         updated.fiber = analysis.fiber
         updated.sugarAlcohols = analysis.sugarAlcohols
+        updated.sugars = analysis.sugars
+        updated.sodium = analysis.sodium
+        updated.cholesterol = analysis.cholesterol
+        updated.saturatedFat = analysis.saturatedFat
+        updated.unsaturatedFat = analysis.unsaturatedFat
+        updated.vitamins = analysis.vitamins
+        updated.minerals = analysis.minerals
 
         let mappedDetailed: [MealIngredientDetail] = analysis.ingredients.map {
             MealIngredientDetail(
@@ -449,7 +532,14 @@ final class HomeViewModel: ObservableObject {
                 carbs: $0.carbs,
                 fat: $0.fat,
                 fiber: $0.fiber,
-                sugarAlcohols: $0.sugarAlcohols
+                sugarAlcohols: $0.sugarAlcohols,
+                sugars: $0.sugars,
+                sodium: $0.sodium,
+                cholesterol: $0.cholesterol,
+                saturatedFat: $0.saturatedFat,
+                unsaturatedFat: $0.unsaturatedFat,
+                vitamins: $0.vitamins,
+                minerals: $0.minerals
             )
         }
         if !mappedDetailed.isEmpty {
@@ -519,8 +609,19 @@ final class HomeViewModel: ObservableObject {
         MealService.sharedInstance.getRecentMeals(userId: userId, limit: 200) { [weak self] result in
             DispatchQueue.main.async {
                 if case .success(let meals) = result {
-                    let calendar = Calendar.current
-                    self?.mealLoggedDates = Set(meals.map { calendar.startOfDay(for: $0.createdAt) })
+                    let deviceCalendar = Calendar.current
+                    var dates: Set<Date> = []
+                    for meal in meals {
+                        var loggedCalendar = Calendar(identifier: .gregorian)
+                        loggedCalendar.timeZone = meal.loggedTimeZone
+                        let startOfLoggedDay = loggedCalendar.startOfDay(for: meal.createdAt)
+                        var components = loggedCalendar.dateComponents([.year, .month, .day], from: startOfLoggedDay)
+                        components.timeZone = TimeZone.current
+                        if let normalized = deviceCalendar.date(from: components) {
+                            dates.insert(deviceCalendar.startOfDay(for: normalized))
+                        }
+                    }
+                    self?.mealLoggedDates = dates
                 }
                 completion()
             }
@@ -903,12 +1004,105 @@ final class HomeViewModel: ObservableObject {
     }
 }
 
+/// Single clean gradient ring sitting exactly at the icon's edge,
+/// fading opacity gently to read as "alive" without chunking up the
+/// silhouette. Animation is a CA-layer opacity oscillation
+/// (`repeatForever` autoreverse), not per-frame redraws — cheaper and
+/// smoother than a Canvas timeline for a simple pulse.
+private struct BuddyRequestsPulseRing: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulsing = false
+
+    var body: some View {
+        Circle()
+            .strokeBorder(
+                LinearGradient(
+                    colors: [Color(hex: "E0FE10"), Color(hex: "8B5CF6")],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1.5
+            )
+            .opacity(reduceMotion ? 0.9 : (pulsing ? 1.0 : 0.5))
+            .animation(
+                reduceMotion ? nil : .easeInOut(duration: 1.2).repeatForever(autoreverses: true),
+                value: pulsing
+            )
+            .onAppear {
+                if !reduceMotion { pulsing = true }
+            }
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+    }
+}
+
+/// Tight lime count badge — no chunky outline, just a soft shadow for
+/// separation against any background. Half-overlaps the icon's corner.
+private struct BuddyRequestsCountBadge: View {
+    let count: Int
+
+    private var label: String {
+        count > 9 ? "9+" : "\(count)"
+    }
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 10, weight: .heavy, design: .rounded))
+            .foregroundColor(.black)
+            .monospacedDigit()
+            .frame(minWidth: 14, minHeight: 14)
+            .padding(.horizontal, 3)
+            .background(Capsule().fill(Color(hex: "E0FE10")))
+            .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 1)
+    }
+}
+
+private struct BuddyButtonCoachmark: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Image(systemName: "arrowtriangle.up.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(Color(hex: "E0FE10"))
+                .padding(.trailing, 13)
+                .offset(y: 2)
+
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "person.2.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.black)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(.white.opacity(0.55)))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Buddy hub")
+                        .font(.system(size: 13, weight: .heavy, design: .rounded))
+                        .foregroundColor(.black)
+                    Text("Open friends' food logs here.")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(.black.opacity(0.68))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(width: 210, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(hex: "E0FE10")))
+            .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: 10)
+        }
+        .onTapGesture(perform: onDismiss)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 struct HomeView: View {
     @ObservedObject var viewModel: HomeViewModel
     @ObservedObject private var appCoordinator: AppCoordinator
     @ObservedObject private var userService = UserService.sharedInstance
     @StateObject private var logFlowViewModel = MacraFoodJournalViewModel()
     @StateObject private var supplementViewModel = NutritionSupplementTrackerViewModel()
+    @StateObject private var buddyRequestsBadge = BuddyRequestsBadgeState()
     @State private var isLogMenuPresented = false
     @State private var isAddingSupplement = false
     @State private var handledLogMenuRequestID = 0
@@ -921,6 +1115,12 @@ struct HomeView: View {
     @State private var activeMacroBreakdown: MacraFoodJournalMacroType?
     @State private var isNetCarbInfoPresented = false
     @State private var isFullNutritionPresented = false
+    @State private var isBuddiesPresented = false
+    @State private var activeBuddyInvitePreview: BuddyInvitePreview?
+    @State private var loadingBuddyInviteToken: String?
+    @State private var dismissedBuddyInviteTokens: Set<String> = []
+    @State private var shouldShowBuddyTooltipAfterInvite = false
+    @State private var showBuddyButtonTip = false
     @Environment(\.scenePhase) private var scenePhase
 
     init(viewModel: HomeViewModel) {
@@ -1082,6 +1282,15 @@ struct HomeView: View {
                     },
                     onDeleted: { viewModel.load() }
                 )
+                .onDisappear {
+                    // Detail sheet may have triggered a like or comment,
+                    // both of which only mutate subcollections + bump the
+                    // meal doc's denormalized counts — neither path goes
+                    // through `onUpdated`/`onDeleted`. Reload once the
+                    // sheet closes so the journal cards' heart/bubble
+                    // indicators reflect the new counts.
+                    viewModel.load()
+                }
             }
             .sheet(item: $activeMacroBreakdown) { macroType in
                 MacraFoodJournalMacroBreakdownView(
@@ -1108,12 +1317,45 @@ struct HomeView: View {
             .sheet(isPresented: $isFullNutritionPresented) {
                 MacraFullNutritionSheet(viewModel: viewModel)
             }
+            .sheet(item: $activeBuddyInvitePreview, onDismiss: {
+                presentBuddyTooltipIfNeeded()
+            }) { preview in
+                BuddyInviteReceiverSheet(
+                    preview: preview,
+                    onFinished: {
+                        dismissedBuddyInviteTokens.insert(preview.token)
+                        shouldShowBuddyTooltipAfterInvite = true
+                        activeBuddyInvitePreview = nil
+                    },
+                    onOpenBuddies: {
+                        dismissedBuddyInviteTokens.insert(preview.token)
+                        shouldShowBuddyTooltipAfterInvite = false
+                        activeBuddyInvitePreview = nil
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            isBuddiesPresented = true
+                        }
+                    }
+                )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $isBuddiesPresented) {
+                BuddiesView()
+            }
             .onAppear {
                 configureLogFlow()
                 viewModel.load()
                 supplementViewModel.setSelectedDate(viewModel.selectedDate)
                 supplementViewModel.load()
+                buddyRequestsBadge.start()
                 presentPendingLogMenuIfNeeded()
+                presentPendingBuddyInviteIfNeeded()
+            }
+            .onDisappear {
+                buddyRequestsBadge.stop()
+            }
+            .onReceive(MacraDeepLinkService.sharedInstance.pendingInvitePublisher) { _ in
+                presentPendingBuddyInviteIfNeeded()
             }
             .onChange(of: viewModel.appCoordinator.logMenuRequestID) { _ in
                 presentPendingLogMenuIfNeeded()
@@ -1145,6 +1387,51 @@ struct HomeView: View {
                     viewModel.setSelectedDate(today)
                     supplementViewModel.setSelectedDate(today)
                 }
+            }
+        }
+    }
+
+    private func presentPendingBuddyInviteIfNeeded() {
+        guard let token = MacraDeepLinkService.sharedInstance.pendingInviteToken,
+              !token.isEmpty else { return }
+
+        if dismissedBuddyInviteTokens.contains(token)
+            || activeBuddyInvitePreview?.token == token
+            || loadingBuddyInviteToken == token {
+            return
+        }
+
+        loadingBuddyInviteToken = token
+        BuddyService.sharedInstance.previewInvite(token: token) { result in
+            DispatchQueue.main.async {
+                guard loadingBuddyInviteToken == token else { return }
+                loadingBuddyInviteToken = nil
+
+                switch result {
+                case .success(let preview):
+                    shouldShowBuddyTooltipAfterInvite = true
+                    activeBuddyInvitePreview = preview
+                case .failure(let error):
+                    print("[Macra][BuddyInviteReceiver] preview failed: \(error.localizedDescription)")
+                    shouldShowBuddyTooltipAfterInvite = true
+                    isBuddiesPresented = true
+                }
+            }
+        }
+    }
+
+    private func presentBuddyTooltipIfNeeded() {
+        guard shouldShowBuddyTooltipAfterInvite else { return }
+        shouldShowBuddyTooltipAfterInvite = false
+
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+            showBuddyButtonTip = true
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+            guard showBuddyButtonTip else { return }
+            withAnimation(.easeOut(duration: 0.22)) {
+                showBuddyButtonTip = false
             }
         }
     }
@@ -1210,6 +1497,54 @@ struct HomeView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Share your day")
                 }
+
+                Button {
+                    showBuddyButtonTip = false
+                    isBuddiesPresented = true
+                } label: {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(0.06))
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(Color(hex: "8B5CF6").opacity(0.55), lineWidth: 1)
+                                )
+                        )
+                        .overlay {
+                            if buddyRequestsBadge.pendingCount > 0 {
+                                BuddyRequestsPulseRing()
+                            }
+                        }
+                        .accessibilityLabel(
+                            buddyRequestsBadge.pendingCount > 0
+                                ? "Open buddies — \(buddyRequestsBadge.pendingCount) pending request\(buddyRequestsBadge.pendingCount == 1 ? "" : "s")"
+                                : "Open buddies"
+                        )
+                }
+                .buttonStyle(.plain)
+                .overlay(alignment: .topTrailing) {
+                    if buddyRequestsBadge.pendingCount > 0 {
+                        BuddyRequestsCountBadge(count: buddyRequestsBadge.pendingCount)
+                            .offset(x: 6, y: -6)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if showBuddyButtonTip {
+                        BuddyButtonCoachmark {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                                showBuddyButtonTip = false
+                            }
+                        }
+                        .offset(x: 0, y: 54)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
+                    }
+                }
+                .zIndex(showBuddyButtonTip ? 20 : 0)
 
                 Button {
                     viewModel.appCoordinator.showSettingsModal()
@@ -1368,6 +1703,7 @@ struct HomeView: View {
                 proteinTarget: effectiveTarget?.protein,
                 carbsConsumed: viewModel.totalCarbs,
                 carbsTarget: effectiveTarget?.carbs,
+                netCarbsConsumed: viewModel.hasNetCarbAdjustment ? viewModel.totalNetCarbs : nil,
                 fatConsumed: viewModel.totalFat,
                 fatTarget: effectiveTarget?.fat,
                 hasCompletedOnboarding: userService.user?.hasCompletedMacraOnboarding == true,
@@ -1380,7 +1716,11 @@ struct HomeView: View {
                 Button {
                     isNetCarbInfoPresented = true
                 } label: {
-                    HomeNetCarbChip(netCarbs: viewModel.totalNetCarbs)
+                    HomeNetCarbChip(
+                        grossCarbs: viewModel.totalCarbs,
+                        netCarbs: viewModel.totalNetCarbs,
+                        target: effectiveTarget?.carbs
+                    )
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Net carbs explanation")
@@ -1507,7 +1847,14 @@ struct HomeView: View {
                 carbs: $0.carbs,
                 fat: $0.fat,
                 fiber: $0.fiber,
-                sugarAlcohols: $0.sugarAlcohols
+                sugarAlcohols: $0.sugarAlcohols,
+                sugars: $0.sugars,
+                sodium: $0.sodium,
+                cholesterol: $0.cholesterol,
+                saturatedFat: $0.saturatedFat,
+                unsaturatedFat: $0.unsaturatedFat,
+                vitamins: $0.vitamins,
+                minerals: $0.minerals
             )
         }
         let meal = Meal(
@@ -1523,9 +1870,17 @@ struct HomeView: View {
             carbs: foodJournalMeal.carbs,
             fiber: foodJournalMeal.fiber,
             sugarAlcohols: foodJournalMeal.sugarAlcohols,
+            sugars: foodJournalMeal.sugars,
+            sodium: foodJournalMeal.sodium,
+            cholesterol: foodJournalMeal.cholesterol,
+            saturatedFat: foodJournalMeal.saturatedFat,
+            unsaturatedFat: foodJournalMeal.unsaturatedFat,
+            vitamins: foodJournalMeal.vitamins,
+            minerals: foodJournalMeal.minerals,
             image: foodJournalMeal.imageURL ?? "",
             entryMethod: foodJournalMeal.entryMethod.mealEntryMethod,
             photoCaptureSource: foodJournalMeal.photoCaptureSource,
+            loggedTimeZoneIdentifier: foodJournalMeal.loggedTimeZoneIdentifier,
             createdAt: foodJournalMeal.createdAt,
             updatedAt: foodJournalMeal.updatedAt
         )
@@ -1566,7 +1921,13 @@ struct HomeView: View {
     private var plannerSurface: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let userId = viewModel.serviceManager.userService.user?.id ?? Auth.auth().currentUser?.uid {
-                MacraPlanHubSurface(userId: userId, appCoordinator: viewModel.appCoordinator)
+                MacraPlanHubSurface(
+                    userId: userId,
+                    appCoordinator: viewModel.appCoordinator,
+                    selectedDate: viewModel.selectedDate,
+                    onMealLogged: handlePlanMealLogged,
+                    onMacroTargetChanged: handlePlanMacroTargetChanged
+                )
             } else {
                 NutritionSectionCard(
                     title: "Meal planning",
@@ -1578,6 +1939,26 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    private func handlePlanMealLogged(_ meal: Meal) {
+        viewModel.load()
+        viewModel.appCoordinator.showToast(
+            viewModel: ToastViewModel(
+                message: "Meal logged. Tap to view.",
+                backgroundColor: .secondaryCharcoal,
+                textColor: .secondaryWhite,
+                action: {
+                    viewModel.appCoordinator.nutritionShellTab = .journal
+                    viewModel.setSelectedDate(meal.createdAt)
+                    activeMealDetail = meal
+                }
+            )
+        )
+    }
+
+    private func handlePlanMacroTargetChanged() {
+        viewModel.load()
     }
 
     private var scannerSurface: some View {
@@ -2018,6 +2399,7 @@ private struct CalorieMacroHero: View {
     let proteinTarget: Int?
     let carbsConsumed: Int
     let carbsTarget: Int?
+    let netCarbsConsumed: Int?
     let fatConsumed: Int
     let fatTarget: Int?
     let hasCompletedOnboarding: Bool
@@ -2047,7 +2429,7 @@ private struct CalorieMacroHero: View {
                 Button {
                     onTapMacro?(.carbs)
                 } label: {
-                    MacroBar(label: "Carbs", current: carbsConsumed, target: carbsTarget, color: Color.primaryGreen)
+                    MacroBar(label: "Carbs", current: carbsConsumed, target: carbsTarget, netValue: netCarbsConsumed, color: Color.primaryGreen)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Carbs breakdown by meal")
@@ -2221,11 +2603,24 @@ private struct MacroBar: View {
     let label: String
     let current: Int
     let target: Int?
+    var netValue: Int? = nil
     let color: Color
 
     private var progress: Double {
         guard let target = target, target > 0 else { return 0 }
-        return min(Double(current) / Double(target), 1.0)
+        return min(Double(displayValue) / Double(target), 1.0)
+    }
+
+    private var displayValue: Int {
+        if let netValue, netValue != current {
+            return netValue
+        }
+        return current
+    }
+
+    private var showsNetValue: Bool {
+        if let netValue { return netValue != current }
+        return false
     }
 
     var body: some View {
@@ -2242,9 +2637,9 @@ private struct MacroBar: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("\(current)")
+                Text("\(displayValue)")
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(showsNetValue ? color : .white)
                     .monospacedDigit()
                 if let target = target {
                     Text("/\(target)g")
@@ -2257,6 +2652,14 @@ private struct MacroBar: View {
                         .foregroundStyle(Color.white.opacity(0.5))
                 }
             }
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+
+            // The legacy "Total Xg" sub-line lived here so users could see
+            // gross carbs alongside the net value. We've moved that
+            // comparison into the dedicated net-carbs chip below the macro
+            // row (where the strikethrough "23g 20g net" reads more clearly
+            // and doesn't clutter every macro card with secondary numbers).
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
@@ -2303,6 +2706,7 @@ private extension MacraFoodJournalEntryMethod {
 private struct MealPlanningHomeSurface: View {
     @StateObject private var viewModel: MealPlanningRootViewModel
     @State private var activeEditor: MealPlanEditorMode?
+    @State private var isAddMealPresented = false
     @State private var mealSelectionPlan: MealPlan?
 
     init(userId: String, store: any MealPlanningStore = FirestoreMealPlanningStore()) {
@@ -2485,13 +2889,19 @@ private struct MealPlanningHomeSurface: View {
 final class MacraPlanHubViewModel: ObservableObject {
     @Published var macroTarget: MacroRecommendation?
     @Published var suggestedPlan: MacraSuggestedMealPlan?
-    @Published var planLabel: String = "Starter Nora Plan"
+    @Published var planLabel: String = MacraPlanHubViewModel.defaultCustomPlanLabel()
     @Published var isLoading: Bool = false
     @Published var isGenerating: Bool = false
     @Published var isAdaptingTargets: Bool = false
+    @Published var isAddingMeal: Bool = false
     @Published var errorMessage: String?
+    /// Per-meal regeneration state so cards can show their own spinner +
+    /// error inline without a sheet. Keyed by `MacraSuggestedMeal.id`.
+    @Published var regeneratingMealIds: Set<String> = []
+    @Published var mealEditErrors: [String: String] = [:]
 
     let userId: String
+    private var lastTargetDate: Date = Date()
     private var cancellables = Set<AnyCancellable>()
 
     init(userId: String) {
@@ -2503,7 +2913,8 @@ final class MacraPlanHubViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 print("[Macra][PlanHub.observer] activePlanDidChange received — reloading")
-                self?.load()
+                guard let self else { return }
+                self.load(for: self.lastTargetDate)
             }
             .store(in: &cancellables)
     }
@@ -2515,20 +2926,65 @@ final class MacraPlanHubViewModel: ObservableObject {
         let fat: Int
     }
 
-    var planTotals: PlanTotals? {
+    var planTotals: PlanTotals? { planTotals(for: nil) }
+
+    private static let weekdayKeys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+    /// Plan totals scoped to a specific weekday. When a plan has variants,
+    /// `nil` resolves to the first real weekday total instead of summing the
+    /// raw `meals` array, because that array contains mutually-exclusive
+    /// variants that should never be counted together.
+    func planTotals(for day: String?) -> PlanTotals? {
         guard let plan = suggestedPlan else { return nil }
-        let cal = plan.meals.reduce(0) { $0 + $1.totalCalories }
-        let p = plan.meals.reduce(0) { $0 + $1.totalProtein }
-        let c = plan.meals.reduce(0) { $0 + $1.totalCarbs }
-        let f = plan.meals.reduce(0) { $0 + $1.totalFat }
+        let scoped = scopedMeals(in: plan, for: day)
+        let cal = scoped.reduce(0) { $0 + $1.totalCalories }
+        let p = scoped.reduce(0) { $0 + $1.totalProtein }
+        let c = scoped.reduce(0) { $0 + $1.totalCarbs }
+        let f = scoped.reduce(0) { $0 + $1.totalFat }
         return PlanTotals(calories: cal, protein: p, carbs: c, fat: f)
     }
 
+    private func scopedMeals(in plan: MacraSuggestedMealPlan, for day: String?) -> [MacraSuggestedMeal] {
+        guard plan.hasDayVariants else { return plan.meals }
+        let resolvedDay = Self.normalizedDayKey(day) ?? representativeDayKey(for: plan)
+        return plan.meals(for: resolvedDay)
+    }
+
+    private func representativeDayKey(for plan: MacraSuggestedMealPlan) -> String {
+        Self.weekdayKeys.first { !plan.meals(for: $0).isEmpty } ?? "mon"
+    }
+
+    private static func normalizedDayKey(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "mon", "monday":
+            return "mon"
+        case "tue", "tues", "tuesday":
+            return "tue"
+        case "wed", "wednesday":
+            return "wed"
+        case "thu", "thur", "thurs", "thursday":
+            return "thu"
+        case "fri", "friday":
+            return "fri"
+        case "sat", "saturday":
+            return "sat"
+        case "sun", "sunday":
+            return "sun"
+        default:
+            return nil
+        }
+    }
+
+    var hasTargetMismatch: Bool { hasTargetMismatch(for: nil) }
+
     /// True when the user's saved daily macro target diverges from the
-    /// active plan's totals beyond a small tolerance. Used to surface the
-    /// "macros don't match this plan" banner on Today's fuel.
-    var hasTargetMismatch: Bool {
-        guard let totals = planTotals, let target = macroTarget else { return false }
+    /// active plan's totals beyond a small tolerance. When `day` is set,
+    /// compares day-scoped plan totals against the macro target — used so
+    /// the "macros don't match this plan" banner reflects the variant the
+    /// user is currently viewing.
+    func hasTargetMismatch(for day: String?) -> Bool {
+        guard let totals = planTotals(for: day), let target = macroTarget else { return false }
         let calorieTolerance = 50
         let macroTolerance = 5
         return abs(totals.calories - target.calories) > calorieTolerance
@@ -2537,13 +2993,690 @@ final class MacraPlanHubViewModel: ObservableObject {
             || abs(totals.fat - target.fat) > macroTolerance
     }
 
-    /// Quick-fix: overwrite the user's daily macro target with whatever the
-    /// active plan totals are. Saves a fresh `MacroRecommendation` (dayOfWeek
-    /// nil = all-days) so the banner clears on next load.
-    func adaptTargetsToPlan(completion: (() -> Void)? = nil) {
-        guard let totals = planTotals else { completion?(); return }
+    /// Creates a new variant for the given slot, scoped to `days`. Items
+    /// are seeded from `copyingFrom` (the variant the user was viewing
+    /// when they tapped + Add variant) so they have a starting point to
+    /// edit; sibling variants in the same slot have those days removed
+    /// from their own `daysActive` so each weekday belongs to exactly one
+    /// variant. Persists immediately.
+    func addVariant(
+        toSlotOrder order: Int,
+        days: [Weekday],
+        copyingFrom sourceMealId: String?,
+        variantPrompt: String = "",
+        skipMeal: Bool = false
+    ) {
+        guard !days.isEmpty else { return }
+        guard var plan = suggestedPlan else { return }
+
+        let dayKeys = days.map(\.firestoreValue)
+        let dayKeySet = Set(dayKeys)
+
+        // Find a sibling to seed items from — prefer the explicit source
+        // (the visible variant when the user tapped Add), else fall back to
+        // any sibling with a matching `order`.
+        let sourceMeal: MacraSuggestedMeal? = {
+            if let id = sourceMealId, let match = plan.meals.first(where: { $0.id == id }) {
+                return match
+            }
+            return plan.meals.first(where: { $0.order == order })
+        }()
+
+        guard let seed = sourceMeal else {
+            errorMessage = "Couldn't find a meal to base the variant on."
+            return
+        }
+
+        // Subtract the new variant's days from every sibling so each day
+        // belongs to exactly one variant. A sibling with no daysActive
+        // (= every day) becomes "every day except the new variant's days."
+        let allDays = Weekday.displayOrder.map(\.firestoreValue)
+        for index in plan.meals.indices where plan.meals[index].order == order {
+            let existing = plan.meals[index].daysActive ?? allDays
+            let remaining = existing.filter { !dayKeySet.contains($0.lowercased()) }
+            plan.meals[index].daysActive = remaining.isEmpty ? [] : remaining
+        }
+
+        let trimmedPrompt = variantPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldSkipMeal = skipMeal || Self.isSkipMealPrompt(trimmedPrompt)
+
+        // Compose the new variant from the seed's items, or as an explicit
+        // zero-item meal when the user wants to omit this meal on those days.
+        let newVariant = MacraSuggestedMeal(
+            title: shouldSkipMeal ? "\(seed.title) skipped" : seed.title,
+            items: shouldSkipMeal ? [] : seed.items,
+            notes: shouldSkipMeal ? "Skip this meal" : seed.notes,
+            imageURL: nil,
+            imageURLs: nil,
+            imageMatches: nil,
+            order: order,
+            daysActive: dayKeys
+        )
+
+        // Insert right after the source so the pager's order stays intuitive.
+        let insertAt: Int = {
+            if let idx = plan.meals.firstIndex(where: { $0.id == seed.id }) {
+                return idx + 1
+            }
+            return plan.meals.endIndex
+        }()
+        plan.meals.insert(newVariant, at: insertAt)
+
+        suggestedPlan = plan
+        persistPlanAfterEdit(plan)
+
+        if !shouldSkipMeal && !trimmedPrompt.isEmpty {
+            regenerateMeal(suggestedMeal: newVariant, prompt: trimmedPrompt)
+        }
+    }
+
+    private static func isSkipMealPrompt(_ prompt: String) -> Bool {
+        let normalized = prompt
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else { return false }
+        return normalized.contains("omit")
+            || normalized.contains("skip")
+            || normalized.contains("remove this meal")
+            || normalized.contains("no meal")
+            || normalized.contains("nothing for this meal")
+            || normalized.contains("don't eat this meal")
+            || normalized.contains("do not eat this meal")
+    }
+
+    func addMeal(prompt: String) {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            errorMessage = "Describe the meal you want to add first."
+            return
+        }
+        guard let plan = suggestedPlan else { return }
+
+        isAddingMeal = true
+        errorMessage = nil
+
+        GPTService.sharedInstance.generateMealForPlan(
+            bodyContext: noraBodyContext(),
+            existingPlanContext: existingMealsContext(for: plan),
+            userPrompt: trimmed
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isAddingMeal = false
+                switch result {
+                case .success(let generated):
+                    self.insertGeneratedMeal(generated)
+                case .failure(let error):
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func deleteVariant(_ variant: MacraSuggestedMeal) {
+        guard var plan = suggestedPlan else { return }
+        guard let index = plan.meals.firstIndex(where: { $0.id == variant.id }) else {
+            mealEditErrors[variant.id] = "Couldn't find that variant in the current plan."
+            return
+        }
+
+        let order = variant.order
+        let siblingCount = plan.meals.filter { $0.order == order }.count
+        guard siblingCount > 1 else {
+            mealEditErrors[variant.id] = "A meal needs at least one variant."
+            return
+        }
+
+        let deletedDays = variant.daysActive?.map { $0.lowercased() } ?? []
+        plan.meals.remove(at: index)
+
+        let remainingSiblingIndices = plan.meals.indices.filter { plan.meals[$0].order == order }
+        if remainingSiblingIndices.count == 1, let onlyIndex = remainingSiblingIndices.first {
+            // With one variant left, it should just be the meal for every day.
+            plan.meals[onlyIndex].daysActive = nil
+        } else if let targetIndex = remainingSiblingIndices.first, !deletedDays.isEmpty {
+            let allDays = Weekday.displayOrder.map(\.firestoreValue)
+            if let existing = plan.meals[targetIndex].daysActive, !existing.isEmpty {
+                let reclaimed = Set(existing.map { $0.lowercased() }).union(deletedDays)
+                plan.meals[targetIndex].daysActive = allDays.filter(reclaimed.contains)
+            }
+        }
+
+        regeneratingMealIds.remove(variant.id)
+        mealEditErrors.removeValue(forKey: variant.id)
+        suggestedPlan = plan
+        persistPlanAfterEdit(plan)
+    }
+
+    func logMeal(_ suggestedMeal: MacraSuggestedMeal, on date: Date, completion: ((Result<Meal, Error>) -> Void)? = nil) {
+        guard !suggestedMeal.items.isEmpty else {
+            let error = NSError(
+                domain: "MacraPlanHub",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Skipped meals cannot be logged."]
+            )
+            mealEditErrors[suggestedMeal.id] = error.localizedDescription
+            completion?(.failure(error))
+            return
+        }
+        guard !userId.isEmpty else {
+            let error = NSError(
+                domain: "MacraPlanHub",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Sign in again before logging this meal."]
+            )
+            mealEditErrors[suggestedMeal.id] = error.localizedDescription
+            completion?(.failure(error))
+            return
+        }
+
+        let now = Date()
+        let ingredients = suggestedMeal.items.map { item -> String in
+            let quantity = item.quantity.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return [quantity, name].filter { !$0.isEmpty }.joined(separator: " ")
+        }
+        let title = Self.loggedMealTitle(for: suggestedMeal)
+        let imageURL = Self.loggedMealImageURL(for: suggestedMeal)
+        let meal = Meal(
+            id: MealPlanningIDs.make(prefix: "meal"),
+            name: title,
+            categories: [.unknown],
+            ingredients: ingredients,
+            caption: suggestedMeal.notes ?? "Logged from meal plan",
+            calories: suggestedMeal.totalCalories,
+            protein: suggestedMeal.totalProtein,
+            fat: suggestedMeal.totalFat,
+            carbs: suggestedMeal.totalCarbs,
+            image: imageURL,
+            entryMethod: .unknown,
+            sourcedFrom: "macra",
+            createdAt: now,
+            updatedAt: now
+        )
+
+        MealService.sharedInstance.saveMeal(meal, for: date, userId: userId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let savedMeal):
+                    self.mealEditErrors.removeValue(forKey: suggestedMeal.id)
+                    completion?(.success(savedMeal))
+                case .failure(let error):
+                    self.mealEditErrors[suggestedMeal.id] = error.localizedDescription
+                    completion?(.failure(error))
+                }
+            }
+        }
+    }
+
+    private static func loggedMealTitle(for suggestedMeal: MacraSuggestedMeal) -> String {
+        let meaningfulItems = suggestedMeal.items
+            .map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !meaningfulItems.isEmpty else {
+            let title = suggestedMeal.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            return title.isEmpty ? "Planned meal" : title
+        }
+
+        if meaningfulItems.count == 1 {
+            return meaningfulItems[0]
+        }
+
+        return meaningfulItems.prefix(3).joined(separator: ", ")
+    }
+
+    private static func loggedMealImageURL(for suggestedMeal: MacraSuggestedMeal) -> String {
+        if let url = suggestedMeal.imageURL?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
+            return url
+        }
+        if let url = suggestedMeal.imageURLs?.first?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
+            return url
+        }
+        if let url = suggestedMeal.imageMatches?.first?.imageURL.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty {
+            return url
+        }
+        if let url = suggestedMeal.items.compactMap({ item -> String? in
+            if let matchURL = item.imageMatch?.imageURL.trimmingCharacters(in: .whitespacesAndNewlines), !matchURL.isEmpty {
+                return matchURL
+            }
+            if let itemURL = item.imageURL?.trimmingCharacters(in: .whitespacesAndNewlines), !itemURL.isEmpty {
+                return itemURL
+            }
+            return nil
+        }).first {
+            return url
+        }
+        return ""
+    }
+
+    fileprivate func moveMealSlot(slotOrder: Int, direction: MealSlotMoveDirection) {
+        guard var plan = suggestedPlan else { return }
+        var slots = plan.slots
+        guard let fromIndex = slots.firstIndex(where: { $0.order == slotOrder }) else { return }
+
+        let toIndex = direction == .up ? fromIndex - 1 : fromIndex + 1
+        guard slots.indices.contains(toIndex) else { return }
+
+        slots.swapAt(fromIndex, toIndex)
+
+        var nextOrderByMealIndex: [Int: Int] = [:]
+        for (slotIndex, slot) in slots.enumerated() {
+            let nextOrder = slotIndex + 1
+            for mealIndex in plan.meals.indices {
+                if slot.variants.contains(plan.meals[mealIndex]) {
+                    nextOrderByMealIndex[mealIndex] = nextOrder
+                }
+            }
+        }
+
+        for mealIndex in plan.meals.indices {
+            if let nextOrder = nextOrderByMealIndex[mealIndex] {
+                plan.meals[mealIndex].order = nextOrder
+            }
+        }
+
+        plan.meals.sort {
+            let leftOrder = $0.order ?? Int.max
+            let rightOrder = $1.order ?? Int.max
+            if leftOrder != rightOrder { return leftOrder < rightOrder }
+            return ($0.daysActive?.count ?? 0) > ($1.daysActive?.count ?? 0)
+        }
+
+        suggestedPlan = plan
+        persistPlanAfterEdit(plan)
+    }
+
+    private func insertGeneratedMeal(_ generated: GPTService.PlanMealEditResult) {
+        guard var plan = suggestedPlan else { return }
+        let nextOrder = (plan.slots.map(\.order).max() ?? plan.meals.count) + 1
+        let items = generated.items.map { item in
+            MacraSuggestedMealItem(
+                name: item.name,
+                quantity: item.quantity,
+                calories: item.calories,
+                protein: item.protein,
+                carbs: item.carbs,
+                fat: item.fat
+            )
+        }
+        let newMeal = MacraSuggestedMeal(
+            title: generated.title.isEmpty ? "Meal \(nextOrder)" : generated.title,
+            items: items,
+            notes: generated.notes,
+            imageURL: nil,
+            imageURLs: nil,
+            imageMatches: nil,
+            order: nextOrder,
+            daysActive: nil
+        )
+
+        plan.meals.append(newMeal)
+        suggestedPlan = plan
+        persistPlanAfterEdit(plan)
+    }
+
+    func updateMealNotes(_ notes: String, for suggestedMeal: MacraSuggestedMeal) {
+        guard var plan = suggestedPlan else { return }
+        guard let index = plan.meals.firstIndex(where: { $0.id == suggestedMeal.id }) else {
+            mealEditErrors[suggestedMeal.id] = "Couldn't find that meal in the current plan."
+            return
+        }
+
+        let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        plan.meals[index].notes = trimmed.isEmpty ? nil : trimmed
+        suggestedPlan = plan
+        persistPlanAfterEdit(plan)
+    }
+
+    private func existingMealsContext(for plan: MacraSuggestedMealPlan) -> String {
+        plan.slots.map { slot in
+            let variant = slot.variants.first ?? MacraSuggestedMeal(
+                title: "Meal \(slot.order)",
+                items: [],
+                notes: nil,
+                imageURL: nil,
+                imageURLs: nil,
+                imageMatches: nil,
+                order: slot.order,
+                daysActive: nil
+            )
+            let items = variant.items
+                .map { "\($0.quantity) \($0.name)" }
+                .joined(separator: ", ")
+            let noteText = variant.notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if noteText.isEmpty {
+                return "Meal \(slot.order): \(items)"
+            }
+            return "Meal \(slot.order): \(items) — notes: \(noteText)"
+        }
+        .joined(separator: "\n")
+    }
+
+    /// Regenerates a single meal slot from a free-text user instruction
+    /// ("swap chicken for steak", "no dairy", "lower carbs"). Replaces the
+    /// matched meal in `suggestedPlan` and persists the updated plan back
+    /// to `macraSuggestedMealPlans/current`. Loading + error state is
+    /// scoped per-meal so other cards stay interactive while one is
+    /// thinking.
+    func regenerateMeal(suggestedMeal: MacraSuggestedMeal, prompt: String) {
+        let mealId = suggestedMeal.id
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            mealEditErrors[mealId] = "Tell Nora what to change first."
+            return
+        }
+        guard suggestedPlan != nil else { return }
+
+        if Self.isSkipMealPrompt(trimmed) {
+            applySkippedMeal(replacing: suggestedMeal)
+            return
+        }
+
+        regeneratingMealIds.insert(mealId)
+        mealEditErrors.removeValue(forKey: mealId)
+
+        let bodyContext = noraBodyContext()
+
+        // Adapt the suggested meal into the analyzer's PlanMeal shape so we
+        // can reuse the same item/macro vocabulary on the way out.
+        let currentItems = suggestedMeal.items.map { item in
+            GPTService.NoraMacroAnalysis.PlanItem(
+                name: item.name,
+                quantity: item.quantity,
+                calories: item.calories,
+                protein: item.protein,
+                carbs: item.carbs,
+                fat: item.fat
+            )
+        }
+        let currentMeal = GPTService.NoraMacroAnalysis.PlanMeal(
+            title: suggestedMeal.title,
+            notes: nil,
+            items: currentItems,
+            daysActive: suggestedMeal.daysActive,
+            order: suggestedMeal.order
+        )
+
+        GPTService.sharedInstance.regenerateMeal(
+            currentMeal: currentMeal,
+            bodyContext: bodyContext,
+            userPrompt: trimmed
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.regeneratingMealIds.remove(mealId)
+                switch result {
+                case .success(let edited):
+                    self.applyEditedMeal(edited, replacing: suggestedMeal)
+                case .failure(let error):
+                    self.mealEditErrors[mealId] = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// Drops the regenerated payload into the plan, preserving the slot's
+    /// `order` + `daysActive` (those came from the source plan, not from
+    /// Nora's output for a single-meal edit).
+    private func applyEditedMeal(_ edited: GPTService.PlanMealEditResult, replacing suggested: MacraSuggestedMeal) {
+        guard var plan = suggestedPlan else { return }
+        guard let index = plan.meals.firstIndex(where: { $0.id == suggested.id }) else {
+            mealEditErrors[suggested.id] = "Couldn't find that meal in the current plan."
+            return
+        }
+
+        let newItems = edited.items.map { item in
+            MacraSuggestedMealItem(
+                name: item.name,
+                quantity: item.quantity,
+                calories: item.calories,
+                protein: item.protein,
+                carbs: item.carbs,
+                fat: item.fat
+            )
+        }
+
+        // Preserve order/daysActive from the slot we're replacing —
+        // Nora's edit response doesn't carry those (it's editing one meal,
+        // not redesigning the whole day).
+        let replacement = MacraSuggestedMeal(
+            title: edited.title.isEmpty ? suggested.title : edited.title,
+            items: newItems,
+            notes: suggested.notes ?? edited.notes,
+            imageURL: nil,
+            imageURLs: nil,
+            imageMatches: nil,
+            order: suggested.order,
+            daysActive: suggested.daysActive
+        )
+
+        plan.meals[index] = replacement
+        suggestedPlan = plan
+        persistPlanAfterEdit(plan)
+    }
+
+    private func applySkippedMeal(replacing suggested: MacraSuggestedMeal) {
+        guard var plan = suggestedPlan else { return }
+        guard let index = plan.meals.firstIndex(where: { $0.id == suggested.id }) else {
+            mealEditErrors[suggested.id] = "Couldn't find that meal in the current plan."
+            return
+        }
+
+        let replacement = MacraSuggestedMeal(
+            title: suggested.title.lowercased().contains("skipped") ? suggested.title : "\(suggested.title) skipped",
+            items: [],
+            notes: suggested.notes,
+            imageURL: nil,
+            imageURLs: nil,
+            imageMatches: nil,
+            order: suggested.order,
+            daysActive: suggested.daysActive
+        )
+
+        mealEditErrors.removeValue(forKey: suggested.id)
+        plan.meals[index] = replacement
+        suggestedPlan = plan
+        persistPlanAfterEdit(plan)
+    }
+
+    /// Writes the updated plan back to `macraSuggestedMealPlans/current`.
+    /// Keeps the doc's existing metadata (source, planName, generatedAt)
+    /// — only `plan.meals` actually changed — and broadcasts
+    /// `activePlanDidChange` so other surfaces refresh.
+    private func persistPlanAfterEdit(_ plan: MacraSuggestedMealPlan) {
+        guard !userId.isEmpty else { return }
+        let db = Firestore.firestore()
+        let ref = db.collection("users").document(userId)
+            .collection("macraSuggestedMealPlans").document("current")
+
+        let mealsPayload: [[String: Any]] = plan.meals.map { meal in
+            var dict: [String: Any] = [
+                "title": meal.title,
+                "items": meal.items.map { item -> [String: Any] in
+                    [
+                        "name": item.name,
+                        "quantity": item.quantity,
+                        "calories": item.calories,
+                        "protein": item.protein,
+                        "carbs": item.carbs,
+                        "fat": item.fat
+                    ]
+                }
+            ]
+            if let notes = meal.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+                dict["notes"] = notes
+            }
+            if let order = meal.order {
+                dict["order"] = order
+            }
+            if let days = meal.daysActive, !days.isEmpty {
+                dict["daysActive"] = days
+            }
+            return dict
+        }
+
+        let inputMacroTotals = totalsDictionary(representativeTotals(for: plan))
+
+        let payload: [String: Any] = [
+            "plan": [
+                "meals": mealsPayload,
+                "notes": plan.notes ?? ""
+            ] as [String: Any],
+            "inputMacros": inputMacroTotals,
+            "lastEditedAt": Date().timeIntervalSince1970 * 1000
+        ]
+
+        ref.setData(payload, merge: true) { [weak self] error in
+            if let error {
+                print("[Macra][PlanHub.regenerateMeal] ❌ persist failed: \(error.localizedDescription)")
+                DispatchQueue.main.async {
+                    self?.errorMessage = error.localizedDescription
+                }
+                return
+            }
+            print("[Macra][PlanHub.regenerateMeal] ✓ wrote updated plan (\(plan.meals.count) meals)")
+            NotificationCenter.default.post(name: NutritionCoreNotification.activePlanDidChange, object: nil)
+        }
+    }
+
+    private func representativeTotals(for plan: MacraSuggestedMealPlan) -> PlanTotals {
+        let scoped = scopedMeals(in: plan, for: nil)
+        return PlanTotals(
+            calories: scoped.reduce(0) { $0 + $1.totalCalories },
+            protein: scoped.reduce(0) { $0 + $1.totalProtein },
+            carbs: scoped.reduce(0) { $0 + $1.totalCarbs },
+            fat: scoped.reduce(0) { $0 + $1.totalFat }
+        )
+    }
+
+    private func totalsDictionary(_ totals: PlanTotals) -> [String: Any] {
+        [
+            "calories": totals.calories,
+            "protein": totals.protein,
+            "carbs": totals.carbs,
+            "fat": totals.fat
+        ]
+    }
+
+    /// Body context handed to Nora alongside any user prompt. Mirrors the
+    /// shape `MacroTargetsViewModel.analyzeWithNora` builds, so the per-meal
+    /// edit reads consistent with the macro-assess flow.
+    private func noraBodyContext() -> String {
+        var lines: [String] = []
+        if let target = macroTarget {
+            lines.append("Daily target: \(target.calories) kcal · \(target.protein)P / \(target.carbs)C / \(target.fat)F.")
+        }
+        if let totals = planTotals(for: nil) {
+            lines.append("Plan totals (default day): \(totals.calories) kcal · \(totals.protein)P / \(totals.carbs)C / \(totals.fat)F.")
+        }
+        if lines.isEmpty {
+            return "No additional macro context available."
+        }
+        return lines.joined(separator: " ")
+    }
+
+    static func defaultCustomPlanLabel(for date: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        formatter.dateFormat = "MMM d"
+        return "Custom Plan - \(formatter.string(from: date))"
+    }
+
+    private static func isStarterPlanPlaceholder(_ label: String) -> Bool {
+        let normalized = label
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalized == "starter nora plan" || normalized == "nora starter plan"
+    }
+
+    func renamePlanLabel(_ rawName: String) {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        planLabel = trimmed
+        persistPlanLabel(trimmed)
+    }
+
+    private func persistPlanLabel(_ label: String) {
+        guard !userId.isEmpty else { return }
+        Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("macraSuggestedMealPlans")
+            .document("current")
+            .setData(["planName": label], merge: true) { [weak self] error in
+                if let error {
+                    DispatchQueue.main.async {
+                        self?.errorMessage = error.localizedDescription
+                    }
+                }
+            }
+    }
+
+    /// Refetches the user's macro target for the given date's weekday.
+    /// When a per-day `MacroRecommendation` exists for that weekday it
+    /// supersedes the global target; otherwise the global target is used.
+    func reloadTarget(for date: Date) {
+        guard !userId.isEmpty else { return }
+        lastTargetDate = date
+        MacroRecommendationService.sharedInstance.getMacroRecommendation(for: date, userId: userId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if case .success(let rec) = result, let rec {
+                    self.macroTarget = rec
+                }
+            }
+        }
+    }
+
+    /// Overwrites macro targets with the active plan totals. Variant plans
+    /// save every weekday-specific target in one tap so the banner does not
+    /// reappear when the app reloads or the user switches plan days.
+    func adaptTargetsToPlan(for day: String? = nil, completion: (() -> Void)? = nil) {
+        guard let plan = suggestedPlan else { completion?(); return }
         guard !userId.isEmpty else { completion?(); return }
         isAdaptingTargets = true
+
+        if plan.hasDayVariants {
+            let selectedDay = Self.normalizedDayKey(day) ?? representativeDayKey(for: plan)
+            let recommendations = Self.weekdayKeys.compactMap { dayKey -> MacroRecommendation? in
+                guard let totals = planTotals(for: dayKey) else { return nil }
+                return MacroRecommendation(
+                    userId: userId,
+                    calories: totals.calories,
+                    protein: totals.protein,
+                    carbs: totals.carbs,
+                    fat: totals.fat,
+                    dayOfWeek: dayKey
+                )
+            }
+
+            MacroRecommendationService.sharedInstance.saveMacroRecommendationsForDays(recommendations) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.isAdaptingTargets = false
+                    switch result {
+                    case .success(let saved):
+                        let current = saved.first { Self.normalizedDayKey($0.dayOfWeek) == selectedDay } ?? saved.first
+                        if let current {
+                            self.macroTarget = current
+                            UserService.sharedInstance.currentMacroTarget = current
+                        }
+                    case .failure(let error):
+                        self.errorMessage = error.localizedDescription
+                    }
+                    completion?()
+                }
+            }
+            return
+        }
+
+        guard let totals = planTotals(for: nil) else {
+            isAdaptingTargets = false
+            completion?()
+            return
+        }
 
         let recommendation = MacroRecommendation(
             userId: userId,
@@ -2570,13 +3703,15 @@ final class MacraPlanHubViewModel: ObservableObject {
         }
     }
 
-    func load() {
+    func load(for date: Date? = nil) {
+        let targetDate = date ?? lastTargetDate
+        lastTargetDate = targetDate
         isLoading = true
         errorMessage = nil
         let group = DispatchGroup()
 
         group.enter()
-        MacroRecommendationService.sharedInstance.getCurrentMacroRecommendation(for: userId) { [weak self] result in
+        MacroRecommendationService.sharedInstance.getMacroRecommendation(for: targetDate, userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 if case .success(let rec) = result, let rec = rec {
                     self?.macroTarget = rec
@@ -2646,14 +3781,30 @@ final class MacraPlanHubViewModel: ObservableObject {
             var changed = false
 
             for mealIndex in plan.meals.indices {
-                // Meal-level audit: aggregate all item names as the suggested signal.
-                let mealTokens = Self.tokenize(plan.meals[mealIndex].items.map(\.name).joined(separator: " "))
+                // Meal-level audit: aggregate item names and quantities. Mirrored
+                // user-selected plans often store the actual foods in `quantity`
+                // while `name` is generic, e.g. "Meal 4" or "Pre-Workout Meal".
+                let mealTokens = Self.tokenize(
+                    plan.meals[mealIndex].items
+                        .map { "\($0.name) \($0.quantity)" }
+                        .joined(separator: " ")
+                )
                 let mealMatch = Self.findMealMatch(tokens: mealTokens, in: indexed)
-                let newMealImage = mealMatch?.image
-                if (plan.meals[mealIndex].imageURL ?? "") != (newMealImage ?? "") {
+                let mealMatches = mealMatch.map { [$0] } ?? Self.findCompositeMealMatches(tokens: mealTokens, in: indexed)
+                let newMealImage = mealMatches.first?.image
+                let newMealImages = mealMatches.count > 1 ? mealMatches.map(\.image) : nil
+                let newMealImageMatches = mealMatches.isEmpty ? nil : mealMatches.map { Self.imageMatch(from: $0) }
+                if (plan.meals[mealIndex].imageURL ?? "") != (newMealImage ?? "")
+                    || (plan.meals[mealIndex].imageURLs ?? []) != (newMealImages ?? [])
+                    || (plan.meals[mealIndex].imageMatches ?? []) != (newMealImageMatches ?? []) {
                     plan.meals[mealIndex].imageURL = newMealImage
+                    plan.meals[mealIndex].imageURLs = newMealImages
+                    plan.meals[mealIndex].imageMatches = newMealImageMatches
                     changed = true
-                    if let m = mealMatch {
+                    if mealMatches.count > 1 {
+                        let names = mealMatches.map(\.name).joined(separator: " + ")
+                        print("[Macra][PlanHub.images] ✓ Meal \(mealIndex + 1) composite → \(names)")
+                    } else if let m = mealMatch {
                         print("[Macra][PlanHub.images] ✓ Meal \(mealIndex + 1) → '\(m.name)'")
                     } else {
                         print("[Macra][PlanHub.images] ✗ Meal \(mealIndex + 1) cleared (no strong match)")
@@ -2666,12 +3817,16 @@ final class MacraPlanHubViewModel: ObservableObject {
 
                 // Item-level audit: each item gets its own matcher with strict rules.
                 for itemIndex in plan.meals[mealIndex].items.indices {
-                    let itemName = plan.meals[mealIndex].items[itemIndex].name
-                    let itemTokens = Self.tokenize(itemName)
+                    let item = plan.meals[mealIndex].items[itemIndex]
+                    let itemName = item.name
+                    let itemTokens = Self.tokenize("\(item.name) \(item.quantity)")
                     let itemMatch = Self.findItemMatch(tokens: itemTokens, in: indexed)
                     let newItemImage = itemMatch?.image
-                    if (plan.meals[mealIndex].items[itemIndex].imageURL ?? "") != (newItemImage ?? "") {
+                    let newItemImageMatch = itemMatch.map { Self.imageMatch(from: $0) }
+                    if (plan.meals[mealIndex].items[itemIndex].imageURL ?? "") != (newItemImage ?? "")
+                        || plan.meals[mealIndex].items[itemIndex].imageMatch != newItemImageMatch {
                         plan.meals[mealIndex].items[itemIndex].imageURL = newItemImage
+                        plan.meals[mealIndex].items[itemIndex].imageMatch = newItemImageMatch
                         changed = true
                         if let m = itemMatch {
                             print("[Macra][PlanHub.images] ✓ Item '\(itemName)' → '\(m.name)'")
@@ -2694,38 +3849,235 @@ final class MacraPlanHubViewModel: ObservableObject {
         }
     }
 
-    /// Meal-level match: requires ≥2 overlapping tokens AND ≥40% coverage of the meal's
-    /// distinct tokens. Highest absolute overlap wins. Filters out the "single common
-    /// token" case where one logged photo matches every meal because they all share "rice".
-    private static func findMealMatch(tokens: Set<String>, in indexed: [(meal: Meal, tokens: Set<String>)]) -> Meal? {
+    private static func imageMatch(from meal: Meal) -> MacraSuggestedMealImageMatch {
+        var seen = Set<String>()
+        let ingredientNames = (meal.detailedIngredients?.map(\.name) ?? []) + meal.ingredients
+        let ingredients = ingredientNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert($0.lowercased()).inserted }
+
+        return MacraSuggestedMealImageMatch(
+            imageURL: meal.image,
+            title: meal.name,
+            ingredients: ingredients,
+            calories: meal.calories,
+            protein: meal.protein,
+            carbs: meal.carbs,
+            fat: meal.fat
+        )
+    }
+
+    /// Meal-level match: requires a strong lexical match, and when the suggested meal
+    /// names a protein, the logged meal must name a compatible protein too. This blocks
+    /// side-dish-only matches like chicken + rice inheriting a fish + rice photo.
+    static func findMealMatch(tokens: Set<String>, in indexed: [(meal: Meal, tokens: Set<String>)]) -> Meal? {
         guard tokens.count >= 2 else { return nil }
         let coverageThreshold = 0.4
-        var best: (Meal, Int)?
+        let requestedProteinGroups = proteinGroups(in: tokens)
+        let requestedCarbGroups = carbGroups(in: tokens)
+        var best: (meal: Meal, score: Int)?
         for entry in indexed {
+            let candidateProteinGroups = proteinGroups(in: entry.tokens)
+            let proteinOverlap = requestedProteinGroups.intersection(candidateProteinGroups).count
+            guard foodAnchorGroups(in: entry.tokens).subtracting(foodAnchorGroups(in: tokens)).isEmpty else { continue }
+            if !requestedProteinGroups.isEmpty {
+                guard proteinOverlap > 0 else { continue }
+            }
+            if !requestedCarbGroups.isEmpty {
+                guard !requestedCarbGroups.isDisjoint(with: carbGroups(in: entry.tokens)) else { continue }
+            }
+
             let overlap = tokens.intersection(entry.tokens).count
             let coverage = Double(overlap) / Double(tokens.count)
-            if overlap >= 2, coverage >= coverageThreshold, overlap > (best?.1 ?? 0) {
-                best = (entry.meal, overlap)
+            let hasLexicalMatch = overlap >= 2 && coverage >= coverageThreshold
+            let hasSemanticProteinMatch = proteinOverlap > 0 && (overlap >= 1 || tokens.count <= 2)
+            guard hasLexicalMatch || hasSemanticProteinMatch else { continue }
+
+            let score = overlap + (proteinOverlap * 10)
+            if score > (best?.score ?? 0) {
+                best = (entry.meal, score)
             }
         }
-        return best?.0
+        return best?.meal
     }
 
     /// Item-level match: 1-token items (e.g. "almonds") need that 1 token in the log;
     /// multi-token items (e.g. "egg whites", "chicken breast") need ALL their tokens in
     /// the log. Conservative on purpose — better to leave an item unillustrated than to
     /// pin the wrong photo on it.
-    private static func findItemMatch(tokens: Set<String>, in indexed: [(meal: Meal, tokens: Set<String>)]) -> Meal? {
+    static func findItemMatch(tokens: Set<String>, in indexed: [(meal: Meal, tokens: Set<String>)]) -> Meal? {
         guard !tokens.isEmpty else { return nil }
         let needed = tokens.count
-        var best: (Meal, Int)?
+        let requestedProteinGroups = proteinGroups(in: tokens)
+        let requestedCarbGroups = carbGroups(in: tokens)
+        var best: (meal: Meal, score: Int)?
         for entry in indexed {
+            let candidateProteinGroups = proteinGroups(in: entry.tokens)
+            let proteinOverlap = requestedProteinGroups.intersection(candidateProteinGroups).count
+            guard foodAnchorGroups(in: entry.tokens).subtracting(foodAnchorGroups(in: tokens)).isEmpty else { continue }
+            if !requestedProteinGroups.isEmpty {
+                guard proteinOverlap > 0 else { continue }
+            }
+            if !requestedCarbGroups.isEmpty {
+                guard !requestedCarbGroups.isDisjoint(with: carbGroups(in: entry.tokens)) else { continue }
+            }
+
             let overlap = tokens.intersection(entry.tokens).count
-            if overlap >= needed, overlap > (best?.1 ?? 0) {
-                best = (entry.meal, overlap)
+            let hasExactTokenMatch = overlap >= needed
+            let hasSemanticProteinMatch = proteinOverlap > 0 && tokens.count <= 2
+            guard hasExactTokenMatch || hasSemanticProteinMatch else { continue }
+
+            let score = overlap + (proteinOverlap * 10)
+            if score > (best?.score ?? 0) {
+                best = (entry.meal, score)
             }
         }
-        return best?.0
+        return best?.meal
+    }
+
+    /// Composite meal match: used only after no single logged meal can validate the full
+    /// planned meal. It lets separate history photos cover separate anchors, such as an
+    /// egg/spinach photo plus a rice-cake photo for a planned breakfast.
+    static func findCompositeMealMatches(tokens: Set<String>, in indexed: [(meal: Meal, tokens: Set<String>)]) -> [Meal] {
+        guard tokens.count >= 3 else { return [] }
+        let requestedProteinGroups = proteinGroups(in: tokens)
+        let requestedCarbGroups = carbGroups(in: tokens)
+
+        struct Candidate {
+            let meal: Meal
+            let tokens: Set<String>
+            let score: Int
+        }
+
+        let candidates: [Candidate] = indexed.compactMap { entry in
+            let overlapTokens = tokens.intersection(entry.tokens)
+            guard !overlapTokens.isEmpty else { return nil }
+
+            let candidateProteinGroups = proteinGroups(in: entry.tokens)
+            let candidateCarbGroups = carbGroups(in: entry.tokens)
+            let candidateFoodGroups = foodAnchorGroups(in: entry.tokens)
+            let extraFoodGroups = candidateFoodGroups.subtracting(foodAnchorGroups(in: tokens))
+            guard extraFoodGroups.isEmpty else { return nil }
+            if !candidateProteinGroups.isEmpty,
+               !requestedProteinGroups.isEmpty,
+               requestedProteinGroups.isDisjoint(with: candidateProteinGroups) {
+                return nil
+            }
+            if !candidateCarbGroups.isEmpty,
+               !requestedCarbGroups.isEmpty,
+               requestedCarbGroups.isDisjoint(with: candidateCarbGroups) {
+                return nil
+            }
+
+            let proteinOverlap = requestedProteinGroups.intersection(candidateProteinGroups).count
+            let carbOverlap = requestedCarbGroups.intersection(candidateCarbGroups).count
+            let score = overlapTokens.count + (proteinOverlap * 8) + (carbOverlap * 8)
+            guard score >= 2 else { return nil }
+            return Candidate(meal: entry.meal, tokens: entry.tokens, score: score)
+        }
+        .sorted { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            return lhs.tokens.count > rhs.tokens.count
+        }
+
+        var selected: [Candidate] = []
+        var coveredTokens = Set<String>()
+        var coveredProteinGroups = Set<String>()
+        var coveredCarbGroups = Set<String>()
+        var seenImages = Set<String>()
+
+        for candidate in candidates {
+            guard seenImages.insert(candidate.meal.image).inserted else { continue }
+            let newlyCovered = tokens.intersection(candidate.tokens).subtracting(coveredTokens)
+            let newProteinGroups = requestedProteinGroups.intersection(proteinGroups(in: candidate.tokens)).subtracting(coveredProteinGroups)
+            let newCarbGroups = requestedCarbGroups.intersection(carbGroups(in: candidate.tokens)).subtracting(coveredCarbGroups)
+            guard !newlyCovered.isEmpty || !newProteinGroups.isEmpty || !newCarbGroups.isEmpty else { continue }
+
+            selected.append(candidate)
+            coveredTokens.formUnion(newlyCovered)
+            coveredProteinGroups.formUnion(newProteinGroups)
+            coveredCarbGroups.formUnion(newCarbGroups)
+
+            if selected.count >= 3 { break }
+            if requestedProteinGroups.isSubset(of: coveredProteinGroups),
+               requestedCarbGroups.isSubset(of: coveredCarbGroups),
+               Double(coveredTokens.count) / Double(tokens.count) >= 0.5 {
+                break
+            }
+        }
+
+        guard selected.count >= 2 else { return [] }
+        guard requestedProteinGroups.isSubset(of: coveredProteinGroups) else { return [] }
+        guard requestedCarbGroups.isSubset(of: coveredCarbGroups) else { return [] }
+        guard Double(coveredTokens.count) / Double(tokens.count) >= 0.45 else { return [] }
+
+        return selected.map(\.meal)
+    }
+
+    private static let proteinTokenGroups: [String: Set<String>] = [
+        "chicken": ["chicken", "poultry"],
+        "turkey": ["turkey"],
+        "beef": ["beef", "steak", "sirloin", "bison"],
+        "pork": ["pork", "ham", "bacon"],
+        "fish": ["fish", "tilapia", "cod", "salmon", "tuna", "halibut", "mahi", "snapper", "trout", "bass", "flounder", "haddock", "grouper"],
+        "shellfish": ["shrimp", "prawn", "crab", "lobster", "scallop"],
+        "egg": ["egg"],
+        "dairy": ["yogurt", "cottage", "cheese", "whey"],
+        "tofu": ["tofu", "tempeh", "seitan"]
+    ]
+
+    private static func proteinGroups(in tokens: Set<String>) -> Set<String> {
+        Set(proteinTokenGroups.compactMap { group, groupTokens in
+            tokens.isDisjoint(with: groupTokens) ? nil : group
+        })
+    }
+
+    private static let carbTokenGroups: [String: Set<String>] = [
+        "rice": ["rice", "jasmine", "basmati"],
+        "potato": ["potato", "sweetpotato", "yam"],
+        "pasta": ["pasta", "spaghetti", "penne", "macaroni", "noodle"],
+        "oats": ["oat", "oatmeal"],
+        "bread": ["bread", "toast", "bagel", "english", "muffin", "sourdough"],
+        "tortilla": ["tortilla", "wrap"],
+        "beans": ["bean", "lentil", "chickpea"],
+        "quinoa": ["quinoa"]
+    ]
+
+    private static func carbGroups(in tokens: Set<String>) -> Set<String> {
+        Set(carbTokenGroups.compactMap { group, groupTokens in
+            tokens.isDisjoint(with: groupTokens) ? nil : group
+        })
+    }
+
+    private static let extraFoodTokenGroups: [String: Set<String>] = [
+        "almond": ["almond"],
+        "peanut": ["peanut"],
+        "cashew": ["cashew"],
+        "walnut": ["walnut"],
+        "pecan": ["pecan"],
+        "nut_butter": ["butter"],
+        "avocado": ["avocado"],
+        "oil": ["oil"],
+        "pancake": ["pancake", "waffle"],
+        "salad": ["salad"],
+        "spinach": ["spinach"],
+        "asparagus": ["asparagu"],
+        "broccoli": ["broccoli"],
+        "fruit": ["banana", "apple", "berry", "strawberry", "blueberry", "grape"],
+        "vegetable": ["pepper", "onion", "tomato", "carrot", "zucchini"]
+    ]
+
+    private static func extraFoodGroups(in tokens: Set<String>) -> Set<String> {
+        Set(extraFoodTokenGroups.compactMap { group, groupTokens in
+            tokens.isDisjoint(with: groupTokens) ? nil : group
+        })
+    }
+
+    private static func foodAnchorGroups(in tokens: Set<String>) -> Set<String> {
+        proteinGroups(in: tokens)
+            .union(carbGroups(in: tokens))
+            .union(extraFoodGroups(in: tokens))
     }
 
     private static let matchStopwords: Set<String> = [
@@ -2733,7 +4085,8 @@ final class MacraPlanHubViewModel: ObservableObject {
         "cup", "cups", "oz", "ounce", "ounces", "g", "gram", "grams",
         "tbsp", "tsp", "lb", "lbs", "ml", "l", "kg",
         "large", "small", "medium", "extra", "whole",
-        "plain", "raw", "cooked", "fresh", "dried"
+        "plain", "raw", "cooked", "fresh", "dried",
+        "meal", "pre", "post", "workout"
     ]
 
     private static func tokenize(_ text: String) -> Set<String> {
@@ -2792,12 +4145,12 @@ final class MacraPlanHubViewModel: ObservableObject {
         docRef.getDocument { snapshot, error in
             if let error {
                 print("[Macra][PlanHub.fetch] ❌ Read failed: \(error.localizedDescription)")
-                completion(nil, "Starter Nora Plan")
+                completion(nil, Self.defaultCustomPlanLabel())
                 return
             }
             guard let data = snapshot?.data() else {
                 print("[Macra][PlanHub.fetch] No current doc found")
-                completion(nil, "Starter Nora Plan")
+                completion(nil, Self.defaultCustomPlanLabel())
                 return
             }
             let source = data["source"] as? String ?? "<none>"
@@ -2808,18 +4161,32 @@ final class MacraPlanHubViewModel: ObservableObject {
                   let jsonData = try? JSONSerialization.data(withJSONObject: planDict),
                   let plan = try? JSONDecoder().decode(MacraSuggestedMealPlan.self, from: jsonData) else {
                 print("[Macra][PlanHub.fetch] ❌ Failed to decode plan dict")
-                completion(nil, "Starter Nora Plan")
+                completion(nil, Self.defaultCustomPlanLabel())
                 return
             }
-            // User-mirrored plans carry their original playbook name in `planName`.
-            // Nora-generated plans don't, so we keep the stable "Starter Nora Plan" label.
             let label: String
-            if source == "user-selected",
-               let trimmed = (data["planName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !trimmed.isEmpty {
+            let storedPlanName = (data["planName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmed = storedPlanName,
+               !trimmed.isEmpty,
+               !Self.isStarterPlanPlaceholder(trimmed) {
                 label = trimmed
             } else {
-                label = "Starter Nora Plan"
+                let generatedDate: Date
+                if let millis = data["generatedAt"] as? Double {
+                    generatedDate = Date(timeIntervalSince1970: millis / 1000)
+                } else if let millis = data["generatedAt"] as? Int {
+                    generatedDate = Date(timeIntervalSince1970: Double(millis) / 1000)
+                } else {
+                    generatedDate = Date()
+                }
+                label = Self.defaultCustomPlanLabel(for: generatedDate)
+                if let trimmed = storedPlanName, Self.isStarterPlanPlaceholder(trimmed) {
+                    docRef.setData(["planName": label], merge: true) { error in
+                        if let error {
+                            print("[Macra][PlanHub.fetch] planName placeholder repair failed: \(error.localizedDescription)")
+                        }
+                    }
+                }
             }
             print("[Macra][PlanHub.fetch] ✓ Resolved label='\(label)', \(plan.meals.count) meals")
             completion(plan, label)
@@ -2856,7 +4223,10 @@ final class MacraPlanHubViewModel: ObservableObject {
                     imageUrls: imageUrls.isEmpty ? nil : imageUrls
                 )
                 await MainActor.run {
+                    let label = Self.defaultCustomPlanLabel()
                     self?.suggestedPlan = plan
+                    self?.planLabel = label
+                    self?.persistPlanLabel(label)
                     self?.isGenerating = false
                     completion?()
                 }
@@ -2874,14 +4244,99 @@ final class MacraPlanHubViewModel: ObservableObject {
 private struct MacraPlanHubSurface: View {
     @StateObject private var viewModel: MacraPlanHubViewModel
     let appCoordinator: AppCoordinator
+    /// Sourced from `MacraNutritionViewModel.selectedDate` so the date
+    /// chevrons in the host view drive which day's variant we render.
+    let selectedDate: Date
+    let onMealLogged: (Meal) -> Void
+    let onMacroTargetChanged: () -> Void
 
     @State private var isChangePlanPresented = false
     @State private var isNoraSheetPresented = false
+    @State private var isAddMealPresented = false
+    @State private var isGroceryListPresented = false
+    @State private var isRenamePlanPresented = false
     @State private var activeEditor: MealPlanEditorMode?
+    /// Active "+ Add variant" sheet — drives `AddVariantSheet`. Carries the
+    /// slot's order plus the visible variant's id so newly created
+    /// variants can copy that variant's items as a starting point.
+    @State private var addVariantTarget: AddVariantTarget?
 
-    init(userId: String, appCoordinator: AppCoordinator) {
+    init(
+        userId: String,
+        appCoordinator: AppCoordinator,
+        selectedDate: Date,
+        onMealLogged: @escaping (Meal) -> Void,
+        onMacroTargetChanged: @escaping () -> Void
+    ) {
         _viewModel = StateObject(wrappedValue: MacraPlanHubViewModel(userId: userId))
         self.appCoordinator = appCoordinator
+        self.selectedDate = selectedDate
+        self.onMealLogged = onMealLogged
+        self.onMacroTargetChanged = onMacroTargetChanged
+    }
+
+    /// Weekday key ("mon"…"sun") used to filter day-scoped meal variants.
+    private var selectedDayKey: String {
+        Weekday.from(date: selectedDate).firestoreValue
+    }
+
+    private var selectedDayLabel: String {
+        Weekday.from(date: selectedDate).shortLabel
+    }
+
+    /// Mon–Sun pill row shown when the active plan carries variants. Tapping
+    /// a pill nudges the host's `selectedDate` forward/backward to that
+    /// weekday — but the picker is a *display* control here; date navigation
+    /// is owned by the parent's chevrons. We keep the picker visual so users
+    /// who don't notice the chevrons can still see "this plan varies."
+    @ViewBuilder
+    private func dayVariantPicker(plan: MacraSuggestedMealPlan) -> some View {
+        let scoped = plan.scopedDays
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+                Text("PLAN VARIES BY DAY")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .tracking(1.2)
+                    .foregroundColor(.white.opacity(0.55))
+                Spacer()
+                Text("Showing \(selectedDayLabel)")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(Color(hex: "E0FE10"))
+            }
+
+            HStack(spacing: 6) {
+                ForEach(Weekday.displayOrder) { day in
+                    let key = day.firestoreValue
+                    let isOn = (key == selectedDayKey)
+                    let isScoped = scoped.contains(key)
+                    Text(day.shortLabel)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(isOn ? .black : .white.opacity(isScoped ? 0.85 : 0.45))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule().fill(isOn ? Color(hex: "E0FE10") : Color.white.opacity(0.05))
+                        )
+                        .overlay(
+                            Capsule().strokeBorder(
+                                isOn ? Color(hex: "E0FE10") : Color.white.opacity(isScoped ? 0.22 : 0.08),
+                                lineWidth: 1
+                            )
+                        )
+                }
+            }
+
+            Text("Use the date arrows above to switch days. Highlighted weekdays here have day-specific meals (Fri/Sat add-ons, omits, etc.).")
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.45))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
     }
 
     var body: some View {
@@ -2891,8 +4346,12 @@ private struct MacraPlanHubSurface: View {
             if viewModel.isLoading && viewModel.suggestedPlan == nil {
                 loadingCard
             } else if let plan = viewModel.suggestedPlan {
+                if plan.hasDayVariants {
+                    dayVariantPicker(plan: plan)
+                }
                 macroSummaryCard
                 macroMismatchBanner
+                groceryListButton(plan: plan)
                 planMealsSection(plan: plan)
             } else {
                 emptyStateCard
@@ -2911,7 +4370,10 @@ private struct MacraPlanHubSurface: View {
             changePlanButton
         }
         .onAppear {
-            viewModel.load()
+            viewModel.load(for: selectedDate)
+        }
+        .onChange(of: selectedDate) { newDate in
+            viewModel.reloadTarget(for: newDate)
         }
         .sheet(isPresented: $isChangePlanPresented) {
             ChangeMealPlanSheet(
@@ -2951,6 +4413,114 @@ private struct MacraPlanHubSurface: View {
                 activeEditor = nil
             }
         }
+        .sheet(item: $addVariantTarget) { target in
+            AddVariantSheet(
+                slotOrder: target.slotOrder,
+                occupiedDays: target.occupiedDays
+            ) { selectedDays, variantPrompt, skipMeal in
+                viewModel.addVariant(
+                    toSlotOrder: target.slotOrder,
+                    days: selectedDays,
+                    copyingFrom: target.sourceMealId,
+                    variantPrompt: variantPrompt,
+                    skipMeal: skipMeal
+                )
+                addVariantTarget = nil
+            } onCancel: {
+                addVariantTarget = nil
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isAddMealPresented) {
+            AddMealSheet { prompt in
+                viewModel.addMeal(prompt: prompt)
+                isAddMealPresented = false
+            } onCancel: {
+                isAddMealPresented = false
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $isGroceryListPresented) {
+            if let plan = viewModel.suggestedPlan {
+                PlanGroceryListSheet(
+                    plan: plan,
+                    planLabel: viewModel.planLabel,
+                    selectedDate: selectedDate
+                )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
+        }
+        .sheet(isPresented: $isRenamePlanPresented) {
+            RenamePlanLabelSheet(currentName: viewModel.planLabel) { newName in
+                viewModel.renamePlanLabel(newName)
+                isRenamePlanPresented = false
+            } onCancel: {
+                isRenamePlanPresented = false
+            }
+            .presentationDetents([.height(280), .medium])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    private func groceryListButton(plan: MacraSuggestedMealPlan) -> some View {
+        let selectedDay = Weekday.from(date: selectedDate)
+        let weekItems = PlanGroceryListBuilder.items(for: plan, scope: .week, selectedDay: selectedDay)
+        let todayItems = PlanGroceryListBuilder.items(for: plan, scope: .today, selectedDay: selectedDay)
+        let accent = Color(hex: "E0FE10")
+
+        return Button {
+            isGroceryListPresented = true
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(accent.opacity(0.14))
+                    Image(systemName: "cart.fill")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(accent)
+                }
+                .frame(width: 42, height: 42)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Grocery list")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("\(weekItems.count) weekly items · \(todayItems.count) for \(selectedDay.shortLabel)")
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.58))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(.white.opacity(0.45))
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(accent.opacity(0.22), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Days already covered by sibling variants in the same slot. The
+    /// AddVariantSheet uses this to grey out chips so the user can't pick
+    /// a day that's already claimed (and we don't have to deal with
+    /// silent re-claims after the fact).
+    private func occupiedDays(in slot: MealSlot, excluding meal: MacraSuggestedMeal) -> Set<Weekday> {
+        var occupied: Set<Weekday> = []
+        for variant in slot.variants where variant.id != meal.id {
+            let days = variant.daysActive ?? Weekday.displayOrder.map(\.firestoreValue)
+            for key in days {
+                if let day = Weekday.from(key) { occupied.insert(day) }
+            }
+        }
+        return occupied
     }
 
     private var heroCard: some View {
@@ -2966,17 +4536,34 @@ private struct MacraPlanHubSurface: View {
                     .tracking(-0.5)
                     .foregroundColor(.white)
                 if viewModel.suggestedPlan != nil {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 11, weight: .bold))
-                        Text(viewModel.planLabel)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    HStack(spacing: 8) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 11, weight: .bold))
+                            Text(viewModel.planLabel)
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+                        }
+                        .foregroundColor(accent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(accent.opacity(0.12)))
+                        .overlay(Capsule().strokeBorder(accent.opacity(0.32), lineWidth: 1))
+
+                        Button {
+                            isRenamePlanPresented = true
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(accent)
+                                .frame(width: 26, height: 26)
+                                .background(Circle().fill(accent.opacity(0.10)))
+                                .overlay(Circle().strokeBorder(accent.opacity(0.28), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Rename plan")
                     }
-                    .foregroundColor(accent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(accent.opacity(0.12)))
-                    .overlay(Capsule().strokeBorder(accent.opacity(0.32), lineWidth: 1))
                     .padding(.top, 2)
                 }
                 Text("Macra built this plan from your macro target. Swap anytime.")
@@ -3088,8 +4675,9 @@ private struct MacraPlanHubSurface: View {
 
     @ViewBuilder
     private var macroMismatchBanner: some View {
-        if viewModel.hasTargetMismatch,
-           let totals = viewModel.planTotals,
+        let day = (viewModel.suggestedPlan?.hasDayVariants ?? false) ? selectedDayKey : nil
+        if viewModel.hasTargetMismatch(for: day),
+           let totals = viewModel.planTotals(for: day),
            let target = viewModel.macroTarget {
             let warn = Color(hex: "FFB454")
             VStack(alignment: .leading, spacing: 10) {
@@ -3112,7 +4700,10 @@ private struct MacraPlanHubSurface: View {
                 }
 
                 Button {
-                    viewModel.adaptTargetsToPlan()
+                    viewModel.adaptTargetsToPlan(for: day) {
+                        viewModel.reloadTarget(for: selectedDate)
+                        onMacroTargetChanged()
+                    }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: viewModel.isAdaptingTargets ? "hourglass" : "arrow.triangle.2.circlepath")
@@ -3143,6 +4734,8 @@ private struct MacraPlanHubSurface: View {
 
     @ViewBuilder
     private func planMealsSection(plan: MacraSuggestedMealPlan) -> some View {
+        let slots = plan.slots
+
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("MEALS")
@@ -3150,18 +4743,89 @@ private struct MacraPlanHubSurface: View {
                     .tracking(1.2)
                     .foregroundColor(Color(hex: "8B5CF6"))
                 Spacer()
-                Text("\(plan.meals.count)")
+                Text("\(slots.count)")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundColor(Color(hex: "8B5CF6"))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Capsule().fill(Color(hex: "8B5CF6").opacity(0.12)))
                     .overlay(Capsule().strokeBorder(Color(hex: "8B5CF6").opacity(0.32), lineWidth: 1))
+                Button {
+                    isAddMealPresented = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: viewModel.isAddingMeal ? "hourglass" : "plus.circle")
+                            .font(.system(size: 11, weight: .bold))
+                        Text(viewModel.isAddingMeal ? "Adding" : "Add meal")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color(hex: "E0FE10")))
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isAddingMeal)
             }
 
-            LazyVStack(spacing: 12) {
-                ForEach(Array(plan.meals.enumerated()), id: \.offset) { index, meal in
-                    PlanHubMealCard(index: index, meal: meal)
+            if slots.isEmpty {
+                Text("No meals in this plan yet.")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.55))
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.04)))
+                    .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+            } else {
+                LazyVStack(spacing: 14) {
+                    ForEach(Array(slots.enumerated()), id: \.element.id) { slotIndex, slot in
+                        PlanHubMealSlotCard(
+                            slot: slot,
+                            selectedDayKey: selectedDayKey,
+                            regeneratingMealIds: viewModel.regeneratingMealIds,
+                            mealEditErrors: viewModel.mealEditErrors,
+                            canMoveUp: slotIndex > 0,
+                            canMoveDown: slotIndex < slots.count - 1,
+                            onRegenerate: { meal, prompt in
+                                viewModel.regenerateMeal(suggestedMeal: meal, prompt: prompt)
+                            },
+                            onUpdateNotes: { meal, notes in
+                                viewModel.updateMealNotes(notes, for: meal)
+                            },
+                            onLogMeal: { meal in
+                                viewModel.logMeal(meal, on: selectedDate) { result in
+                                    switch result {
+                                    case .success(let savedMeal):
+                                        onMealLogged(savedMeal)
+                                    case .failure(let error):
+                                        appCoordinator.showToast(
+                                            viewModel: ToastViewModel(
+                                                message: "Could not log meal: \(error.localizedDescription)",
+                                                backgroundColor: .secondaryCharcoal,
+                                                textColor: .secondaryWhite
+                                            )
+                                        )
+                                    }
+                                }
+                            },
+                            onDeleteVariant: { meal in
+                                viewModel.deleteVariant(meal)
+                            },
+                            onMoveUp: {
+                                viewModel.moveMealSlot(slotOrder: slot.order, direction: .up)
+                            },
+                            onMoveDown: {
+                                viewModel.moveMealSlot(slotOrder: slot.order, direction: .down)
+                            },
+                            onAddVariant: { sourceMeal in
+                                addVariantTarget = AddVariantTarget(
+                                    slotOrder: slot.order,
+                                    sourceMealId: sourceMeal.id,
+                                    occupiedDays: occupiedDays(in: slot, excluding: sourceMeal)
+                                )
+                            }
+                        )
+                    }
                 }
             }
 
@@ -3197,6 +4861,1389 @@ private struct MacraPlanHubSurface: View {
     }
 }
 
+/// Identifies the slot the user invoked "+ Add variant" from. Carrying
+/// `occupiedDays` here means the sheet doesn't need a back-channel into
+/// the parent's plan state — it just renders chips and reports back which
+/// days were chosen.
+private struct AddVariantTarget: Identifiable {
+    let id = UUID()
+    let slotOrder: Int
+    let sourceMealId: String
+    let occupiedDays: Set<Weekday>
+}
+
+private enum PlanGroceryListScope: String, CaseIterable, Identifiable {
+    case today
+    case week
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .today: return "Today"
+        case .week: return "Week"
+        }
+    }
+
+    func detail(selectedDay: Weekday) -> String {
+        switch self {
+        case .today: return selectedDay.shortLabel
+        case .week: return "Mon-Sun"
+        }
+    }
+}
+
+private enum PlanGroceryCategory: String, CaseIterable, Identifiable {
+    case produce
+    case protein
+    case dairy
+    case grains
+    case fats
+    case pantry
+    case drinks
+    case other
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .produce: return "Produce"
+        case .protein: return "Protein"
+        case .dairy: return "Dairy"
+        case .grains: return "Grains"
+        case .fats: return "Fats"
+        case .pantry: return "Pantry"
+        case .drinks: return "Drinks"
+        case .other: return "Other"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .produce: return "leaf.fill"
+        case .protein: return "fork.knife"
+        case .dairy: return "cup.and.saucer.fill"
+        case .grains: return "takeoutbag.and.cup.and.straw.fill"
+        case .fats: return "drop.fill"
+        case .pantry: return "cabinet.fill"
+        case .drinks: return "waterbottle.fill"
+        case .other: return "basket.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .produce: return Color(hex: "4ADE80")
+        case .protein: return Color(hex: "FFB454")
+        case .dairy: return Color(hex: "60A5FA")
+        case .grains: return Color(hex: "E0FE10")
+        case .fats: return Color(hex: "F59E0B")
+        case .pantry: return Color(hex: "A78BFA")
+        case .drinks: return Color(hex: "38BDF8")
+        case .other: return Color.white.opacity(0.72)
+        }
+    }
+}
+
+private struct PlanGroceryEntry: Hashable {
+    let quantity: String
+    let mealTitle: String
+    let day: Weekday?
+}
+
+private struct PlanGroceryItem: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let category: PlanGroceryCategory
+    let entries: [PlanGroceryEntry]
+
+    var quantitySummary: String {
+        PlanGroceryQuantityFormatter.summary(for: entries.map(\.quantity))
+    }
+
+    var mealSummary: String {
+        let names = unique(entries.map(\.mealTitle).filter { !$0.isEmpty })
+        guard !names.isEmpty else { return "\(entries.count) use\(entries.count == 1 ? "" : "s")" }
+        if names.count <= 2 {
+            return names.joined(separator: ", ")
+        }
+        return "\(names.prefix(2).joined(separator: ", ")) +\(names.count - 2)"
+    }
+
+    var daySummary: String {
+        let days = unique(entries.compactMap(\.day))
+        if days.count == Weekday.displayOrder.count { return "All week" }
+        if days.isEmpty { return "\(entries.count) use\(entries.count == 1 ? "" : "s")" }
+        return days.map(\.shortLabel).joined(separator: ", ")
+    }
+
+    private func unique<T: Hashable>(_ values: [T]) -> [T] {
+        var seen = Set<T>()
+        var ordered: [T] = []
+        for value in values where seen.insert(value).inserted {
+            ordered.append(value)
+        }
+        return ordered
+    }
+}
+
+private struct PlanGrocerySection: Identifiable {
+    let category: PlanGroceryCategory
+    let items: [PlanGroceryItem]
+
+    var id: String { category.id }
+}
+
+private struct PlanGroceryAccumulator {
+    let id: String
+    var name: String
+    var category: PlanGroceryCategory
+    var entries: [PlanGroceryEntry] = []
+
+    func item() -> PlanGroceryItem {
+        PlanGroceryItem(id: id, name: name, category: category, entries: entries)
+    }
+}
+
+private enum PlanGroceryListBuilder {
+    static func items(
+        for plan: MacraSuggestedMealPlan,
+        scope: PlanGroceryListScope,
+        selectedDay: Weekday
+    ) -> [PlanGroceryItem] {
+        var buckets: [String: PlanGroceryAccumulator] = [:]
+
+        for mealSet in mealSets(for: plan, scope: scope, selectedDay: selectedDay) {
+            for meal in mealSet.meals where !meal.items.isEmpty {
+                let mealTitle = displayMealTitle(meal)
+                for item in meal.items {
+                    let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty else { continue }
+
+                    let key = normalizedName(name)
+                    let category = category(for: name)
+                    let entry = PlanGroceryEntry(
+                        quantity: item.quantity.trimmingCharacters(in: .whitespacesAndNewlines),
+                        mealTitle: mealTitle,
+                        day: mealSet.day
+                    )
+
+                    if buckets[key] == nil {
+                        buckets[key] = PlanGroceryAccumulator(
+                            id: key,
+                            name: displayName(name),
+                            category: category,
+                            entries: [entry]
+                        )
+                    } else {
+                        buckets[key]?.entries.append(entry)
+                    }
+                }
+            }
+        }
+
+        return buckets.values
+            .map { $0.item() }
+            .sorted { lhs, rhs in
+                let leftCategory = PlanGroceryCategory.allCases.firstIndex(of: lhs.category) ?? 999
+                let rightCategory = PlanGroceryCategory.allCases.firstIndex(of: rhs.category) ?? 999
+                if leftCategory != rightCategory { return leftCategory < rightCategory }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    static func groupedItems(_ items: [PlanGroceryItem]) -> [PlanGrocerySection] {
+        PlanGroceryCategory.allCases.compactMap { category in
+            let matching = items.filter { $0.category == category }
+            return matching.isEmpty ? nil : PlanGrocerySection(category: category, items: matching)
+        }
+    }
+
+    static func exportText(
+        items: [PlanGroceryItem],
+        planLabel: String,
+        scope: PlanGroceryListScope,
+        selectedDay: Weekday
+    ) -> String {
+        var lines: [String] = []
+        lines.append("\(planLabel) Grocery List")
+        lines.append(scope == .today ? "For \(selectedDay.shortLabel)" : "For the week")
+        lines.append("")
+
+        for section in groupedItems(items) {
+            lines.append(section.category.title)
+            for item in section.items {
+                let quantity = item.quantitySummary.isEmpty ? "" : "\(item.quantitySummary) "
+                lines.append("- [ ] \(quantity)\(item.name) (\(item.daySummary))")
+            }
+            lines.append("")
+        }
+
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private struct MealSet {
+        let day: Weekday?
+        let meals: [MacraSuggestedMeal]
+    }
+
+    private static func mealSets(
+        for plan: MacraSuggestedMealPlan,
+        scope: PlanGroceryListScope,
+        selectedDay: Weekday
+    ) -> [MealSet] {
+        switch scope {
+        case .today:
+            let meals = plan.hasDayVariants ? plan.activeMeals(for: selectedDay.firestoreValue) : plan.meals
+            return [MealSet(day: selectedDay, meals: meals)]
+        case .week:
+            return Weekday.displayOrder.map { day in
+                let meals = plan.hasDayVariants ? plan.activeMeals(for: day.firestoreValue) : plan.meals
+                return MealSet(day: day, meals: meals)
+            }
+        }
+    }
+
+    private static func displayMealTitle(_ meal: MacraSuggestedMeal) -> String {
+        let title = meal.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return title }
+        return meal.items.prefix(2).map(\.name).joined(separator: ", ")
+    }
+
+    private static func normalizedName(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+    }
+
+    private static func displayName(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed == trimmed.lowercased() else { return trimmed }
+        return trimmed.capitalized
+    }
+
+    private static func category(for rawName: String) -> PlanGroceryCategory {
+        let name = normalizedName(rawName)
+
+        if containsAny(name, ["spinach", "lettuce", "broccoli", "asparagus", "pepper", "onion", "tomato", "berry", "berries", "banana", "apple", "orange", "lemon", "lime", "avocado", "potato", "sweet potato", "zucchini", "carrot", "cucumber", "mushroom", "greens"]) {
+            return .produce
+        }
+        if containsAny(name, ["chicken", "turkey", "beef", "steak", "salmon", "tuna", "shrimp", "cod", "tilapia", "pork", "egg", "eggs", "tofu", "tempeh", "whey", "protein powder"]) {
+            return .protein
+        }
+        if containsAny(name, ["yogurt", "milk", "cheese", "cottage cheese", "cream", "kefir"]) {
+            return .dairy
+        }
+        if containsAny(name, ["rice", "oats", "oatmeal", "bread", "pasta", "quinoa", "tortilla", "bagel", "cereal", "granola", "wrap"]) {
+            return .grains
+        }
+        if containsAny(name, ["olive oil", "oil", "butter", "almond", "peanut", "cashew", "walnut", "nuts", "chia", "flax", "seed", "seeds", "nut butter"]) {
+            return .fats
+        }
+        if containsAny(name, ["salt", "pepper", "sauce", "salsa", "seasoning", "spice", "honey", "maple", "flour", "vinegar", "mustard", "ketchup", "dressing"]) {
+            return .pantry
+        }
+        if containsAny(name, ["water", "coffee", "tea", "juice", "smoothie", "electrolyte"]) {
+            return .drinks
+        }
+        return .other
+    }
+
+    private static func containsAny(_ name: String, _ needles: [String]) -> Bool {
+        needles.contains { name.contains($0) }
+    }
+}
+
+private enum PlanGroceryQuantityFormatter {
+    static func summary(for quantities: [String]) -> String {
+        let trimmed = quantities
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !trimmed.isEmpty else {
+            return quantities.count > 1 ? "\(quantities.count) uses" : ""
+        }
+
+        var parsedGroups: [String: (unit: String, amount: Double)] = [:]
+        var unparsedCounts: [String: Int] = [:]
+        var unparsedDisplay: [String: String] = [:]
+
+        for raw in trimmed {
+            if let parsed = parse(raw) {
+                let key = parsed.unit.lowercased()
+                let existing = parsedGroups[key] ?? (unit: parsed.unit, amount: 0)
+                parsedGroups[key] = (unit: existing.unit, amount: existing.amount + parsed.amount)
+            } else {
+                let key = raw.lowercased()
+                unparsedCounts[key, default: 0] += 1
+                unparsedDisplay[key] = raw
+            }
+        }
+
+        var parts: [String] = parsedGroups.values
+            .sorted { $0.unit < $1.unit }
+            .map { group in
+                let amount = formatAmount(group.amount)
+                let unit = displayUnit(group.unit, amount: group.amount)
+                return unit.isEmpty ? amount : "\(amount) \(unit)"
+            }
+
+        for key in unparsedCounts.keys.sorted() {
+            let count = unparsedCounts[key] ?? 0
+            let display = unparsedDisplay[key] ?? key
+            parts.append(count > 1 ? "\(count)x \(display)" : display)
+        }
+
+        return parts.joined(separator: " + ")
+    }
+
+    private static func parse(_ raw: String) -> (amount: Double, unit: String)? {
+        let tokens = raw.split(separator: " ").map(String.init)
+        guard let first = tokens.first else { return nil }
+
+        if let amount = numberWithAttachedUnit(first) {
+            let unit = ([amount.unit] + tokens.dropFirst()).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+            return (amount.value, normalizeUnit(unit))
+        }
+
+        guard var value = numericValue(first) else { return nil }
+        var unitStart = 1
+        if tokens.count > 1, let fraction = numericValue(tokens[1]), tokens[1].contains("/") {
+            value += fraction
+            unitStart = 2
+        }
+
+        let unit = tokens.dropFirst(unitStart).joined(separator: " ")
+        return (value, normalizeUnit(unit))
+    }
+
+    private static func numericValue(_ raw: String) -> Double? {
+        if raw.contains("/") {
+            let parts = raw.split(separator: "/")
+            guard parts.count == 2,
+                  let numerator = Double(parts[0]),
+                  let denominator = Double(parts[1]),
+                  denominator != 0 else { return nil }
+            return numerator / denominator
+        }
+        return Double(raw)
+    }
+
+    private static func numberWithAttachedUnit(_ token: String) -> (value: Double, unit: String)? {
+        var number = ""
+        var unit = ""
+        var hasStartedUnit = false
+        for character in token {
+            if !hasStartedUnit, character.isNumber || character == "." {
+                number.append(character)
+            } else {
+                hasStartedUnit = true
+                unit.append(character)
+            }
+        }
+        guard !number.isEmpty, !unit.isEmpty, let value = Double(number) else { return nil }
+        return (value, unit)
+    }
+
+    private static func normalizeUnit(_ raw: String) -> String {
+        let unit = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch unit {
+        case "grams", "gram": return "g"
+        case "ounces", "ounce": return "oz"
+        case "pounds", "pound": return "lb"
+        case "tablespoon", "tablespoons": return "tbsp"
+        case "teaspoon", "teaspoons": return "tsp"
+        case "cups": return "cup"
+        default: return unit
+        }
+    }
+
+    private static func formatAmount(_ amount: Double) -> String {
+        if amount.rounded() == amount {
+            return "\(Int(amount))"
+        }
+        return String(format: "%.1f", amount)
+    }
+
+    private static func displayUnit(_ unit: String, amount: Double) -> String {
+        guard !unit.isEmpty else { return "" }
+        let stableUnits = ["g", "oz", "lb", "ml", "tsp", "tbsp"]
+        if stableUnits.contains(unit) || amount == 1 || unit.hasSuffix("s") {
+            return unit
+        }
+        return "\(unit)s"
+    }
+}
+
+private struct PlanGroceryListSheet: View {
+    let plan: MacraSuggestedMealPlan
+    let planLabel: String
+    let selectedDate: Date
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var scope: PlanGroceryListScope = .week
+    @State private var checkedItemIds: Set<String> = []
+    @State private var didCopy = false
+
+    private var selectedDay: Weekday {
+        Weekday.from(date: selectedDate)
+    }
+
+    private var items: [PlanGroceryItem] {
+        PlanGroceryListBuilder.items(for: plan, scope: scope, selectedDay: selectedDay)
+    }
+
+    private var visibleItemIDs: Set<String> {
+        Set(items.map(\.id))
+    }
+
+    private var visibleCheckedCount: Int {
+        checkedItemIds.intersection(visibleItemIDs).count
+    }
+
+    private var exportText: String {
+        PlanGroceryListBuilder.exportText(
+            items: items,
+            planLabel: planLabel,
+            scope: scope,
+            selectedDay: selectedDay
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LinearGradient(
+                    colors: [Color(hex: "080A0F"), Color(hex: "12151C")],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+
+                VStack(alignment: .leading, spacing: 16) {
+                    header
+                    scopePicker
+
+                    if items.isEmpty {
+                        emptyState
+                    } else {
+                        resetControl
+                        listContent
+                        footerActions
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 12)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                }
+            }
+        }
+    }
+
+    private var resetControl: some View {
+        HStack(spacing: 10) {
+            Text("\(visibleCheckedCount) of \(items.count) checked")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundColor(.white.opacity(0.55))
+
+            Spacer(minLength: 0)
+
+            Button {
+                checkedItemIds.removeAll()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.counterclockwise.circle.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Uncheck all")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(visibleCheckedCount == 0 ? .white.opacity(0.36) : Color(hex: "E0FE10"))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Color.white.opacity(0.06)))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(visibleCheckedCount == 0)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Capsule()
+                .fill(Color.white.opacity(0.35))
+                .frame(width: 44, height: 5)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+
+            HStack(spacing: 8) {
+                Image(systemName: "cart.fill")
+                    .font(.system(size: 13, weight: .bold))
+                Text("GROCERY LIST")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .tracking(1.4)
+            }
+            .foregroundColor(Color(hex: "E0FE10"))
+            .padding(.top, 4)
+
+            Text(planLabel)
+                .font(.system(size: 26, weight: .heavy, design: .rounded))
+                .foregroundColor(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.84)
+
+            Text("\(items.count) items · \(scope.detail(selectedDay: selectedDay))")
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundColor(.white.opacity(0.58))
+        }
+    }
+
+    private var scopePicker: some View {
+        HStack(spacing: 8) {
+            ForEach(PlanGroceryListScope.allCases) { candidate in
+                Button {
+                    scope = candidate
+                    didCopy = false
+                } label: {
+                    Text(candidate.title)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(scope == candidate ? .black : .white.opacity(0.72))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(scope == candidate ? Color(hex: "E0FE10") : Color.white.opacity(0.06)))
+                        .overlay(Capsule().strokeBorder(scope == candidate ? Color(hex: "E0FE10") : Color.white.opacity(0.12), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var listContent: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 14) {
+                ForEach(PlanGroceryListBuilder.groupedItems(items)) { section in
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack(spacing: 7) {
+                            Image(systemName: section.category.systemImage)
+                                .font(.system(size: 11, weight: .bold))
+                            Text(section.category.title.uppercased())
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .tracking(1.1)
+                            Spacer()
+                            Text("\(section.items.count)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        }
+                        .foregroundColor(section.category.tint)
+
+                        VStack(spacing: 8) {
+                            ForEach(section.items) { item in
+                                PlanGroceryRow(
+                                    item: item,
+                                    isChecked: checkedItemIds.contains(item.id)
+                                ) {
+                                    toggle(item)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "basket")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundColor(Color(hex: "E0FE10"))
+            Text("No grocery items")
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+            Text("Meals without food items are treated as skipped meals.")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundColor(.white.opacity(0.58))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(0.045)))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+    }
+
+    private var footerActions: some View {
+        HStack(spacing: 10) {
+            Button {
+                UIPasteboard.general.string = exportText
+                didCopy = true
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: didCopy ? "checkmark" : "doc.on.doc.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text(didCopy ? "Copied" : "Copy")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(Capsule().fill(Color.white.opacity(0.08)))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+
+            ShareLink(item: exportText) {
+                HStack(spacing: 7) {
+                    Image(systemName: "square.and.arrow.up.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Share")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.black)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(Capsule().fill(Color(hex: "E0FE10")))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func toggle(_ item: PlanGroceryItem) {
+        if checkedItemIds.contains(item.id) {
+            checkedItemIds.remove(item.id)
+        } else {
+            checkedItemIds.insert(item.id)
+        }
+    }
+}
+
+private struct PlanGroceryRow: View {
+    let item: PlanGroceryItem
+    let isChecked: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isChecked ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(isChecked ? Color(hex: "E0FE10") : .white.opacity(0.35))
+                    .frame(width: 24, height: 24)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(item.name)
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundColor(isChecked ? .white.opacity(0.45) : .white)
+                            .strikethrough(isChecked, color: .white.opacity(0.5))
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.86)
+                        Spacer(minLength: 0)
+                        if !item.quantitySummary.isEmpty {
+                            Text(item.quantitySummary)
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(Capsule().fill(item.category.tint))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Text(item.daySummary)
+                        Text(item.mealSummary)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(isChecked ? 0.34 : 0.50))
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(isChecked ? 0.025 : 0.055)))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.white.opacity(isChecked ? 0.05 : 0.09), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+fileprivate enum MealSlotMoveDirection {
+    case up
+    case down
+}
+
+private struct AddMealSheet: View {
+    let onCreate: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var prompt = ""
+
+    private static let noraPurple = Color(hex: "8B5CF6")
+    private static let macraYellow = Color(hex: "E0FE10")
+
+    private var trimmedPrompt: String {
+        prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(hex: "0A0B0F"), Color(hex: "111318")],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 16) {
+                Capsule()
+                    .fill(Color.white.opacity(0.35))
+                    .frame(width: 44, height: 5)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+
+                HStack {
+                    Spacer()
+                    Button("Cancel", action: onCancel)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color.white.opacity(0.10)))
+                        .buttonStyle(.plain)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "fork.knife.circle")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("ADD MEAL")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .tracking(1.4)
+                    }
+                    .foregroundColor(Self.noraPurple)
+
+                    Text("Describe the meal")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+
+                    Text("Tell Macra what to add. Nora will turn it into foods, quantities, and macros, then place it at the end of the plan.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.6))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                ZStack(alignment: .topLeading) {
+                    if trimmedPrompt.isEmpty {
+                        Text("e.g. pre-bed meal with egg whites and spinach · add a post-workout steak and rice meal · simple snack with Greek yogurt and berries")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.34))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 14)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextEditor(text: $prompt)
+                        .scrollContentBackground(.hidden)
+                        .font(.system(size: 15))
+                        .foregroundColor(.white)
+                        .frame(minHeight: 150)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                }
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.06)))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+
+                Spacer(minLength: 0)
+
+                Button {
+                    onCreate(trimmedPrompt)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Create meal")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.black)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Capsule().fill(Self.macraYellow))
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmedPrompt.isEmpty)
+                .opacity(trimmedPrompt.isEmpty ? 0.5 : 1)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+        }
+    }
+}
+
+private struct RenamePlanLabelSheet: View {
+    let currentName: String
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var name: String
+
+    private static let macraYellow = Color(hex: "E0FE10")
+
+    init(
+        currentName: String,
+        onSave: @escaping (String) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.currentName = currentName
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _name = State(initialValue: currentName)
+    }
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(hex: "0A0B0F"), Color(hex: "111318")],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 16) {
+                Capsule()
+                    .fill(Color.white.opacity(0.35))
+                    .frame(width: 44, height: 5)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("PLAN NAME")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .tracking(1.4)
+                    }
+                    .foregroundColor(Self.macraYellow)
+
+                    Text("Rename plan")
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+
+                    Text("This label appears on the Plan tab so generated plans do not look like the starter Nora plan.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.6))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                TextField("Plan name", text: $name)
+                    .textInputAutocapitalization(.words)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 14)
+                    .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.06)))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+
+                HStack(spacing: 12) {
+                    Button("Cancel", action: onCancel)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.85))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                        .buttonStyle(.plain)
+
+                    Button {
+                        onSave(trimmedName)
+                    } label: {
+                        Text("Save")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundColor(.black)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                            .background(Capsule().fill(Self.macraYellow))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(trimmedName.isEmpty)
+                    .opacity(trimmedName.isEmpty ? 0.5 : 1)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+        }
+    }
+}
+
+/// Renders one `MealSlot` — a single card per meal slot in the plan.
+/// Single-variant slots render the existing PlanHubMealCard inline; slots
+/// with 2+ variants get a TabView pager + dot indicator + "Add variant"
+/// CTA so users can swipe between Meal 1 A / Meal 1 B / etc.
+private struct PlanHubMealSlotCard: View {
+    let slot: MealSlot
+    let selectedDayKey: String
+    let regeneratingMealIds: Set<String>
+    let mealEditErrors: [String: String]
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let onRegenerate: (MacraSuggestedMeal, String) -> Void
+    let onUpdateNotes: (MacraSuggestedMeal, String) -> Void
+    let onLogMeal: (MacraSuggestedMeal) -> Void
+    let onDeleteVariant: (MacraSuggestedMeal) -> Void
+    let onMoveUp: () -> Void
+    let onMoveDown: () -> Void
+    let onAddVariant: (MacraSuggestedMeal) -> Void
+
+    /// Index into `slot.variants` of the visible page. Defaults to the
+    /// variant active on the current weekday so users see "today's"
+    /// version first, then can swipe to peek at alternates.
+    @State private var selectedIndex: Int = 0
+
+    private static let noraPurple = Color(hex: "8B5CF6")
+
+    private static let variantLetters: [String] = ["A", "B", "C", "D", "E", "F", "G"]
+
+    private var hasMultipleVariants: Bool { slot.variants.count > 1 }
+
+    /// Heuristic — TabView with PageStyle inside a ScrollView doesn't
+    /// auto-size, so we estimate based on the largest variant's item count.
+    /// Errs slightly tall to leave breathing room on the largest card.
+    private var pagerHeight: CGFloat {
+        let maxItems = slot.variants.map(\.items.count).max() ?? 0
+        return CGFloat(220 + maxItems * 34)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if hasMultipleVariants {
+                TabView(selection: $selectedIndex) {
+                    ForEach(Array(slot.variants.enumerated()), id: \.offset) { idx, variant in
+                        variantCard(for: variant, at: idx)
+                            .tag(idx)
+                            .padding(.bottom, 24) // space for the dot indicator below
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .always))
+                .indexViewStyle(.page(backgroundDisplayMode: .always))
+                .frame(height: pagerHeight)
+            } else if let only = slot.variants.first {
+                variantCard(for: only, at: 0)
+            }
+
+            HStack(spacing: 10) {
+                addVariantButton
+                if hasMultipleVariants {
+                    deleteVariantButton
+                }
+                Spacer(minLength: 0)
+                moveButton(systemImage: "chevron.up", enabled: canMoveUp, action: onMoveUp)
+                moveButton(systemImage: "chevron.down", enabled: canMoveDown, action: onMoveDown)
+            }
+        }
+        .onAppear {
+            selectedIndex = defaultPage()
+        }
+        .onChange(of: selectedDayKey) { _ in
+            selectedIndex = defaultPage()
+        }
+    }
+
+    /// Picks the page that corresponds to the variant active on the
+    /// current weekday. Falls back to page 0 if no variant matches (e.g.
+    /// every variant is day-scoped and today isn't covered).
+    private func defaultPage() -> Int {
+        if let match = slot.variants.firstIndex(where: { variant in
+            guard let days = variant.daysActive, !days.isEmpty else { return false }
+            return days.contains(selectedDayKey)
+        }) {
+            return match
+        }
+        if let match = slot.variants.firstIndex(where: { ($0.daysActive ?? []).isEmpty }) {
+            return match
+        }
+        if let match = slot.variants.firstIndex(where: { $0.appliesOn(selectedDayKey) }) {
+            return match
+        }
+        return 0
+    }
+
+    private func variantCard(for variant: MacraSuggestedMeal, at index: Int) -> some View {
+        PlanHubMealCard(
+            index: slot.order - 1, // displayName uses (order ?? index + 1) — see PlanHubMealCard
+            meal: variant,
+            variantLabel: variantLabel(for: variant, at: index),
+            isRegenerating: regeneratingMealIds.contains(variant.id),
+            errorMessage: mealEditErrors[variant.id],
+            onRegenerate: { prompt in onRegenerate(variant, prompt) },
+            onUpdateNotes: { notes in onUpdateNotes(variant, notes) },
+            onLogMeal: { onLogMeal(variant) }
+        )
+    }
+
+    /// "A · Mon/Tue/Wed/Thu/Sun" / "B · Fri/Sat" — only rendered when the
+    /// slot has multiple variants. Single-variant slots get no label so
+    /// they read identically to legacy plans.
+    private func variantLabel(for variant: MacraSuggestedMeal, at index: Int) -> String? {
+        guard hasMultipleVariants else { return nil }
+        let letter = Self.variantLetters[safe: index] ?? "\(index + 1)"
+        let order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        let labels: [String: String] = ["mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat", "sun": "Sun"]
+        let dayKeys: [String]
+        if let days = variant.daysActive, !days.isEmpty {
+            dayKeys = order.filter { days.map { $0.lowercased() }.contains($0) }
+        } else {
+            dayKeys = order
+        }
+        let dayString = dayKeys.compactMap { labels[$0] }.joined(separator: "/")
+        return "\(letter) · \(dayString)"
+    }
+
+    private var addVariantButton: some View {
+        Button {
+            // Source the new variant from whichever variant is currently
+            // visible — that way "Add variant" feels like "duplicate this
+            // and tag it for different days."
+            let source = slot.variants[safe: selectedIndex] ?? slot.variants.first
+            if let source { onAddVariant(source) }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Add variant")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+            }
+            .foregroundColor(Self.noraPurple)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(Self.noraPurple.opacity(0.10)))
+            .overlay(Capsule().strokeBorder(Self.noraPurple.opacity(0.32), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var deleteVariantButton: some View {
+        Button {
+            guard let variant = slot.variants[safe: selectedIndex] else { return }
+            onDeleteVariant(variant)
+            selectedIndex = max(0, min(selectedIndex, slot.variants.count - 2))
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "trash")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Delete variant")
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+            }
+            .foregroundColor(Color(hex: "FF6B6B"))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(Color(hex: "FF6B6B").opacity(0.10)))
+            .overlay(Capsule().strokeBorder(Color(hex: "FF6B6B").opacity(0.32), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Delete current variant")
+    }
+
+    private func moveButton(systemImage: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundColor(enabled ? .white.opacity(0.88) : .white.opacity(0.25))
+                .frame(width: 34, height: 30)
+                .background(Capsule().fill(Color.white.opacity(enabled ? 0.08 : 0.03)))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(enabled ? 0.16 : 0.06), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(systemImage == "chevron.up" ? "Move meal up" : "Move meal down")
+    }
+}
+
+/// Sheet for tagging a brand-new variant with the weekdays it applies to.
+/// The day chips block already-occupied days (they belong to existing
+/// variants in the same slot) so the user can't double-claim — keeps the
+/// "every day belongs to exactly one variant" invariant simple.
+private struct AddVariantSheet: View {
+    let slotOrder: Int
+    let occupiedDays: Set<Weekday>
+    let onCreate: ([Weekday], String, Bool) -> Void
+    let onCancel: () -> Void
+
+    @State private var selected: Set<Weekday> = []
+    @State private var variantPrompt: String = ""
+    @State private var isPickingDays = false
+    @State private var isSkipMealVariant = false
+
+    private static let noraPurple = Color(hex: "8B5CF6")
+    private static let macraYellow = Color(hex: "E0FE10")
+
+    private var trimmedPrompt: String {
+        variantPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(hex: "0A0B0F"), Color(hex: "111318")],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 16) {
+                Capsule()
+                    .fill(Color.white.opacity(0.35))
+                    .frame(width: 44, height: 5)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+
+                HStack(alignment: .center) {
+                    if isPickingDays {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                isPickingDays = false
+                            }
+                        } label: {
+                            Label("Back", systemImage: "chevron.left")
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.white.opacity(0.82))
+                    }
+
+                    Spacer()
+
+                    Button("Cancel", action: onCancel)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color.white.opacity(0.10)))
+                        .buttonStyle(.plain)
+                }
+
+                header
+
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if isPickingDays {
+                            daysStep
+                        } else {
+                            describeStep
+                        }
+                    }
+                    .padding(.bottom, 96)
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+        .safeAreaInset(edge: .bottom) {
+            bottomAction
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+                .padding(.bottom, 12)
+                .background(
+                    LinearGradient(
+                        colors: [Color(hex: "111318").opacity(0.0), Color(hex: "111318")],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea()
+                )
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: isPickingDays ? "calendar.badge.plus" : "text.bubble")
+                    .font(.system(size: 11, weight: .bold))
+                Text("ADD VARIANT")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .tracking(1.4)
+            }
+            .foregroundColor(Self.noraPurple)
+
+            Text(isPickingDays ? "Meal \(slotOrder) · pick the days" : "Describe the variant")
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+
+            Text(isPickingDays
+                 ? (isSkipMealVariant ? "Choose the days when Meal \(slotOrder) should be skipped." : "Choose when this version should show up. Macra will create it from your description.")
+                 : "Tell Macra what changes in this version of Meal \(slotOrder), like turkey instead of chicken, higher carbs, a lighter rest-day meal, or skipping it entirely.")
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.6))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var describeStep: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack(alignment: .topLeading) {
+                if variantPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("e.g. make this one salmon and potatoes · add cream of rice for training days · lighter version with turkey and greens")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.34))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 14)
+                        .allowsHitTesting(false)
+                }
+
+                TextEditor(text: $variantPrompt)
+                    .scrollContentBackground(.hidden)
+                    .font(.system(size: 15))
+                    .foregroundColor(.white)
+                    .frame(minHeight: 150)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+            }
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.06)))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+
+            Text("The variant starts from the meal you were viewing, then Nora adjusts the copied foods from this note.")
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.48))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                variantPrompt = "Skip this meal"
+                isSkipMealVariant = true
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isPickingDays = true
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "minus.circle")
+                        .font(.system(size: 13, weight: .bold))
+                    Text("Skip this meal")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                    Spacer()
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .foregroundColor(.white.opacity(0.9))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.07)))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var daysStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isSkipMealVariant ? "Skip meal" : "Variant note")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .tracking(1.1)
+                    .foregroundColor(Self.noraPurple)
+                Text(isSkipMealVariant ? "Meal \(slotOrder) will not appear on the selected days." : trimmedPrompt)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.72))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Weekday.displayOrder) { day in
+                    dayChip(for: day)
+                }
+            }
+        }
+    }
+
+    private var bottomAction: some View {
+        Button {
+            if isPickingDays {
+                let ordered = Weekday.displayOrder.filter(selected.contains)
+                onCreate(ordered, trimmedPrompt, isSkipMealVariant)
+            } else {
+                isSkipMealVariant = false
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isPickingDays = true
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isPickingDays ? (isSkipMealVariant ? "minus.circle" : "sparkles") : "arrow.right")
+                    .font(.system(size: 13, weight: .bold))
+                Text(isPickingDays ? (isSkipMealVariant ? "Skip meal on days" : "Create variant") : "Next: pick days")
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+            }
+            .foregroundColor(.black)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Capsule().fill(Self.macraYellow))
+        }
+        .buttonStyle(.plain)
+        .disabled(isPickingDays ? selected.isEmpty : trimmedPrompt.isEmpty)
+        .opacity((isPickingDays ? selected.isEmpty : trimmedPrompt.isEmpty) ? 0.5 : 1)
+    }
+
+    @ViewBuilder
+    private func dayChip(for day: Weekday) -> some View {
+        let isOccupied = occupiedDays.contains(day)
+        let isOn = selected.contains(day)
+        Button {
+            if isOccupied { return }
+            if isOn { selected.remove(day) } else { selected.insert(day) }
+        } label: {
+            HStack {
+                Text(day.shortLabel)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                Spacer()
+                if isOccupied {
+                    Text("Already in use")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.4))
+                } else if isOn {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16, weight: .bold))
+                }
+            }
+            .foregroundColor(
+                isOccupied ? .white.opacity(0.3)
+                : (isOn ? .black : .white.opacity(0.85))
+            )
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isOccupied ? Color.white.opacity(0.03) : (isOn ? Self.macraYellow : Color.white.opacity(0.06)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isOn ? Self.macraYellow : Color.white.opacity(0.10), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isOccupied)
+    }
+}
+
+private extension Array {
+    /// Safe subscript — returns nil instead of crashing on out-of-range.
+    /// Used for the variant-letter lookup so adding an unexpected number
+    /// of variants degrades gracefully.
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
+    }
+}
+
 private struct PlanHubMacroTile: View {
     let label: String
     let value: String
@@ -3225,82 +6272,223 @@ private struct PlanHubMacroTile: View {
 private struct PlanHubMealCard: View {
     let index: Int
     let meal: MacraSuggestedMeal
+    /// Variant suffix rendered next to the meal title — e.g. "A · Mon/Tue/...".
+    /// Only set when the slot has 2+ variants; single-variant slots pass nil.
+    var variantLabel: String? = nil
+    var isRegenerating: Bool = false
+    var errorMessage: String? = nil
+    var onRegenerate: ((String) -> Void)? = nil
+    var onUpdateNotes: ((String) -> Void)? = nil
+    var onLogMeal: (() -> Void)? = nil
+
+    @State private var selectedImageMatch: MacraSuggestedMealImageMatch?
+    @State private var isEditingPrompt: Bool = false
+    @State private var editPrompt: String = ""
+    @State private var isEditingNotes: Bool = false
+    @State private var notesDraft: String = ""
+
+    private static let noraPurple = Color(hex: "8B5CF6")
+
+    private var mealNotes: String {
+        meal.notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
-                if let urlString = meal.imageURL,
-                   !urlString.isEmpty,
-                   let url = URL(string: urlString) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let img):
-                            img.resizable().scaledToFill()
-                        case .failure:
-                            Color.white.opacity(0.06)
-                        case .empty:
-                            Color.white.opacity(0.04)
-                        @unknown default:
-                            Color.white.opacity(0.04)
+                let imageMatches = mealDisplayImageMatches
+                if !imageMatches.isEmpty {
+                    HStack(spacing: imageMatches.count > 1 ? -10 : 0) {
+                        ForEach(Array(imageMatches.prefix(3).enumerated()), id: \.offset) { offset, match in
+                            Button {
+                                selectedImageMatch = match
+                            } label: {
+                                remoteThumb(urlString: match.imageURL, size: 56, cornerRadius: 12)
+                            }
+                            .buttonStyle(.plain)
+                            .zIndex(Double(3 - offset))
                         }
                     }
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
-                    )
+                    .frame(width: CGFloat(56 + max(0, min(imageMatches.count, 3) - 1) * 46), height: 56, alignment: .leading)
                     .transition(.opacity.combined(with: .scale))
                 }
 
-                Text("Meal \(index + 1)")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Meal \(meal.order ?? (index + 1))")
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        if let label = variantLabel,
+                           let letter = label.split(separator: "·").first.map({ $0.trimmingCharacters(in: .whitespaces) }),
+                           !letter.isEmpty {
+                            Text(letter)
+                                .font(.system(size: 13, weight: .bold, design: .rounded))
+                                .foregroundColor(Self.noraPurple)
+                        } else if variantLabel == nil, let days = meal.daysActive, !days.isEmpty {
+                            // Single-variant slot that's still day-scoped — keep
+                            // the legacy "Fri/Sat only" badge so users see the
+                            // scope even without a variant pager.
+                            Text(daysActiveBadgeText(days))
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundColor(.black)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color(hex: "E0FE10").opacity(0.9)))
+                        }
+                    }
+                    if let label = variantLabel,
+                       let daysPart = label.split(separator: "·").dropFirst().first.map({ $0.trimmingCharacters(in: .whitespaces) }),
+                       !daysPart.isEmpty {
+                        Text(daysPart)
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
+                }
                 Spacer()
                 Text("\(meal.totalCalories) kcal")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.6))
+                if onRegenerate != nil {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isEditingPrompt.toggle()
+                            if isEditingPrompt { isEditingNotes = false }
+                        }
+                    } label: {
+                        Image(systemName: isEditingPrompt ? "xmark" : "pencil")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(isEditingPrompt ? .white.opacity(0.85) : Self.noraPurple)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(isEditingPrompt
+                                          ? Color.white.opacity(0.10)
+                                          : Self.noraPurple.opacity(0.14))
+                            )
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(isEditingPrompt
+                                                  ? Color.white.opacity(0.18)
+                                                  : Self.noraPurple.opacity(0.36),
+                                                  lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isRegenerating)
+                    .accessibilityLabel(isEditingPrompt ? "Cancel edit" : "Edit this meal with Nora")
+                }
+                if onUpdateNotes != nil {
+                    Button {
+                        notesDraft = mealNotes
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isEditingNotes.toggle()
+                            if isEditingNotes { isEditingPrompt = false }
+                        }
+                    } label: {
+                        Image(systemName: isEditingNotes ? "xmark" : "note.text")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(isEditingNotes ? .white.opacity(0.85) : Self.noraPurple)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(isEditingNotes
+                                          ? Color.white.opacity(0.10)
+                                          : Self.noraPurple.opacity(0.14))
+                            )
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(isEditingNotes
+                                                  ? Color.white.opacity(0.18)
+                                                  : Self.noraPurple.opacity(0.36),
+                                                  lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isRegenerating)
+                    .accessibilityLabel(isEditingNotes ? "Cancel meal notes" : "Edit meal notes")
+                }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(meal.items) { item in
-                    HStack(alignment: .center, spacing: 10) {
-                        if let urlString = item.imageURL,
-                           !urlString.isEmpty,
-                           let url = URL(string: urlString) {
-                            AsyncImage(url: url) { phase in
-                                switch phase {
-                                case .success(let img):
-                                    img.resizable().scaledToFill()
-                                case .failure:
-                                    Color.white.opacity(0.06)
-                                case .empty:
-                                    Color.white.opacity(0.04)
-                                @unknown default:
-                                    Color.white.opacity(0.04)
-                                }
-                            }
-                            .frame(width: 36, height: 36)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
-                            )
-                            .transition(.opacity.combined(with: .scale))
-                        }
+            if !mealNotes.isEmpty && !isEditingNotes {
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(Self.noraPurple)
+                        .padding(.top, 2)
+                    Text(mealNotes)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Self.noraPurple.opacity(0.10)))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Self.noraPurple.opacity(0.18), lineWidth: 1))
+            }
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.name)
-                                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                .foregroundColor(.white.opacity(0.95))
-                            Text(item.quantity)
-                                .font(.system(size: 12, weight: .regular, design: .default))
-                                .foregroundColor(.white.opacity(0.5))
+            if let onLogMeal {
+                HStack {
+                    Spacer(minLength: 0)
+                    Button(action: onLogMeal) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("Log meal")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
                         }
-                        Spacer()
-                        Text("\(item.calories)")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.75))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color(hex: "E0FE10")))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(meal.items.isEmpty || isRegenerating)
+                    .opacity((meal.items.isEmpty || isRegenerating) ? 0.45 : 1)
+                }
+            }
+
+            if meal.items.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "minus.circle")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(Self.noraPurple)
+                    Text("Skipped on these days")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.68))
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.05)))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(meal.items) { item in
+                        HStack(alignment: .center, spacing: 10) {
+                            if let match = itemDisplayImageMatch(for: item) {
+                                Button {
+                                    selectedImageMatch = match
+                                } label: {
+                                    remoteThumb(urlString: match.imageURL, size: 36, cornerRadius: 8)
+                                }
+                                .buttonStyle(.plain)
+                                .transition(.opacity.combined(with: .scale))
+                            }
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.95))
+                                Text(item.quantity)
+                                    .font(.system(size: 12, weight: .regular, design: .default))
+                                    .foregroundColor(.white.opacity(0.5))
+                            }
+                            Spacer()
+                            Text("\(item.calories)")
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.75))
+                        }
                     }
                 }
             }
@@ -3310,14 +6498,382 @@ private struct PlanHubMealCard: View {
                 mealMacroChip(label: "C", value: meal.totalCarbs, color: Color(hex: "E0FE10"))
                 mealMacroChip(label: "F", value: meal.totalFat, color: Color(hex: "FFB454"))
             }
+
+            if isEditingNotes && onUpdateNotes != nil {
+                notesEditRow
+            } else if isEditingPrompt && onRegenerate != nil {
+                noraEditRow
+            } else if let errorMessage, !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .font(.system(size: 12))
+                    .foregroundColor(Color(hex: "FF6B6B"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(0.04)))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        .opacity(isRegenerating ? 0.6 : 1)
+        .overlay(alignment: .center) {
+            if isRegenerating {
+                HStack(spacing: 8) {
+                    ProgressView().tint(Self.noraPurple).scaleEffect(0.85)
+                    Text("Updating with Nora…")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Color.black.opacity(0.55)))
+            }
+        }
+        .sheet(item: $selectedImageMatch) { match in
+            PlanHubImageMatchSheet(match: match)
+        }
+    }
+
+    @ViewBuilder
+    private var notesEditRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider().overlay(Color.white.opacity(0.08))
+
+            HStack(spacing: 6) {
+                Image(systemName: "note.text")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Self.noraPurple)
+                Text("MEAL NOTES")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .tracking(1.2)
+                    .foregroundColor(Self.noraPurple)
+            }
+
+            TextField("e.g. pre-gym meal, post gym meal, coach note", text: $notesDraft, axis: .vertical)
+                .lineLimit(1...4)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundColor(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.05)))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+
+            HStack(spacing: 10) {
+                Button {
+                    notesDraft = ""
+                    onUpdateNotes?("")
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isEditingNotes = false
+                    }
+                } label: {
+                    Text("Clear")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(.white.opacity(0.72))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color.white.opacity(0.07)))
+                }
+                .buttonStyle(.plain)
+                .disabled(mealNotes.isEmpty && notesDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    onUpdateNotes?(notesDraft)
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isEditingNotes = false
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Save")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color(hex: "E0FE10")))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// Inline "Edit with Nora" panel revealed by the pencil button. Uses a
+    /// vertical-axis TextField (1–6 lines) and a capsule "Update" pill —
+    /// same pattern as QuickLifts' 1-on-1 training-room meal editor so the
+    /// gesture vocabulary is consistent across the two apps.
+    @ViewBuilder
+    private var noraEditRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider().overlay(Color.white.opacity(0.08))
+
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(Self.noraPurple)
+                Text("EDIT WITH NORA")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .tracking(1.2)
+                    .foregroundColor(Self.noraPurple)
+            }
+
+            ZStack(alignment: .topLeading) {
+                if editPrompt.isEmpty {
+                    Text("e.g. swap chicken for steak · no dairy · lower carbs by 20g · keep protein the same")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.32))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $editPrompt, axis: .vertical)
+                    .lineLimit(1...6)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+            }
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+
+            HStack(spacing: 10) {
+                if let errorMessage, !errorMessage.isEmpty {
+                    Text(errorMessage)
+                        .font(.system(size: 11))
+                        .foregroundColor(Color(hex: "FF6B6B"))
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Spacer(minLength: 0)
+                }
+
+                Button {
+                    let trimmed = editPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return }
+                    onRegenerate?(trimmed)
+                    editPrompt = ""
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isEditingPrompt = false
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: isRegenerating ? "hourglass" : "sparkles")
+                            .font(.system(size: 11, weight: .bold))
+                        Text(isRegenerating ? "Updating…" : "Update")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Self.noraPurple))
+                }
+                .buttonStyle(.plain)
+                .disabled(isRegenerating || editPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .opacity((isRegenerating || editPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) ? 0.5 : 1)
+            }
+        }
+    }
+
+    /// Renders a meal's `daysActive` array as a compact badge label —
+    /// "Fri/Sat only", "M/W/F only", "No Sun", etc. Falls back to listing
+    /// the days verbatim when the count doesn't match a known shorthand.
+    private func daysActiveBadgeText(_ days: [String]) -> String {
+        let order = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+        let labels = ["mon": "Mon", "tue": "Tue", "wed": "Wed", "thu": "Thu", "fri": "Fri", "sat": "Sat", "sun": "Sun"]
+        let normalized = Set(days.map { $0.lowercased() })
+        // "No Sun" / "No Sat" reads cleaner than enumerating six days.
+        if normalized.count == 6, let missing = Set(order).subtracting(normalized).first,
+           let label = labels[missing] {
+            return "No \(label)"
+        }
+        let inOrder = order.filter { normalized.contains($0) }
+        let renders = inOrder.compactMap { labels[$0] }
+        return renders.joined(separator: "/") + " only"
+    }
+
+    private var mealDisplayImageMatches: [MacraSuggestedMealImageMatch] {
+        var seenURLs = Set<String>()
+        var matches: [MacraSuggestedMealImageMatch] = []
+
+        for match in meal.imageMatches ?? [] {
+            let url = match.imageURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !url.isEmpty, seenURLs.insert(url).inserted else { continue }
+            matches.append(match)
+        }
+
+        let urls = (meal.imageURLs ?? []) + [meal.imageURL].compactMap { $0 }
+        for rawURL in urls {
+            let url = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !url.isEmpty, seenURLs.insert(url).inserted else { continue }
+            matches.append(fallbackMatch(urlString: url))
+        }
+
+        return matches
+    }
+
+    private func itemDisplayImageMatch(for item: MacraSuggestedMealItem) -> MacraSuggestedMealImageMatch? {
+        if let match = item.imageMatch, !match.imageURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return match
+        }
+        guard let url = item.imageURL?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty else {
+            return nil
+        }
+        return fallbackMatch(urlString: url)
+    }
+
+    private func fallbackMatch(urlString: String) -> MacraSuggestedMealImageMatch {
+        MacraSuggestedMealImageMatch(
+            imageURL: urlString,
+            title: "Matched meal image",
+            ingredients: [],
+            calories: 0,
+            protein: 0,
+            carbs: 0,
+            fat: 0
+        )
+    }
+
+    @ViewBuilder
+    private func remoteThumb(urlString: String, size: CGFloat, cornerRadius: CGFloat) -> some View {
+        if let url = URL(string: urlString) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let img):
+                    img.resizable().scaledToFill()
+                case .failure:
+                    Color.white.opacity(0.06)
+                case .empty:
+                    Color.white.opacity(0.04)
+                @unknown default:
+                    Color.white.opacity(0.04)
+                }
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+            )
+        }
     }
 
     private func mealMacroChip(label: String, value: Int, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(color)
+            Text("\(value)g")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundColor(.white.opacity(0.85))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(color.opacity(0.10)))
+        .overlay(Capsule().strokeBorder(color.opacity(0.25), lineWidth: 1))
+    }
+}
+
+private struct PlanHubImageMatchSheet: View {
+    let match: MacraSuggestedMealImageMatch
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let url = URL(string: match.imageURL), !match.imageURL.isEmpty {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image):
+                                image.resizable().scaledToFill()
+                            case .failure:
+                                Color.white.opacity(0.08)
+                            case .empty:
+                                Color.white.opacity(0.05)
+                            @unknown default:
+                                Color.white.opacity(0.05)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 260)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                        )
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(match.title)
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        if match.calories > 0 {
+                            Text("\(match.calories) kcal")
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+                    }
+
+                    if match.calories > 0 {
+                        HStack(spacing: 8) {
+                            sourceMacroChip(label: "P", value: match.protein, color: Color(hex: "3B82F6"))
+                            sourceMacroChip(label: "C", value: match.carbs, color: Color(hex: "E0FE10"))
+                            sourceMacroChip(label: "F", value: match.fat, color: Color(hex: "FFB454"))
+                        }
+                    }
+
+                    if !match.ingredients.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Ingredients")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .tracking(0.8)
+                                .foregroundColor(Color(hex: "9B6CFF"))
+                            ForEach(match.ingredients, id: \.self) { ingredient in
+                                Text(ingredient)
+                                    .font(.system(size: 14, weight: .regular))
+                                    .foregroundColor(.white.opacity(0.78))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.vertical, 8)
+                                    .padding(.horizontal, 10)
+                                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.05)))
+                            }
+                        }
+                    } else {
+                        Text("Source details will appear after the next image audit refreshes this saved match.")
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundColor(.white.opacity(0.62))
+                    }
+                }
+                .padding(18)
+            }
+            .background(
+                LinearGradient(
+                    colors: [Color(hex: "172236"), Color(hex: "243E73"), Color(hex: "30233A")],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+            )
+            .navigationTitle("Matched log")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                    }
+                    .tint(.white)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func sourceMacroChip(label: String, value: Int, color: Color) -> some View {
         HStack(spacing: 4) {
             Text(label)
                 .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -5961,16 +9517,40 @@ private struct HomeDailyInsightCard: View {
 }
 
 private struct HomeNetCarbChip: View {
+    let grossCarbs: Int
     let netCarbs: Int
+    let target: Int?
 
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "leaf.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color(hex: "60A5FA"))
-            Text("Net carbs: \(netCarbs)g")
-                .font(.system(size: 14, weight: .semibold, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.85))
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                // Gross carbs struck through so the user immediately sees
+                // "this number got reduced". Kept dim — it's reference info,
+                // not the primary value.
+                Text("\(grossCarbs)g")
+                    .font(.system(size: 14, weight: .medium, design: .rounded))
+                    .strikethrough(true, color: Color.white.opacity(0.4))
+                    .foregroundStyle(Color.white.opacity(0.45))
+                    .monospacedDigit()
+                Text("\(netCarbs)g")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.92))
+                    .monospacedDigit()
+                Text("net")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(hex: "60A5FA"))
+                if let target {
+                    Text("/ \(target)g")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(Color.white.opacity(0.4))
+                        .monospacedDigit()
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.78)
             Spacer()
             Image(systemName: "info.circle")
                 .font(.system(size: 13, weight: .semibold))
@@ -5988,6 +9568,7 @@ private struct HomeNetCarbChip: View {
                 .strokeBorder(Color(hex: "60A5FA").opacity(0.28), lineWidth: 1)
         )
     }
+
 }
 
 private struct HomeFullNutritionCard: View {
@@ -6507,6 +10088,8 @@ private struct LogMealCTA: View {
 private struct MealRow: View {
     let meal: Meal
 
+    @StateObject private var social = MealRowSocialObserver()
+
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "h:mm a"
@@ -6525,9 +10108,13 @@ private struct MealRow: View {
                     .foregroundStyle(.white)
                     .lineLimit(1)
 
-                Text(Self.timeFormatter.string(from: meal.createdAt))
-                    .font(.caption)
-                    .foregroundStyle(Color.white.opacity(0.5))
+                HStack(spacing: 8) {
+                    Text(Self.timeFormatter.string(from: meal.createdAt))
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.5))
+                    socialIndicators
+                }
+                .lineLimit(1)
             }
 
             Spacer(minLength: 12)
@@ -6552,6 +10139,47 @@ private struct MealRow: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
         )
+        .onAppear { social.start(mealId: meal.id) }
+        .onDisappear { social.stop() }
+    }
+
+    private var socialIndicators: some View {
+        HStack(spacing: 8) {
+            socialChip(
+                filledIcon: "heart.fill",
+                hollowIcon: "heart",
+                count: social.likeCount,
+                tint: Color(hex: "FF4D6D")
+            )
+            socialChip(
+                filledIcon: "bubble.left.fill",
+                hollowIcon: "bubble.left",
+                count: social.commentCount,
+                tint: Color(hex: "8B5CF6")
+            )
+        }
+        .fixedSize()
+        .accessibilityLabel("\(social.likeCount) likes, \(social.commentCount) comments")
+    }
+
+    private func socialChip(
+        filledIcon: String,
+        hollowIcon: String,
+        count: Int,
+        tint: Color
+    ) -> some View {
+        let isActive = count > 0
+        return HStack(spacing: 3) {
+            Image(systemName: isActive ? filledIcon : hollowIcon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(isActive ? tint : Color.white.opacity(0.30))
+            if isActive {
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.78))
+                    .monospacedDigit()
+            }
+        }
     }
 
     @ViewBuilder

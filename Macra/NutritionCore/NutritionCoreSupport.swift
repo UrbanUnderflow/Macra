@@ -171,8 +171,19 @@ func nutritionStringArray(from value: Any?) -> [String] {
 
 extension Date {
     var nutritionMealLogDocumentPrefix: String {
+        nutritionMealLogDocumentPrefix(in: TimeZone.current)
+    }
+
+    /// `MMddyyyy` document-prefix formatted in the supplied timezone. Pass the
+    /// meal's logged TZ so the prefix stays stable across device-TZ changes —
+    /// otherwise editing a PDT-logged meal from EDT would write to a different
+    /// doc ID and create a duplicate.
+    func nutritionMealLogDocumentPrefix(in timeZone: TimeZone) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
         let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.calendar = calendar
+        formatter.timeZone = timeZone
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "MMddyyyy"
         return formatter.string(from: self)

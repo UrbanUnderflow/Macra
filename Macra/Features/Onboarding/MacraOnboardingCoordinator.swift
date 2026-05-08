@@ -154,6 +154,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     enum Step: Int, CaseIterable {
         case welcome
         case meetNora
+        case coachAssignedPlan
         case fwpMacrosHandoff
         case sex
         case age
@@ -196,6 +197,23 @@ final class MacraOnboardingCoordinator: ObservableObject {
     /// True when the user accepted FWP macros — skip biometric steps + use FWP macros verbatim.
     private(set) var usingFWPMacros: Bool = false
 
+    /// Coach-assigned meal plan (Pulse 1-on-1) detected for this user.
+    /// `.checking` while we resolve, `.unavailable` when the user has
+    /// no active 1-on-1 with a meal-plan attachment, `.available`
+    /// when we've found one. Drives the optional `.coachAssignedPlan`
+    /// step.
+    enum CoachPlanState: Equatable {
+        case checking
+        case unavailable
+        case available(CoachMealPlan)
+        case adopted
+    }
+    @Published var coachPlanState: CoachPlanState = .checking
+    /// Latched when the user (or auto-adopt) accepts the coach plan —
+    /// `advance()` then skips biometrics + macro analysis the same
+    /// way `usingFWPMacros` does.
+    private(set) var usingCoachPlan: Bool = false
+
     let appCoordinator: AppCoordinator
     let startingStep: Step
 
@@ -224,6 +242,9 @@ final class MacraOnboardingCoordinator: ObservableObject {
         switch currentStep {
         case .welcome: return true
         case .meetNora: return true
+        case .coachAssignedPlan:
+            // Coach-handoff screen drives its own CTA; no global "continue".
+            return false
         case .fwpMacrosHandoff:
             // The handoff screen drives its own CTA; no global "continue" button.
             return false
@@ -320,6 +341,114 @@ final class MacraOnboardingCoordinator: ObservableObject {
         advance()
     }
 
+    // MARK: - Coach Plan (Pulse 1-on-1) Handoff
+
+    /// Detect whether the current user has a coach-assigned meal plan
+    /// from a Pulse 1-on-1 trainer. Called when the user lands on the
+    /// `.coachAssignedPlan` step. Auto-advances when nothing's there.
+    func loadCoachPlanHandoff() {
+        coachPlanState = .checking
+        CoachMealPlanService.shared.fetchLatestCoachPlan { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let plan):
+                    if let plan = plan {
+                        self.coachPlanState = .available(plan)
+                    } else {
+                        self.coachPlanState = .unavailable
+                        self.advance()
+                    }
+                case .failure:
+                    // Quiet failure — never block onboarding when the
+                    // cross-product read hiccups.
+                    self.coachPlanState = .unavailable
+                    self.advance()
+                }
+            }
+        }
+    }
+
+    /// User confirmed they want to use the coach plan. Adopts the
+    /// plan's macros as Macra's active target (saves to
+    /// `macroProfiles/{userId}/macroRecommendations` + mirrors to
+    /// `users/{uid}.macros.personal`), persists the
+    /// `coachMealPlanReference` so we don't re-adopt next launch,
+    /// then skips the FWP handoff + biometric steps and lands the
+    /// user on the post-plan-creation flow.
+    func acceptCoachPlan(_ plan: CoachMealPlan) {
+        usingCoachPlan = true
+        coachPlanState = .adopted
+        // Pre-populate biometric/preference answers we already know
+        // from FWP so any future re-assess has a head-start. Coach
+        // plans don't carry biometrics directly — falling back to
+        // the FWP profile pre-fill keeps the answer dict consistent.
+        FWPHandoffService.fetchProfile { [weak self] profile in
+            DispatchQueue.main.async { self?.seedAnswers(from: profile) }
+        }
+
+        let userId = UserService.sharedInstance.user?.id ?? Auth.auth().currentUser?.uid ?? ""
+        planMacros = MacroRecommendation(
+            userId: userId,
+            calories: plan.totals.calories > 0 ? plan.totals.calories : plan.dailyCalorieTarget,
+            protein: plan.totals.protein,
+            carbs: plan.totals.carbs,
+            fat: plan.totals.fat
+        )
+
+        adoptCoachPlan(plan) { _ in }
+        advance()
+    }
+
+    /// User tapped "Build my own plan instead" — proceed through the
+    /// normal biometrics + analyze flow, leaving the coach plan
+    /// untouched on the Pulse side.
+    func declineCoachPlan() {
+        usingCoachPlan = false
+        coachPlanState = .unavailable
+        advance()
+    }
+
+    /// Persist the adopted coach-plan macros to Macra's storage and
+    /// the cross-app User mirror, then save the reference so future
+    /// launches know we've already adopted this version. Internal —
+    /// callable from both onboarding (`acceptCoachPlan`) and the
+    /// silent auto-adopt path.
+    func adoptCoachPlan(_ plan: CoachMealPlan, completion: @escaping (Error?) -> Void) {
+        guard let userId = UserService.sharedInstance.user?.id ?? Auth.auth().currentUser?.uid,
+              !userId.isEmpty else {
+            completion(nil)
+            return
+        }
+
+        let calories = plan.totals.calories > 0 ? plan.totals.calories : plan.dailyCalorieTarget
+        let recommendation = MacroRecommendation(
+            userId: userId,
+            calories: calories,
+            protein: plan.totals.protein,
+            carbs: plan.totals.carbs,
+            fat: plan.totals.fat
+        )
+
+        MacroRecommendationService.sharedInstance.saveMacroRecommendation(recommendation) { _ in
+            let mirrored = MacroRecommendations(
+                calories: recommendation.calories,
+                protein: recommendation.protein,
+                carbs: recommendation.carbs,
+                fat: recommendation.fat
+            )
+            FWPHandoffService.mirrorToFWPPersonal(mirrored) { _ in
+                let reference = CoachMealPlanReference(
+                    trainingId: plan.trainingId,
+                    hostId: plan.hostId,
+                    hostUsername: plan.hostUsername,
+                    attachedAt: plan.attachedAt
+                )
+                UserService.sharedInstance.saveCoachMealPlanReference(reference, completion: completion)
+            }
+        }
+    }
+
     /// Copies what we can from the FWP profile into Macra's answers dict.
     private func seedAnswers(from profile: FWPHandoffProfile) {
         if answers.sex == nil, let sex = profile.sex { answers.sex = sex }
@@ -408,6 +537,21 @@ final class MacraOnboardingCoordinator: ObservableObject {
             return
         }
 
+        // When the user accepted the coach plan, skip everything
+        // between FWP handoff and `.features` — the macros are
+        // already set from the trainer's plan and we don't want the
+        // member doing biometrics or sitting through generate /
+        // prediction / planReady screens for a plan they've already
+        // accepted. Land them on `.features` next.
+        if usingCoachPlan,
+           [.fwpMacrosHandoff, .sex, .age, .height, .currentWeight, .goalWeight,
+            .pace, .activityLevel, .sportSelection, .dietaryPreference,
+            .biggestStruggle, .generatingPlan, .prediction, .planReady].contains(nextStep) {
+            currentStep = nextStep
+            advance()
+            return
+        }
+
         // When the user accepted FWP macros we skip the FWP-mirrored
         // biometric steps (sex/age/height/currentWeight/activityLevel)
         // since those are already populated from the shared User doc.
@@ -432,6 +576,15 @@ final class MacraOnboardingCoordinator: ObservableObject {
     func back() {
         let prev = currentStep.rawValue - 1
         guard let prevStep = Step(rawValue: prev) else { return }
+
+        if usingCoachPlan,
+           [.fwpMacrosHandoff, .sex, .age, .height, .currentWeight, .goalWeight,
+            .pace, .activityLevel, .sportSelection, .dietaryPreference,
+            .biggestStruggle, .generatingPlan, .prediction, .planReady].contains(prevStep) {
+            currentStep = prevStep
+            back()
+            return
+        }
 
         if usingFWPMacros,
            [.sex, .age, .height, .currentWeight, .activityLevel].contains(prevStep) {
@@ -484,10 +637,13 @@ final class MacraOnboardingCoordinator: ObservableObject {
             return
         }
 
-        // Resolve the recommendation to save: accepted FWP macros take priority,
-        // otherwise compute from the user's own answers.
+        // Resolve the recommendation to save: coach plan > FWP macros >
+        // computed prediction. Coach plans were already persisted by
+        // `acceptCoachPlan` -> `adoptCoachPlan`, but we re-save here
+        // so the timestamp on the recommendation reflects when the
+        // questionnaire actually completed.
         let recommendation: MacroRecommendation
-        if usingFWPMacros, let existing = planMacros {
+        if (usingCoachPlan || usingFWPMacros), let existing = planMacros {
             recommendation = MacroRecommendation(
                 userId: userId,
                 calories: existing.calories,
@@ -646,6 +802,8 @@ struct MacraOnboardingFlowView: View {
                 WelcomeStepView(coordinator: coordinator)
             case .meetNora:
                 MeetNoraStepView(coordinator: coordinator)
+            case .coachAssignedPlan:
+                CoachAssignedPlanStepView(coordinator: coordinator)
             case .fwpMacrosHandoff:
                 FWPMacrosHandoffStepView(coordinator: coordinator)
             case .sex:

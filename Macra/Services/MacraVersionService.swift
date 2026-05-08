@@ -122,14 +122,13 @@ final class MacraVersionService {
         let maxLength = max(lhsParts.count, rhsParts.count)
 
         for index in 0..<maxLength {
-            let left = index < lhsParts.count ? lhsParts[index] : 0
-            let right = index < rhsParts.count ? rhsParts[index] : 0
-            if left < right { return .orderedAscending }
-            if left > right { return .orderedDescending }
+            let left = index < lhsParts.count ? lhsParts[index] : .zero
+            let right = index < rhsParts.count ? rhsParts[index] : .zero
+            let comparison = compareVersionParts(left, right)
+            if comparison != .orderedSame { return comparison }
         }
 
-        if lhs == rhs { return .orderedSame }
-        return lhs.localizedStandardCompare(rhs)
+        return .orderedSame
     }
 
     static func compareBuildNumbers(_ lhs: String?, _ rhs: String?) -> ComparisonResult {
@@ -178,8 +177,8 @@ final class MacraVersionService {
             latestBuild: latestBuild
         )
 
-        if installedComparison == .orderedDescending { return false }
-        if isCriticalUpdate && installedComparison == .orderedAscending { return true }
+        if installedComparison != .orderedAscending { return false }
+        if isCriticalUpdate { return true }
         return lastSeenReleaseKey != releaseKey(version: latestVersion, buildNumber: latestBuild)
     }
 
@@ -361,10 +360,42 @@ final class MacraVersionService {
         )
     }
 
-    private static func parseVersionParts(_ version: String) -> [Int] {
+    private struct VersionPart {
+        static let zero = VersionPart(rawText: "0")
+
+        let rawText: String
+        let comparableDigits: String
+        let leadingZeroCount: Int
+
+        init(rawText: String) {
+            self.rawText = rawText
+
+            let extractedDigits = String(rawText.filter { $0.isNumber })
+            let digits = extractedDigits.isEmpty ? "0" : extractedDigits
+            let trimmedDigits = String(digits.drop { $0 == "0" })
+
+            self.comparableDigits = trimmedDigits.isEmpty ? "0" : trimmedDigits
+            self.leadingZeroCount = digits.count - self.comparableDigits.count
+        }
+    }
+
+    private static func compareVersionParts(_ lhs: VersionPart, _ rhs: VersionPart) -> ComparisonResult {
+        if lhs.comparableDigits.count < rhs.comparableDigits.count { return .orderedAscending }
+        if lhs.comparableDigits.count > rhs.comparableDigits.count { return .orderedDescending }
+
+        let numericComparison = lhs.comparableDigits.compare(rhs.comparableDigits)
+        if numericComparison != .orderedSame { return numericComparison }
+
+        if lhs.leadingZeroCount > rhs.leadingZeroCount { return .orderedAscending }
+        if lhs.leadingZeroCount < rhs.leadingZeroCount { return .orderedDescending }
+
+        if lhs.rawText == rhs.rawText { return .orderedSame }
+        return lhs.rawText.localizedStandardCompare(rhs.rawText)
+    }
+
+    private static func parseVersionParts(_ version: String) -> [VersionPart] {
         version.split(separator: ".").map { part in
-            let numericCharacters = part.filter { $0.isNumber }
-            return Int(numericCharacters) ?? 0
+            VersionPart(rawText: String(part))
         }
     }
 }

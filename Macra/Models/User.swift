@@ -9,6 +9,12 @@ enum RegistrationEntryPoint: String {
 struct User {
     var id: String
     var email: String
+    /// FWP-authoritative display handle. May be empty for Macra-only
+    /// accounts that never went through FWP onboarding — `UserService`
+    /// backfills it to the email localpart on load so any surface that
+    /// shows another user's name (buddy rows, like avatars, meal
+    /// comments) has a stable, non-email-y string to render.
+    var username: String
     var birthdate: Date
     var profileImageURL: String
     var subscriptionType: SubscriptionType
@@ -16,6 +22,17 @@ struct User {
     var hasCompletedMacraOnboarding: Bool
     var createdAt: Date
     var updatedAt: Date
+
+    /// Localpart of `email`, used as the fallback username for accounts
+    /// that haven't set one. Static so callers (e.g. UserService backfill
+    /// at load time) can compute it without instantiating a User.
+    static func emailLocalpart(_ email: String) -> String? {
+        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let local = trimmed.split(separator: "@").first else { return nil }
+        let candidate = String(local).trimmingCharacters(in: .whitespacesAndNewlines)
+        return candidate.isEmpty ? nil : candidate
+    }
 
     init(id: String,
          email: String,
@@ -26,10 +43,12 @@ struct User {
          subscriptionType: SubscriptionType,
          registrationEntryPoint: RegistrationEntryPoint? = nil,
          hasCompletedMacraOnboarding: Bool = false,
+         username: String = "",
          createdAt: Date,
          updatedAt: Date) {
         self.id = id
         self.email = email
+        self.username = username
         self.birthdate = birthdate
         self.profileImageURL = profileImageURL ?? ""
         self.subscriptionType = subscriptionType
@@ -43,6 +62,7 @@ struct User {
     init?(id: String, dictionary: [String: Any]) {
         self.id = id
         self.email = dictionary["email"] as? String ?? ""
+        self.username = (dictionary["username"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         self.birthdate = Self.date(from: dictionary, key: "birthdate")
 

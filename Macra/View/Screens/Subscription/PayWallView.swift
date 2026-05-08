@@ -39,7 +39,7 @@ struct PayWallView: View {
                             HStack(spacing: 10) {
                                 if let package = offeringViewModel.yearlyPackage {
 
-                                    PackageCardView(badgeLabel: "Best Value", title: "Annual Pro Plan", subtitle: "The best trainig app for your new puppy with all our pro features.", breakDownPrice: "About $6 per month", billPrice: "$79.99 billed annually", bottomLabel: "Most popular plan", buttonTitle: "Get 7 day Trial w/ Annual", package: package, offeringViewModel: offeringViewModel) {
+                                    PackageCardView(badgeLabel: "Best Value", title: "Annual Pro Plan", subtitle: "Macra premium + Fit With Pulse Pro included — AI food logging, macro coaching, AI workouts, and live rounds in one subscription.", breakDownPrice: "About $6 per month", billPrice: "$79.99 billed annually", bottomLabel: "Most popular plan", buttonTitle: "Get 7 day Trial w/ Annual", package: package, offeringViewModel: offeringViewModel) {
 
                                         self.offeringViewModel.purchase(package) { result in
                                             switch result {
@@ -53,7 +53,7 @@ struct PayWallView: View {
                                     }
                                 }
                                 if let package = offeringViewModel.monthlyPackage {
-                                    PackageCardView(badgeLabel: "Most Flexible", title: "Monthly Pro Plan", subtitle: "Flexible, great for dogs that just need a bit of extra training.", breakDownPrice: "12.99 /month", billPrice: "Billed monthly", bottomLabel: "Great for limited training", buttonTitle: "Get Monthly", package: package, offeringViewModel: offeringViewModel) {
+                                    PackageCardView(badgeLabel: "Most Flexible", title: "Monthly Pro Plan", subtitle: "Macra premium + Fit With Pulse Pro included — month-to-month, cancel anytime.", breakDownPrice: "12.99 /month", billPrice: "Billed monthly", bottomLabel: "Flexible monthly access", buttonTitle: "Get Monthly", package: package, offeringViewModel: offeringViewModel) {
 
                                         self.offeringViewModel.purchase(package) { result in
                                             switch result {

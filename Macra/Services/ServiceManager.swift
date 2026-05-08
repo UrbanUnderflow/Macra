@@ -42,35 +42,36 @@ class ServiceManager: ObservableObject {
 //            }
 //        } catch {
 //            print(error)
+            // ATT is requested once on first launch. AppsFlyer requires
+            // the user's decision before `start()` so the SDK can pick up
+            // (or skip) the IDFA without crashing. The
+            // `INFOPLIST_KEY_NSUserTrackingUsageDescription` build setting
+            // ships the rationale string iOS shows in the prompt.
             self.requestTrackingAuthorization()
 //        }
     }
     
     func requestTrackingAuthorization() {
         ATTrackingManager.requestTrackingAuthorization(completionHandler: { status in
-            // handle the authorization status
             switch status {
             case .authorized:
-                // Tracking authorization dialog was shown
-                // and permission has been granted.
-                print("Permission granted.")
-                print(ASIdentifierManager.shared().advertisingIdentifier)
-            
+                print("[Macra][ATT] permission granted")
             case .denied:
-                // Tracking authorization dialog was
-                // shown and permission has been denied.
-                print("Permission denied.")
-            
+                print("[Macra][ATT] permission denied")
             case .notDetermined:
-                // Tracking authorization dialog has not been shown.
-                print("Permission not determined.")
-            
+                print("[Macra][ATT] permission not determined")
             case .restricted:
-                // The device is not eligible for tracking.
-                print("Permission restricted.")
-            
+                print("[Macra][ATT] permission restricted")
             @unknown default:
-                print("Unknown status.")
+                print("[Macra][ATT] unknown status \(status.rawValue)")
+            }
+            // Start AppsFlyer regardless of the answer — `start()` is
+            // safe to call after either authorize or deny; what changes
+            // is whether the SDK has access to the IDFA. Doing this after
+            // the prompt rather than at launch is what kept the app
+            // from crashing in the previous turn.
+            DispatchQueue.main.async {
+                MacraDeepLinkService.sharedInstance.startSDK()
             }
         })
     }

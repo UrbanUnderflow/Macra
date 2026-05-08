@@ -18,10 +18,18 @@ enum MacroTargetEditorMode: Identifiable {
 struct MacroTargetsView: View {
     @ObservedObject var viewModel: MacroTargetsViewModel
     @State private var editorMode: MacroTargetEditorMode?
+    /// Locally cached coach-plan reference, refreshed on appear and
+    /// whenever the in-app live listener adopts a new plan. Drives
+    /// the "Plan from @coach" badge above the current-target card.
+    @State private var coachReference: CoachMealPlanReference?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             header
+
+            if let coach = coachReference {
+                coachPlanBadge(coach)
+            }
 
             if viewModel.isLoading {
                 HStack {
@@ -54,6 +62,45 @@ struct MacroTargetsView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
+        .onAppear { loadCoachReference() }
+    }
+
+    /// Pulls the saved `coachMealPlanReference` off the User doc so
+    /// the badge knows whether to render. Cheap one-shot — the live
+    /// listener in `CoachMealPlanService` keeps the underlying doc
+    /// fresh; we re-pull on every appear to catch any silent updates
+    /// that happened while this screen wasn't on stage.
+    private func loadCoachReference() {
+        UserService.sharedInstance.loadCoachMealPlanReference { reference in
+            coachReference = reference
+        }
+    }
+
+    /// Small pill above the current-target card so the member always
+    /// knows the plan came from their coach (and which one). Uses the
+    /// Macra accent for cross-product brand consistency.
+    private func coachPlanBadge(_ coach: CoachMealPlanReference) -> some View {
+        let handle = coach.hostUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        let display = handle.isEmpty ? "your coach" : "@\(handle)"
+        return HStack(spacing: 8) {
+            Image(systemName: "person.crop.circle.badge.checkmark")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(Color(hex: "E0FE10"))
+            Text("Plan from \(display)")
+                .font(.system(size: 12, weight: .heavy))
+                .foregroundColor(.white)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(hex: "E0FE10").opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color(hex: "E0FE10").opacity(0.35), lineWidth: 1)
+        )
     }
 
     private var header: some View {
@@ -609,6 +656,8 @@ struct MacroTargetEditorView: View {
                 )
             }
 
+            noraTrainingDaysRow
+
             noraImagesRow
 
             Button(action: runNora) {
@@ -640,6 +689,68 @@ struct MacroTargetEditorView: View {
         }
         .padding(18)
         .background(editorCardBackground(accent: Self.noraPurple))
+    }
+
+    /// Optional weekday chips so Nora can resolve "omit on non-workout days"
+    /// or "post-workout meal" rules to specific weekdays. Selection stays in
+    /// the view-model so it survives keyboard dismissal and re-opens of the
+    /// editor sheet.
+    private var noraTrainingDaysRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("Training days")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.65))
+                Text("optional")
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.35))
+                Spacer()
+                if !viewModel.noraTrainingDays.isEmpty {
+                    Button {
+                        viewModel.noraTrainingDays.removeAll()
+                    } label: {
+                        Text("Clear")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            HStack(spacing: 6) {
+                ForEach(Weekday.displayOrder) { day in
+                    let isOn = viewModel.noraTrainingDays.contains(day)
+                    Button {
+                        if isOn {
+                            viewModel.noraTrainingDays.remove(day)
+                        } else {
+                            viewModel.noraTrainingDays.insert(day)
+                        }
+                    } label: {
+                        Text(day.shortLabel)
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundColor(isOn ? .black : .white.opacity(0.78))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule().fill(isOn ? Self.macraYellow : Color.white.opacity(0.05))
+                            )
+                            .overlay(
+                                Capsule().strokeBorder(
+                                    isOn ? Self.macraYellow : Color.white.opacity(0.12),
+                                    lineWidth: 1
+                                )
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Text("Helps Nora resolve rules like \"post-workout\" or \"omit on non-workout days\".")
+                .font(.system(size: 11))
+                .foregroundColor(.white.opacity(0.4))
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var noraImagesRow: some View {

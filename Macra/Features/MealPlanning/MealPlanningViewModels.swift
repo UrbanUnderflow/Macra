@@ -550,7 +550,15 @@ final class MealPlanningRootViewModel: ObservableObject {
     }
 
     private static func suggestedPlanDict(from plan: MealPlan) -> [String: Any] {
-        let meals: [[String: Any]] = plan.orderedMeals.map { plannedMeal in
+        // Sort by order, but preserve insertion order between meals that
+        // share an `order` so default + day-variants land adjacent.
+        let sorted = plan.plannedMeals.enumerated()
+            .sorted { lhs, rhs in
+                if lhs.element.order != rhs.element.order { return lhs.element.order < rhs.element.order }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
+        let meals: [[String: Any]] = sorted.map { plannedMeal in
             let title: String
             if plannedMeal.meals.count == 1, let firstName = plannedMeal.meals.first?.name, !firstName.isEmpty {
                 title = firstName
@@ -567,10 +575,18 @@ final class MealPlanningRootViewModel: ObservableObject {
                     "fat": meal.fat
                 ]
             }
-            return [
+            var dict: [String: Any] = [
                 "title": title,
-                "items": items
+                "items": items,
+                "order": plannedMeal.order
             ]
+            if let notes = plannedMeal.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+                dict["notes"] = notes
+            }
+            if let daysActive = plannedMeal.daysActive, !daysActive.isEmpty {
+                dict["daysActive"] = daysActive.map(\.firestoreValue)
+            }
+            return dict
         }
         return [
             "meals": meals,
@@ -681,6 +697,13 @@ final class MacroTargetsViewModel: ObservableObject {
     /// another app, a coach's whiteboard photo, a grocery haul). Sent to
     /// Nora's vision model as inline JPEGs.
     @Published var noraImages: [UIImage] = []
+
+    /// Days the user trains on. When the source plan says "omit on
+    /// non-workout days" or "post-workout meal", Nora needs to know which
+    /// weekdays to scope those meals to. Empty means unspecified — Nora
+    /// will fall back to applying those meals every day and surface the
+    /// ambiguity in `summary`.
+    @Published var noraTrainingDays: Set<Weekday> = []
 
     /// True while the analyzer request is in flight — drives the UI spinner
     /// and disables the Generate button.
@@ -831,7 +854,15 @@ final class MacroTargetsViewModel: ObservableObject {
             }()
             let activityText = activity.rawValue.lowercased()
             let weightLine = "Body weight: \(Int(bodyWeightLbs)) lb."
-            return "Goal: \(goalText). Activity level: \(activityText). \(weightLine)"
+            var lines = ["Goal: \(goalText).", "Activity level: \(activityText).", weightLine]
+            if !noraTrainingDays.isEmpty {
+                let days = Weekday.displayOrder
+                    .filter(noraTrainingDays.contains)
+                    .map(\.firestoreValue)
+                    .joined(separator: ",")
+                lines.append("Training days: \(days).")
+            }
+            return lines.joined(separator: " ")
         }()
 
         let promptCopy = trimmed
@@ -1077,7 +1108,11 @@ final class MacroTargetsViewModel: ObservableObject {
     /// Builds a persistable `MealPlan` from Nora's analysis. Each
     /// `PlanMeal` becomes a single `Meal` (macros summed) so the user's plan
     /// stays readable, and the component items land in the meal's
-    /// `ingredients` list for transparency.
+    /// `ingredients` list for transparency. When Nora marks a meal with a
+    /// `daysActive` scope or shares an `order` across two meals (a default
+    /// + a Fri/Sat-style variant), the day scope is preserved on the
+    /// resulting `PlannedMeal` so the detail view can pick the right
+    /// variant per weekday.
     private static func mealPlan(from analysis: GPTService.NoraMacroAnalysis, userId: String) -> MealPlan {
         let plannedMeals: [PlannedMeal] = analysis.meals.enumerated().map { index, planMeal in
             let ingredientLines = planMeal.items.map { item -> String in
@@ -1098,10 +1133,15 @@ final class MacroTargetsViewModel: ObservableObject {
                 entryMethod: .unknown
             )
 
+            let daysActive: [Weekday]? = planMeal.daysActive
+                .map { rawDays in rawDays.compactMap(Weekday.from) }
+                .flatMap { $0.isEmpty ? nil : $0 }
+
             return PlannedMeal(
                 meal: meal,
-                order: index + 1,
-                notes: planMeal.notes
+                order: planMeal.order ?? (index + 1),
+                notes: planMeal.notes,
+                daysActive: daysActive
             )
         }
 

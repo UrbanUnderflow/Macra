@@ -1751,6 +1751,12 @@ struct MacraFoodJournalMealRow: View {
     let relogAction: () -> Void
     let trailingAction: () -> Void
 
+    /// Live observer for this meal's like/comment subcollection sizes.
+    /// Bypasses the denormalized fields entirely — listens directly so
+    /// legacy data, stale caches, and missed counter bumps all resolve
+    /// to the actual subcollection size in real time.
+    @StateObject private var social = MealRowSocialObserver()
+
     var body: some View {
         HStack(spacing: 12) {
             FoodJournalThumbnail(meal: meal)
@@ -1766,9 +1772,12 @@ struct MacraFoodJournalMealRow: View {
                 Text(meal.shortSummary)
                     .font(.caption)
                     .foregroundColor(MacraFoodJournalTheme.textMuted)
-                Text(meal.displayTime)
-                    .font(.caption2)
-                    .foregroundColor(MacraFoodJournalTheme.textMuted)
+                HStack(spacing: 8) {
+                    Text(meal.displayTime)
+                        .font(.caption2)
+                        .foregroundColor(MacraFoodJournalTheme.textMuted)
+                    socialIndicators
+                }
             }
             Spacer()
             VStack(spacing: 8) {
@@ -1790,6 +1799,50 @@ struct MacraFoodJournalMealRow: View {
         .onTapGesture(perform: onTap)
         .padding(12)
         .background(foodJournalCardBackground)
+        .onAppear { social.start(mealId: meal.id) }
+        .onDisappear { social.stop() }
+    }
+
+    /// Always-visible social indicators on each meal card. Powered by a
+    /// live subcollection listener (`MealRowSocialObserver`) so any like
+    /// or comment — left from any device, on any account — reflects in
+    /// the row immediately. The denormalized counter fields on the meal
+    /// doc are no longer the source of truth here; the subcollection is.
+    private var socialIndicators: some View {
+        HStack(spacing: 8) {
+            socialChip(
+                filledIcon: "heart.fill",
+                hollowIcon: "heart",
+                count: social.likeCount,
+                tint: Color(hex: "FF4D6D")
+            )
+            socialChip(
+                filledIcon: "bubble.left.fill",
+                hollowIcon: "bubble.left",
+                count: social.commentCount,
+                tint: Color(hex: "8B5CF6")
+            )
+        }
+    }
+
+    private func socialChip(
+        filledIcon: String,
+        hollowIcon: String,
+        count: Int,
+        tint: Color
+    ) -> some View {
+        let active = count > 0
+        return HStack(spacing: 3) {
+            Image(systemName: active ? filledIcon : hollowIcon)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(active ? tint : .white.opacity(0.30))
+            if active {
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white.opacity(0.78))
+                    .monospacedDigit()
+            }
+        }
     }
 
     /// Small pill shown when the meal was originally logged in another Pulse

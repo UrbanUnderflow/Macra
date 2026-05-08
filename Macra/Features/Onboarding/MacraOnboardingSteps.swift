@@ -1178,7 +1178,11 @@ struct FeaturesStepView: View {
         ("calendar", "Projected goal date tracking"),
         ("qrcode.viewfinder", "Label scanner with ingredient analysis"),
         ("list.bullet.rectangle", "Meal planning that moves into your journal"),
-        ("sparkles", "Daily nutrition coaching")
+        ("sparkles", "Daily nutrition coaching"),
+        // Cross-product entitlement: one Macra subscription unlocks
+        // Fit With Pulse Pro (live rounds, AI workouts, club coaching).
+        // Same flag flips both ways — see Pulse's WorkoutReadyView copy.
+        ("dumbbell", "Includes Fit With Pulse Pro — AI workouts, live rounds, clubs")
     ]
 
     var body: some View {

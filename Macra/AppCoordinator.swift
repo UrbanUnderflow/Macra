@@ -171,7 +171,6 @@ final class AppCoordinator: ObservableObject {
             switch result {
             case .success:
                 completion(.success("success"))
-                self.serviceManager.showTabBar = true
             case .failure(let error):
                 completion(.failure(error))
             }
@@ -183,7 +182,6 @@ final class AppCoordinator: ObservableObject {
             switch result {
             case .success:
                 completion(.success("success"))
-                self.serviceManager.showTabBar = true
             case .failure(let error):
                 completion(.failure(error))
             }
@@ -197,9 +195,6 @@ final class AppCoordinator: ObservableObject {
                 self?.serviceManager.firebaseService.signInWithApple(idTokenString: idTokenString) { result in
                     switch result {
                     case .success:
-                        DispatchQueue.main.async {
-                            self?.serviceManager.showTabBar = true
-                        }
                         completion(.success("success"))
                     case .failure(let error):
                         completion(.failure(error))
@@ -230,6 +225,10 @@ final class AppCoordinator: ObservableObject {
             PurchaseService.sharedInstance.resetSubscriptionStatus()
             serviceManager.isConfigured = false
             serviceManager.showTabBar = false
+            // Tear down the live coach-plan listener so we don't leak
+            // a Firestore subscription on a stale auth user. Re-armed
+            // automatically on the next `routeAuthenticatedUser`.
+            CoachMealPlanService.shared.stopLiveCoachPlanObserver()
             resetNutritionShell()
         } catch {
             print(error)
@@ -254,7 +253,28 @@ final class AppCoordinator: ObservableObject {
                 print("Error fetching user for routing: \(error.localizedDescription)")
             }
 
+            if user != nil {
+                Task {
+                    await NotificationService.sharedInstance.registerForRemoteNotificationsIfAuthorized()
+                }
+            }
+
             if user?.hasCompletedMacraOnboarding == true {
+                // Silent coach-plan sync on launch. If a Pulse trainer
+                // attached (or updated) a meal plan since last launch,
+                // adopt those macros as Macra's active target. No-ops
+                // when there's no coach plan or the saved reference
+                // is up to date. Fire-and-forget — never blocks routing.
+                CoachMealPlanService.shared.adoptIfNew { result in
+                    if case .success(let plan?) = result {
+                        print("[CoachPlan] Adopted plan from @\(plan.hostUsername) (trainingId=\(plan.trainingId))")
+                    }
+                }
+                // In-session live updates — keep listening to the
+                // training doc so trainer edits push fresh macros into
+                // Macra immediately, without waiting for the next
+                // launch. Lifecycle is paired with the sign-out path.
+                CoachMealPlanService.shared.startLiveCoachPlanObserver()
                 self.routeMacraSubscriber(user: user)
                 return
             }
@@ -402,7 +422,10 @@ final class AppCoordinator: ObservableObject {
         toast = .toast(viewModel: viewModel)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-            self.toast = nil
+            if case .toast(let currentViewModel) = self.toast,
+               currentViewModel === viewModel {
+                self.toast = nil
+            }
         }
     }
 

@@ -20,10 +20,13 @@ final class MealService {
         }
 
         let resolvedTimestamp = Self.resolveLogTimestamp(forTargetDay: date, originalTimestamp: meal.createdAt)
-        let documentID = mealLogDocumentID(for: resolvedTimestamp, mealId: meal.id)
         var storedMeal = meal
         storedMeal.createdAt = resolvedTimestamp
         storedMeal.updatedAt = Date()
+        if storedMeal.loggedTimeZoneIdentifier?.isEmpty ?? true {
+            storedMeal.loggedTimeZoneIdentifier = TimeZone.current.identifier
+        }
+        let documentID = mealLogDocumentID(for: resolvedTimestamp, mealId: meal.id, timeZone: storedMeal.loggedTimeZone)
 
         db.collection(NutritionCoreConfiguration.usersCollection)
             .document(resolvedUserId)
@@ -35,8 +38,38 @@ final class MealService {
                     return
                 }
                 self?.postNutritionChange()
+                // Fire-and-forget: tell Pulse's `notify-meal-logged`
+                // function that this user just saved a meal so any
+                // active 1-on-1 hosts can be notified. Failures here
+                // never block the save — server-side throttle dedupes
+                // bursts; missing 1-on-1 → server no-ops.
+                Self.notifyPulseOfMealLog(userId: resolvedUserId, mealId: storedMeal.id)
                 completion(.success(storedMeal))
             }
+    }
+
+    private static func notifyPulseOfMealLog(userId: String, mealId: String) {
+        guard let url = URL(string: "https://fitwithpulse.ai/.netlify/functions/notify-meal-logged") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload: [String: Any] = ["userId": userId, "mealId": mealId]
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        } catch {
+            return
+        }
+        // Detached task — no callback into MealService. Errors are
+        // logged and dropped; the user's save was already successful.
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let error = error {
+                print("[notify-meal-logged] post failed: \(error.localizedDescription)")
+                return
+            }
+            if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+                print("[notify-meal-logged] non-2xx response: \(http.statusCode)")
+            }
+        }.resume()
     }
 
     func saveMeals(_ meals: [Meal], for date: Date = Date(), userId: String? = nil, completion: @escaping (Result<[Meal], Error>) -> Void) {
@@ -55,11 +88,14 @@ final class MealService {
             var storedMeal = meal
             storedMeal.createdAt = Self.resolveLogTimestamp(forTargetDay: date, originalTimestamp: meal.createdAt)
             storedMeal.updatedAt = Date()
+            if storedMeal.loggedTimeZoneIdentifier?.isEmpty ?? true {
+                storedMeal.loggedTimeZoneIdentifier = TimeZone.current.identifier
+            }
             return storedMeal
         }
 
         for meal in storedMeals {
-            let documentID = mealLogDocumentID(for: meal.createdAt, mealId: meal.id)
+            let documentID = mealLogDocumentID(for: meal.createdAt, mealId: meal.id, timeZone: meal.loggedTimeZone)
             let docRef = db.collection(NutritionCoreConfiguration.usersCollection)
                 .document(resolvedUserId)
                 .collection(NutritionCoreConfiguration.mealLogsCollection)
@@ -83,23 +119,31 @@ final class MealService {
             return
         }
 
+        // Widen the Firestore range by ±24h to catch meals whose stored-TZ
+        // day overlaps the device-current-TZ day at the boundary (e.g. a 9 PM
+        // PDT meal stored as ~04:33 UTC would otherwise miss a strict EDT
+        // Wednesday range). The strict per-meal anchoring happens client-side.
         guard let range = dateRange(for: date) else {
             completion(.failure(NutritionCoreError.invalidPayload("Could not calculate the date range for meal lookup.")))
             return
         }
+        let widenedStart = range.start.addingTimeInterval(-86_400)
+        let widenedEnd = range.end.addingTimeInterval(86_400)
+        let targetDayKey = Self.dayKey(for: date, in: TimeZone.current)
 
         db.collection(NutritionCoreConfiguration.usersCollection)
             .document(resolvedUserId)
             .collection(NutritionCoreConfiguration.mealLogsCollection)
-            .whereField("createdAt", isGreaterThanOrEqualTo: range.start.timeIntervalSince1970)
-            .whereField("createdAt", isLessThanOrEqualTo: range.end.timeIntervalSince1970)
+            .whereField("createdAt", isGreaterThanOrEqualTo: widenedStart.timeIntervalSince1970)
+            .whereField("createdAt", isLessThanOrEqualTo: widenedEnd.timeIntervalSince1970)
             .getDocuments { snapshot, error in
                 if let error {
                     completion(.failure(error))
                     return
                 }
 
-                let meals = snapshot?.documents.map { Meal(id: $0.documentID, dictionary: $0.data()) } ?? []
+                let meals = (snapshot?.documents.map { Meal(id: $0.documentID, dictionary: $0.data()) } ?? [])
+                    .filter { $0.loggedDayKey == targetDayKey }
                 completion(.success(meals.sorted { $0.createdAt < $1.createdAt }))
             }
     }
@@ -116,11 +160,16 @@ final class MealService {
             return
         }
 
+        // Widen ±24h so meals whose stored-TZ day overlaps the month at the
+        // boundary aren't dropped. Bucket each meal in its logged TZ.
+        let widenedStart = monthInterval.start.addingTimeInterval(-86_400)
+        let widenedEnd = monthInterval.end.addingTimeInterval(86_400)
+
         db.collection(NutritionCoreConfiguration.usersCollection)
             .document(resolvedUserId)
             .collection(NutritionCoreConfiguration.mealLogsCollection)
-            .whereField("createdAt", isGreaterThanOrEqualTo: monthInterval.start.timeIntervalSince1970)
-            .whereField("createdAt", isLessThan: monthInterval.end.timeIntervalSince1970)
+            .whereField("createdAt", isGreaterThanOrEqualTo: widenedStart.timeIntervalSince1970)
+            .whereField("createdAt", isLessThan: widenedEnd.timeIntervalSince1970)
             .getDocuments { snapshot, error in
                 if let error {
                     completion(.failure(error))
@@ -129,12 +178,32 @@ final class MealService {
 
                 var days: Set<Date> = []
                 for doc in snapshot?.documents ?? [] {
-                    let raw = doc.data()["createdAt"]
-                    let date = nutritionDate(from: raw)
-                    days.insert(calendar.startOfDay(for: date))
+                    let meal = Meal(id: doc.documentID, dictionary: doc.data())
+                    var loggedCalendar = Calendar(identifier: .gregorian)
+                    loggedCalendar.timeZone = meal.loggedTimeZone
+                    let startOfLoggedDay = loggedCalendar.startOfDay(for: meal.createdAt)
+                    // Map back to a representative midnight in the device's
+                    // current TZ so the calendar UI can match by day-only Date.
+                    var components = loggedCalendar.dateComponents([.year, .month, .day], from: startOfLoggedDay)
+                    components.timeZone = TimeZone.current
+                    if let normalized = calendar.date(from: components),
+                       monthInterval.contains(normalized) {
+                        days.insert(calendar.startOfDay(for: normalized))
+                    }
                 }
                 completion(.success(days))
             }
+    }
+
+    static func dayKey(for date: Date, in timeZone: TimeZone) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = timeZone
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMddyyyy"
+        return formatter.string(from: date)
     }
 
     func getRecentMeals(userId: String? = nil, limit: Int = 50, completion: @escaping (Result<[Meal], Error>) -> Void) {
@@ -169,8 +238,8 @@ final class MealService {
             return
         }
 
-        let oldDocumentID = mealLogDocumentID(for: originalDate, mealId: meal.id)
-        let newDocumentID = mealLogDocumentID(for: newDate, mealId: meal.id)
+        let oldDocumentID = mealLogDocumentID(for: originalDate, mealId: meal.id, timeZone: meal.loggedTimeZone)
+        let newDocumentID = mealLogDocumentID(for: newDate, mealId: meal.id, timeZone: meal.loggedTimeZone)
 
         guard oldDocumentID != newDocumentID else {
             saveMeal(meal, for: newDate, userId: resolvedUserId, completion: completion)
@@ -198,7 +267,7 @@ final class MealService {
         }
 
         let logDate = date ?? meal.createdAt
-        let documentID = mealLogDocumentID(for: logDate, mealId: meal.id)
+        let documentID = mealLogDocumentID(for: logDate, mealId: meal.id, timeZone: meal.loggedTimeZone)
         db.collection(NutritionCoreConfiguration.usersCollection)
             .document(resolvedUserId)
             .collection(NutritionCoreConfiguration.mealLogsCollection)
@@ -684,12 +753,15 @@ final class MealService {
         ) ?? targetDay
     }
 
-    private func mealLogDocumentID(for date: Date, mealId: String) -> String {
+    private func mealLogDocumentID(for date: Date, mealId: String, timeZone: TimeZone) -> String {
         // Loaded meals carry the full Firestore document ID as `meal.id` (e.g.
         // "04202026meal_xxx"). Re-prefixing here would produce a double prefix
         // and a non-existent doc path, causing silent no-ops on update/delete.
         // Strip any leading 8-digit `MMddyyyy` prefix before re-prefixing.
-        "\(date.nutritionMealLogDocumentPrefix)\(Self.rawMealID(from: mealId))"
+        // The prefix is computed in the meal's logged TZ so doc IDs stay
+        // stable across device-timezone changes (otherwise editing a PDT-logged
+        // meal from EDT would create a duplicate doc under a new day prefix).
+        "\(date.nutritionMealLogDocumentPrefix(in: timeZone))\(Self.rawMealID(from: mealId))"
     }
 
     fileprivate static func rawMealID(from mealId: String) -> String {

@@ -125,6 +125,50 @@ class GPTService {
         let fat: Int
         let fiber: Int?
         let sugarAlcohols: Int?
+        // Extended micronutrients — populated by the analyzer when the food
+        // realistically contains them, so the Full nutrition breakdown isn't
+        // limited to fiber.
+        let sugars: Int?
+        let sodium: Int?
+        let cholesterol: Int?
+        let saturatedFat: Int?
+        let unsaturatedFat: Int?
+        let vitamins: [String: Int]?
+        let minerals: [String: Int]?
+
+        init(
+            name: String,
+            quantity: String,
+            calories: Int,
+            protein: Int,
+            carbs: Int,
+            fat: Int,
+            fiber: Int? = nil,
+            sugarAlcohols: Int? = nil,
+            sugars: Int? = nil,
+            sodium: Int? = nil,
+            cholesterol: Int? = nil,
+            saturatedFat: Int? = nil,
+            unsaturatedFat: Int? = nil,
+            vitamins: [String: Int]? = nil,
+            minerals: [String: Int]? = nil
+        ) {
+            self.name = name
+            self.quantity = quantity
+            self.calories = calories
+            self.protein = protein
+            self.carbs = carbs
+            self.fat = fat
+            self.fiber = fiber
+            self.sugarAlcohols = sugarAlcohols
+            self.sugars = sugars
+            self.sodium = sodium
+            self.cholesterol = cholesterol
+            self.saturatedFat = saturatedFat
+            self.unsaturatedFat = unsaturatedFat
+            self.vitamins = vitamins
+            self.minerals = minerals
+        }
     }
 
     struct MealAnalysis {
@@ -135,6 +179,16 @@ class GPTService {
         let fat: Int
         let fiber: Int?
         let sugarAlcohols: Int?
+        // Extended micronutrients (meal-level totals). Optional — nil means
+        // "the analyzer didn't return a value" and we fall back to summing
+        // ingredient-level values when those are present.
+        let sugars: Int?
+        let sodium: Int?
+        let cholesterol: Int?
+        let saturatedFat: Int?
+        let unsaturatedFat: Int?
+        let vitamins: [String: Int]?
+        let minerals: [String: Int]?
         let ingredients: [MealAnalysisIngredient]
         /// "high" | "medium" | "low" — the analyzer's self-rated confidence
         /// in the macro estimate. Defaults to "medium" when the model omits it.
@@ -182,6 +236,13 @@ class GPTService {
           "fat": integer_grams,
           "fiber": integer_grams_or_null,
           "sugarAlcohols": integer_grams_or_null,
+          "sugars": integer_grams_or_null,
+          "sodium": integer_mg_or_null,
+          "cholesterol": integer_mg_or_null,
+          "saturatedFat": integer_grams_or_null,
+          "unsaturatedFat": integer_grams_or_null,
+          "vitamins": { "Vitamin Name": integer_mg_or_mcg, ... } or {},
+          "minerals": { "Mineral Name": integer_mg_or_mcg, ... } or {},
           "confidence": "high" | "medium" | "low",
           "isLegitimatelyZero": boolean,
           "ingredients": [
@@ -193,7 +254,14 @@ class GPTService {
               "carbs": integer_grams,
               "fat": integer_grams,
               "fiber": integer_grams_or_null,
-              "sugarAlcohols": integer_grams_or_null
+              "sugarAlcohols": integer_grams_or_null,
+              "sugars": integer_grams_or_null,
+              "sodium": integer_mg_or_null,
+              "cholesterol": integer_mg_or_null,
+              "saturatedFat": integer_grams_or_null,
+              "unsaturatedFat": integer_grams_or_null,
+              "vitamins": { "Vitamin Name": integer_mg_or_mcg, ... } or {},
+              "minerals": { "Mineral Name": integer_mg_or_mcg, ... } or {}
             }
           ]
         }
@@ -210,8 +278,14 @@ class GPTService {
         - When `isLegitimatelyZero` is true, return all macro fields as 0 and set `confidence` to "high".
         - Populate `fiber` whenever a food realistically contains dietary fiber (fruits, vegetables, legumes, whole grains, nuts, seeds).
         - Populate `sugarAlcohols` for any food/ingredient containing sugar alcohols — common in sugar-free products, keto/low-carb baked goods, protein bars, and items sweetened with erythritol, xylitol, maltitol, sorbitol, isomalt, allulose, or monk-fruit blends (e.g. Lakanto). If a product is explicitly labeled "sugar free" or "no sugar added" and has meaningful carbs, assume the bulk of those carbs are sugar alcohols and populate the field accordingly.
-        - `fiber` and `sugarAlcohols` are OPTIONAL — omit or use null if truly zero; never invent fiber/sugar alcohols for foods that don't contain them (e.g. plain meats, oils).
-        - Meal-level `fiber` and `sugarAlcohols` should equal the sum of the corresponding ingredient fields.
+        - Populate `sugars` (total sugars in grams) whenever a food contains naturally occurring or added sugars (fruits, dairy, sweetened products, sauces, drinks). Omit or use null for plain meats, eggs, oils, plain vegetables.
+        - Populate `sodium` (mg) for anything salted, brined, processed, packaged, or naturally sodium-containing (cheese, deli meats, breads, sauces, broths, sea food). Omit/null for plain fruits and oils.
+        - Populate `cholesterol` (mg) for animal-source foods (meat, poultry, fish, eggs, dairy). Omit/null for plant-only foods.
+        - Populate `saturatedFat` and `unsaturatedFat` (both in grams) whenever the food contains fat. They should sum to roughly the `fat` value within rounding. Omit/null when fat is zero.
+        - Populate `vitamins` and `minerals` as Title-Case keyed maps when the ingredient is a meaningful source. Vitamin amounts in mcg (micrograms) — e.g. "Vitamin A", "Vitamin C", "Vitamin D", "Vitamin E", "Vitamin K", "Vitamin B6", "Vitamin B12", "Folate", "Niacin", "Riboflavin", "Thiamin". Mineral amounts in mg (milligrams) — e.g. "Calcium", "Iron", "Magnesium", "Phosphorus", "Potassium", "Zinc", "Copper", "Manganese", "Selenium" (use mcg for Selenium). Omit a key if the food isn't a meaningful source; use {} (empty object) if none apply.
+        - Use the same Title-Case spelling consistently across ingredients and the meal-level map so per-nutrient totals merge cleanly.
+        - All extended micronutrient fields (sugars, sodium, cholesterol, saturatedFat, unsaturatedFat, vitamins, minerals) are OPTIONAL — omit or use null/{} if truly absent; never invent values for foods that don't contain them.
+        - Meal-level extended micronutrients should equal the sum (or merged map) of the corresponding ingredient fields.
         - Return only the JSON object — no commentary.
 
         Title: "\(title)"
@@ -288,6 +362,13 @@ class GPTService {
           "fat": integer_grams,
           "fiber": integer_grams_or_null,
           "sugarAlcohols": integer_grams_or_null,
+          "sugars": integer_grams_or_null,
+          "sodium": integer_mg_or_null,
+          "cholesterol": integer_mg_or_null,
+          "saturatedFat": integer_grams_or_null,
+          "unsaturatedFat": integer_grams_or_null,
+          "vitamins": { "Vitamin Name": integer_mg_or_mcg, ... } or {},
+          "minerals": { "Mineral Name": integer_mg_or_mcg, ... } or {},
           "confidence": "high" | "medium" | "low",
           "isLegitimatelyZero": boolean,
           "ingredients": []
@@ -303,6 +384,9 @@ class GPTService {
         - `isLegitimatelyZero` is true ONLY when the panel itself shows zero macros across the board (diet sodas, sparkling water, sugar-free drinks). It MUST be false for any product whose panel shows real macros.
         - Populate `fiber` from the "Dietary Fiber" row when present.
         - Populate `sugarAlcohols` from the "Sugar Alcohols"/"Polyols" row, OR infer from ingredients when the panel advertises "sugar free"/"no sugar added"/"keto" and lists erythritol, xylitol, maltitol, sorbitol, allulose, or monk-fruit blends with meaningful total carbs and near-zero sugars.
+        - Populate `sugars` from the "Total Sugars" row, `sodium` from the "Sodium" row (mg), `cholesterol` from the "Cholesterol" row (mg), `saturatedFat` from the "Saturated Fat" row (g), and derive `unsaturatedFat` as `fat − saturatedFat − transFat` (or sum of explicit Mono+Poly rows when both are listed). Use null for any row that isn't visible on the panel.
+        - Populate `vitamins` and `minerals` from the micronutrient rows at the bottom of the panel (e.g. "Vitamin D", "Calcium", "Iron", "Potassium", plus any others listed). Use Title Case for keys, mcg for vitamin amounts, mg for minerals (mcg for Selenium when shown). When the panel only lists a % Daily Value, convert to absolute amount using FDA reference daily values (e.g. Vitamin D 20% DV ≈ 4 mcg; Calcium 10% DV ≈ 130 mg; Iron 6% DV ≈ 1 mg; Potassium 6% DV ≈ 282 mg). Return {} if no micronutrient rows are visible.
+        - All extended micronutrient fields are OPTIONAL — omit or use null/{} when the panel doesn't show them; do not fabricate.
         - If the label is unreadable, estimate with standard USDA-style values for the product named "\(title)" rather than returning zeros.
         - Return only the JSON object — no commentary.
 
@@ -400,6 +484,13 @@ class GPTService {
           "fat": integer_grams,
           "fiber": integer_grams_or_null,
           "sugarAlcohols": integer_grams_or_null,
+          "sugars": integer_grams_or_null,
+          "sodium": integer_mg_or_null,
+          "cholesterol": integer_mg_or_null,
+          "saturatedFat": integer_grams_or_null,
+          "unsaturatedFat": integer_grams_or_null,
+          "vitamins": { "Vitamin Name": integer_mg_or_mcg, ... } or {},
+          "minerals": { "Mineral Name": integer_mg_or_mcg, ... } or {},
           "confidence": "high" | "medium" | "low",
           "isLegitimatelyZero": boolean,
           "ingredients": [
@@ -411,7 +502,14 @@ class GPTService {
               "carbs": integer_grams,
               "fat": integer_grams,
               "fiber": integer_grams_or_null,
-              "sugarAlcohols": integer_grams_or_null
+              "sugarAlcohols": integer_grams_or_null,
+              "sugars": integer_grams_or_null,
+              "sodium": integer_mg_or_null,
+              "cholesterol": integer_mg_or_null,
+              "saturatedFat": integer_grams_or_null,
+              "unsaturatedFat": integer_grams_or_null,
+              "vitamins": { "Vitamin Name": integer_mg_or_mcg, ... } or {},
+              "minerals": { "Mineral Name": integer_mg_or_mcg, ... } or {}
             }
           ]
         }
@@ -457,10 +555,21 @@ class GPTService {
         - Populate `sugarAlcohols` for sugar-free / keto / low-carb products
           containing erythritol, xylitol, maltitol, sorbitol, allulose, or
           monk-fruit blends.
-        - `fiber` and `sugarAlcohols` are OPTIONAL — omit or use null if truly
-          zero; never invent them for plain meats or oils.
-        - Meal-level `fiber` and `sugarAlcohols` should equal the sum of the
-          corresponding ingredient fields.
+        - Populate `sugars` (g) for foods with naturally-occurring or added
+          sugars (fruits, dairy, sweetened products, sauces, drinks).
+        - Populate `sodium` (mg) for salted, brined, processed, packaged, or
+          naturally sodium-containing foods.
+        - Populate `cholesterol` (mg) for animal-source foods (meat, poultry,
+          fish, eggs, dairy). Null/omit for plant-only foods.
+        - Populate `saturatedFat` and `unsaturatedFat` (both grams) whenever
+          fat is non-zero. Their sum should match `fat` within rounding.
+        - Populate `vitamins` and `minerals` as Title-Case keyed maps when the
+          food is a meaningful source. Vitamin amounts in mcg, mineral amounts
+          in mg (use mcg for Selenium). Return {} when none apply.
+        - All extended micronutrient fields are OPTIONAL — omit or use null/{}
+          if truly absent; never invent them for plain meats or oils.
+        - Meal-level extended micronutrients should equal the sum (or merged
+          map) of the corresponding ingredient fields.
         - Return only the JSON object — no commentary.
 
         User-typed title: "\(hasTitle ? trimmedTitle : "(none)")"
@@ -511,6 +620,91 @@ class GPTService {
         }
     }
 
+    /// Scan food photos in two passes: vision extracts identity/serving text,
+    /// then the text analyzer independently verifies the macro math before the
+    /// meal is saved.
+    func analyzeMealFromFoodPhotoWithTextVerification(
+        imageURL: String,
+        title: String,
+        description: String,
+        completion: @escaping (Result<MealAnalysis, Error>) -> Void
+    ) {
+        analyzeMealFromFoodPhoto(imageURL: imageURL, title: title, description: description) { firstPassResult in
+            switch firstPassResult {
+            case .success(let firstPass):
+                let verificationTitle = Self.verificationTitle(userTitle: title, firstPass: firstPass)
+                let verificationDescription = Self.foodPhotoVerificationDescription(
+                    userDescription: description,
+                    firstPass: firstPass
+                )
+                let verificationContext = """
+                Required verification pass after an image scan. Treat the title and description as OCR/identity/serving clues from the photo, then recompute macros independently from reliable brand-label or USDA-style nutrition data for the stated food and serving. Do not preserve the first vision pass's macro numbers just because they were returned first. If the serving text implies impossible nutrition math, such as carbs greater than the serving weight for a packaged food, correct it.
+                """
+
+                print("[Macra][GPTService.analyzeMealFromFoodPhoto.verify] ▶️ title:'\(verificationTitle)' descLen:\(verificationDescription.count)")
+                self.analyzeMealNote(
+                    title: verificationTitle,
+                    description: verificationDescription,
+                    userContext: verificationContext
+                ) { verificationResult in
+                    switch verificationResult {
+                    case .success(let verified):
+                        print("[Macra][GPTService.analyzeMealFromFoodPhoto.verify] ✅ verified — name:'\(verified.name)' \(verified.calories)kcal P:\(verified.protein) C:\(verified.carbs) F:\(verified.fat) fiber:\(verified.fiber ?? 0) sugarAlcohols:\(verified.sugarAlcohols ?? 0)")
+                        completion(.success(verified))
+                    case .failure(let error):
+                        print("[Macra][GPTService.analyzeMealFromFoodPhoto.verify] ❌ verification failed: \(error.localizedDescription)")
+                        completion(.failure(error))
+                    }
+                }
+
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+    }
+
+    private static func verificationTitle(userTitle: String, firstPass: MealAnalysis) -> String {
+        let trimmedTitle = userTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedTitle.isEmpty { return trimmedTitle }
+
+        let trimmedName = firstPass.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty { return trimmedName }
+
+        return "Scanned food"
+    }
+
+    private static func foodPhotoVerificationDescription(userDescription: String, firstPass: MealAnalysis) -> String {
+        var lines: [String] = []
+        let trimmedDescription = userDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = firstPass.name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !trimmedDescription.isEmpty {
+            lines.append("User caption: \(trimmedDescription)")
+        }
+        if !trimmedName.isEmpty {
+            lines.append("Image scan identified: \(trimmedName)")
+        }
+
+        let ingredientLines = firstPass.ingredients
+            .map { ingredient -> String in
+                let quantity = ingredient.quantity.trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = ingredient.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                return [quantity, name].filter { !$0.isEmpty }.joined(separator: " ")
+            }
+            .filter { !$0.isEmpty }
+
+        if !ingredientLines.isEmpty {
+            lines.append("Image scan item text:")
+            lines.append(contentsOf: ingredientLines.map { "- \($0)" })
+        }
+
+        if lines.isEmpty {
+            lines.append("Food shown in scan")
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
     static func parseMealAnalysisJSON(_ raw: String) throws -> MealAnalysis {
         let dict: [String: Any]
         do {
@@ -528,6 +722,13 @@ class GPTService {
         let fat = intValue(dict["fat"])
         let fiber = optionalIntValue(dict["fiber"])
         let sugarAlcohols = optionalIntValue(dict["sugarAlcohols"])
+        let sugars = optionalIntValue(dict["sugars"])
+        let sodium = optionalIntValue(dict["sodium"])
+        let cholesterol = optionalIntValue(dict["cholesterol"])
+        let saturatedFat = optionalIntValue(dict["saturatedFat"])
+        let unsaturatedFat = optionalIntValue(dict["unsaturatedFat"])
+        let vitamins = optionalIntDictionary(dict["vitamins"])
+        let minerals = optionalIntDictionary(dict["minerals"])
 
         var ingredients: [MealAnalysisIngredient] = []
         if let rawIngredients = dict["ingredients"] as? [[String: Any]] {
@@ -555,6 +756,43 @@ class GPTService {
             return anyPresent ? sum : nil
         }()
 
+        // Same backfill pattern for the extended micronutrients — when the
+        // model populates ingredient-level values but forgets the meal-level
+        // total, we sum the ingredients so the Full nutrition breakdown
+        // still has data to render.
+        func resolvedScalar(_ explicit: Int?, _ extract: (MealAnalysisIngredient) -> Int?) -> Int? {
+            if let explicit { return explicit }
+            let sum = ingredients.compactMap(extract).reduce(0, +)
+            let anyPresent = ingredients.contains(where: { extract($0) != nil })
+            return anyPresent ? sum : nil
+        }
+
+        let resolvedSugars = resolvedScalar(sugars) { $0.sugars }
+        let resolvedSodium = resolvedScalar(sodium) { $0.sodium }
+        let resolvedCholesterol = resolvedScalar(cholesterol) { $0.cholesterol }
+        let resolvedSaturatedFat = resolvedScalar(saturatedFat) { $0.saturatedFat }
+        let resolvedUnsaturatedFat = resolvedScalar(unsaturatedFat) { $0.unsaturatedFat }
+
+        let resolvedVitamins: [String: Int]? = {
+            if let vitamins, !vitamins.isEmpty { return vitamins }
+            var bag: [String: Int] = [:]
+            for ing in ingredients {
+                guard let v = ing.vitamins else { continue }
+                for (key, value) in v { bag[key, default: 0] += value }
+            }
+            return bag.isEmpty ? nil : bag
+        }()
+
+        let resolvedMinerals: [String: Int]? = {
+            if let minerals, !minerals.isEmpty { return minerals }
+            var bag: [String: Int] = [:]
+            for ing in ingredients {
+                guard let m = ing.minerals else { continue }
+                for (key, value) in m { bag[key, default: 0] += value }
+            }
+            return bag.isEmpty ? nil : bag
+        }()
+
         let rawConfidence = (dict["confidence"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
@@ -577,10 +815,35 @@ class GPTService {
             fat: resolvedFat,
             fiber: resolvedFiber,
             sugarAlcohols: resolvedSugarAlcohols,
+            sugars: resolvedSugars,
+            sodium: resolvedSodium,
+            cholesterol: resolvedCholesterol,
+            saturatedFat: resolvedSaturatedFat,
+            unsaturatedFat: resolvedUnsaturatedFat,
+            vitamins: resolvedVitamins,
+            minerals: resolvedMinerals,
             ingredients: ingredients,
             confidence: confidence,
             isLegitimatelyZero: isLegitimatelyZero
         )
+    }
+
+    /// Decodes a `[String: Int]`-shaped vitamin/mineral map. Tolerates Double
+    /// inputs (model returns `2.5`), string inputs (`"2"`), and skips NSNull
+    /// or otherwise unparseable entries. Returns nil when the input is missing,
+    /// not a dictionary, or empty after normalization — distinct from `[:]`
+    /// which we treat as "explicitly empty" by the parser.
+    private static func optionalIntDictionary(_ any: Any?) -> [String: Int]? {
+        guard let raw = any as? [String: Any] else { return nil }
+        var bag: [String: Int] = [:]
+        for (key, value) in raw {
+            let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedKey.isEmpty else { continue }
+            if let i = optionalIntValue(value), i > 0 {
+                bag[trimmedKey] = i
+            }
+        }
+        return bag.isEmpty ? nil : bag
     }
 
     private static func intValue(_ any: Any?) -> Int {
@@ -643,6 +906,17 @@ class GPTService {
             let title: String
             let notes: String?
             let items: [PlanItem]
+            /// Optional weekday scope. `nil` or empty = the meal applies every
+            /// day (default behavior). When set, the meal only appears on the
+            /// listed weekdays — used to model "Fri & Sat add cream of rice"
+            /// substitutions and "omit on Sunday" exclusions captured from
+            /// coach plans.
+            let daysActive: [String]?
+            /// `order` slot the meal occupies. Two meals can share the same
+            /// `order` when they're variants of one slot (e.g., the default
+            /// Meal 1 and a Fri/Sat-only Meal 1 substitution); the renderer
+            /// picks the variant matching the active weekday.
+            let order: Int?
 
             var totalCalories: Int { items.reduce(0) { $0 + $1.calories } }
             var totalProtein: Int { items.reduce(0) { $0 + $1.protein } }
@@ -695,16 +969,28 @@ class GPTService {
         let systemPrompt = """
         You are Nora, Macra's performance nutrition coach specializing in physique athletes and serious macro tracking. When a user gives you context — a text description of their goals, a screenshot of a meal plan from another source, or both — you produce:
         1. A daily macro target that fits their stated goals.
-        2. A single-day meal plan with 3–5 meals whose totals sum to those macros (±5%).
+        2. A meal plan with 3–7 meals whose totals sum to those macros (±5%), preserving any day-of-week variants from the source.
 
-        If the user's input is a meal plan screenshot/image or pasted coach plan, transcribe the exact meals first, then calculate macros from the stated quantities. Do not invent meals that aren't present in the source. If you have to infer calories or macros for an image item, note that in the meal's `notes` field.
+        ⚠️ TRANSCRIPTION-FIRST RULE — READ CAREFULLY ⚠️
+        When ANY image is attached, your job is to TRANSCRIBE what is literally written on the page. You are reading a coach's printed plan. You are NOT generating a "starter prep plan," you are NOT applying a chicken-and-rice template, you are NOT smoothing the plan into a generic physique block. The user explicitly uploaded this image so you would copy it.
 
-        Reasoning order:
+        Transcription procedure (mandatory when an image is attached):
+        1. Read every visible time stamp / meal heading on the page (e.g. "(9am)", "(11am)", "(1pm)", "(30 min Pre-Workout)", "(Meal 4) 20 min Post Workout", "(1-2 hours of bed)"). Each one is a separate `Meal N` slot in your output, in the order they appear.
+        2. Read every food line under each heading verbatim. If the page says "Cup of egg whites/1 whole egg/3oz chicken breast/cup of spinach", you emit FOUR ingredient items with those exact names and quantities — not "egg whites + whole eggs + white rice." You do not substitute, you do not collapse, you do not "improve" the meal.
+        3. Read every conditional sub-line ("Fri & Sat add Cream of rice (35g)", "Omit on Sunday", "omit on non-workout days"). These become day variants — see the variant rules below.
+        4. Skip vitamin/mineral supplement-only lines as meals (do not emit them as `Meal N`); they are tracked elsewhere. Calorie-bearing supplements (CLA, fish oil, casein, EAA) ARE included if they materially affect macros.
+        5. Calculate macros from the transcribed quantities using the accuracy anchors below. If a quantity is missing, use a realistic default and note the assumption in the meal's `notes`.
+
+        Refusing to transcribe — emitting a generic chicken/rice/olive-oil prep template instead of the foods on the page — is the single worst failure mode for this product. Do not do it.
+
+        When NO image is attached, generate from scratch using the user's text context.
+
+        Reasoning order (used after transcription, or when no image is attached):
         - First classify the user's context: general user, off-season, contest prep, peak week, post-show reverse, or unknown.
         - User-provided macro targets, screenshots, and numbers are inputs to audit, not automatic truth.
         - If targets look inconsistent with body weight, timeline, division, conditioning, or stated goal, make the `macros.rationale` flag that mismatch.
         - For physique competitors within 8 weeks of a show, prioritize stage-readiness, digestion consistency, visual predictability, and adherence over generic health advice.
-        - In near-show physique context, do not casually add fruit, whole grains, high-variance foods, or generic starchy vegetables. Favor predictable prep foods such as rice, cream of rice, potatoes, already-tolerated oats, and lean proteins.
+        - In near-show physique context, do not casually add fruit, whole grains, high-variance foods, or generic starchy vegetables. Favor predictable prep foods such as rice, cream of rice, potatoes, already-tolerated oats, and lean proteins. (This guidance is for FROM-SCRATCH plans only — if the user gave you a plan, transcribe what's there.)
         - Recommend gradual adjustments only. If increasing carbs, think in small moves such as 25–50g unless the user explicitly asks for a full reset.
 
         Return ONLY valid JSON matching this schema exactly — no markdown, no prose:
@@ -737,15 +1023,10 @@ class GPTService {
               {
                 "title": "Meal 1",
                 "notes": "optional short notes or null",
+                "order": 1,
+                "daysActive": null,
                 "items": [
-                  {
-                    "name": "food item",
-                    "quantity": "amount with unit (e.g. '1 cup', '4 oz')",
-                    "calories": int,
-                    "protein": int,
-                    "carbs": int,
-                    "fat": int
-                  }
+                  { "name": "food item", "quantity": "1 cup", "calories": 0, "protein": 0, "carbs": 0, "fat": 0 }
                 ]
               }
             ]
@@ -755,12 +1036,37 @@ class GPTService {
         Rules:
         - Use "Meal 1", "Meal 2" labels; NEVER breakfast/lunch/dinner/snack.
         \(Self.mealAnalyzerAccuracyRules)
-        - If the plan has explicit day-specific substitutions or variants (for example "Fri & Sat, Sub", "Monday/Thursday high carb", "rest day swap"), calculate `macros` from the default/all-days plan and add `scopedMacros` entries for the affected weekdays.
-        - `scopedMacros[].macros` must be the full-day total for that scoped day after applying substitutions, not the macro delta.
-        - Use weekday abbreviations only in `scopedMacros[].days`: "mon", "tue", "wed", "thu", "fri", "sat", "sun". Omit variants without explicit weekdays from `scopedMacros`.
-        - If there are no explicit weekday variants, return `scopedMacros: []`.
+        - Day-scoped macro totals (`scopedMacros`):
+          - If the plan has explicit day-specific substitutions or variants (for example "Fri & Sat, Sub", "Monday/Thursday high carb", "rest day swap"), calculate `macros` from the default/all-days plan and add `scopedMacros` entries for the affected weekdays.
+          - `scopedMacros[].macros` must be the full-day total for that scoped day after applying substitutions, not the macro delta.
+          - Use weekday abbreviations only in `scopedMacros[].days`: "mon", "tue", "wed", "thu", "fri", "sat", "sun". Omit variants without explicit weekdays from `scopedMacros`.
+          - If there are no explicit weekday variants, return `scopedMacros: []`.
+        - Per-meal day variants (`mealPlan.meals[]`):
+          - Each meal MUST include an integer `order` (1, 2, 3, …) marking its slot in the day. Two meals share an `order` ONLY when one is the default and the other is a weekday-scoped variant of the same slot.
+          - `daysActive` is a list of weekday abbreviations ("mon"…"sun") or `null`. `null` means the meal applies every day. NEVER list all 7 days explicitly — use `null`.
+          - When you see ANY day-conditional language in the source ("Fri & Sat add ...", "Omit on Sunday", "omit on non-workout days", "rest day swap", "high-carb on training days"), you MUST emit `daysActive` to encode it. Returning `daysActive: null` for every meal when the source clearly varies by day is a failure.
+          - Concrete patterns:
+            • "Fri & Sat add Cream of rice (35g)" under Meal 1 → emit TWO meals with `order: 1`. The default Meal 1 has `daysActive: ["mon","tue","wed","thu","sun"]` and the base items only. The variant Meal 1 has `daysActive: ["fri","sat"]` and contains the base items PLUS cream of rice 35g. (Both are present; the renderer picks by weekday.)
+            • "Omit on Sunday" on a meal → `daysActive: ["mon","tue","wed","thu","fri","sat"]`.
+            • "Omit on non-workout days" → look for "Training days: …" in the user context and set `daysActive` to exactly those days (e.g. `["mon","wed","fri"]`). If training days are unknown, set `daysActive` to `["mon","tue","wed","thu","fri","sat"]` (assume Sun rest) AND surface the assumption in `summary`.
+        - Concrete worked example. Source page contains:
+            (9am) Cup of egg whites/1 whole egg/3oz chicken breast/cup of spinach
+                - Fri & Sat add Cream of rice (35g)
+            (11am) 6oz white fish/2oz asparagus/2 plain rice cakes/16 almonds
+            (1pm) 6oz chicken breast/2oz asparagus/16 almonds
+            (30 min Pre-Workout), Omit on Sunday — 6oz chicken breast/100g jasmine rice
+            (Meal 4) 20 min Post Workout, omit on non-workout days — 6oz white fish/180g white potato/1 plain rice cake/tbsp almond butter
+            (1-2 hours of bed) Cup of egg whites/1 whole egg/cup of spinach
+          With Training days "mon,wed,fri" in user context, you emit (abridged):
+            order:1 daysActive:["mon","tue","wed","thu","sun"] items:[egg whites 1cup, whole egg 1, chicken breast 3oz, spinach 1cup]
+            order:1 daysActive:["fri","sat"]                  items:[egg whites 1cup, whole egg 1, chicken breast 3oz, spinach 1cup, cream of rice 35g]
+            order:2 daysActive:null                            items:[white fish 6oz, asparagus 2oz, rice cakes 2, almonds 16]
+            order:3 daysActive:null                            items:[chicken breast 6oz, asparagus 2oz, almonds 16]
+            order:4 daysActive:["mon","tue","wed","thu","fri","sat"] items:[chicken breast 6oz, jasmine rice 100g]   (omit-Sun)
+            order:5 daysActive:["mon","wed","fri"]             items:[white fish 6oz, white potato 180g, rice cake 1, almond butter 1tbsp]   (workout-only)
+            order:6 daysActive:null                            items:[egg whites 1cup, whole egg 1, spinach 1cup]
         - Use realistic whole-food ingredients; no novelty items.
-        - Match food choices to the user's phase; do not default to general wellness foods when the user is in prep, peak week, or post-show reverse.
+        - Match food choices to the user's phase ONLY when generating from scratch; never override transcribed foods with generic prep substitutes.
         - All numeric fields are integers (round).
         - Meal totals must sum close to the meal plan totals; plan totals must sum close to the daily macros (±5%).
         """
@@ -775,25 +1081,33 @@ class GPTService {
             userText += "\n\nUser prompt:\n\(trimmedPrompt)"
         }
         if !images.isEmpty {
-            userText += "\n\nThe user attached \(images.count) image\(images.count == 1 ? "" : "s"). If any of them look like a meal plan or nutrition breakdown, transcribe those meals faithfully into the `mealPlan` field."
+            userText += "\n\nThe user attached \(images.count) image\(images.count == 1 ? "" : "s"). At least one is almost certainly a printed meal plan they want transcribed. TRANSCRIBE every meal heading and every food line verbatim into `mealPlan.meals` — do NOT generate a generic chicken-and-rice prep block. Preserve every day-conditional sub-line as a `daysActive` variant. If a quantity is missing, infer a realistic default and note it in the meal's `notes`."
         }
         content.append(["type": "text", "text": userText])
 
         for image in images {
-            guard let jpeg = image.jpegData(compressionQuality: 0.6) else { continue }
+            // 0.85 keeps printed-plan text legible to the vision model; 0.6
+            // was producing missed quantities and dropped sub-lines on the
+            // contest-prep handouts that this flow is meant to ingest.
+            guard let jpeg = image.jpegData(compressionQuality: 0.85) else { continue }
             let base64 = jpeg.base64EncodedString()
             content.append([
                 "type": "image_url",
-                "image_url": ["url": "data:image/jpeg;base64,\(base64)"]
+                "image_url": ["url": "data:image/jpeg;base64,\(base64)", "detail": "high"]
             ])
         }
 
+        // gpt-5-mini outperforms gpt-4o on instruction-following at lower
+        // cost and supports vision — the openai-bridge translates
+        // `max_tokens` to `max_completion_tokens` and strips the
+        // unsupported `temperature` for us, so the call shape stays the
+        // same as other analyzers.
         MacraOpenAIBridge.postChat(
             messages: [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": content]
             ],
-            model: "gpt-4o",
+            model: "gpt-5-mini",
             maxTokens: 2500,
             temperature: 0.3,
             responseFormat: ["type": "json_object"],
@@ -858,10 +1172,20 @@ class GPTService {
             let notes = (mealDict["notes"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let rawItems = mealDict["items"] as? [[String: Any]] ?? []
             let items = rawItems.flatMap(planItems)
+            let order = mealDict["order"] as? Int
+            let daysActive: [String]? = {
+                guard let raw = mealDict["daysActive"] as? [String] else { return nil }
+                let cleaned = raw
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                    .filter { !$0.isEmpty }
+                return cleaned.isEmpty ? nil : cleaned
+            }()
             return NoraMacroAnalysis.PlanMeal(
                 title: (title?.isEmpty == false ? title! : "Meal \(index + 1)"),
                 notes: notes?.isEmpty == false ? notes : nil,
-                items: items
+                items: items,
+                daysActive: daysActive,
+                order: order
             )
         }
 
@@ -871,6 +1195,229 @@ class GPTService {
             scopedMacros: scopedMacros,
             planName: planName,
             meals: meals
+        )
+    }
+
+    // MARK: - Per-meal regeneration ("Edit with Nora")
+
+    /// Regenerated single-meal payload returned by `regenerateMeal`. Mirrors
+    /// `NoraMacroAnalysis.PlanMeal` but is unscoped — it represents a
+    /// replacement for one slot, not an entire plan. Callers swap this into
+    /// the existing `MacraSuggestedMealPlan` and persist.
+    struct PlanMealEditResult {
+        let title: String
+        let notes: String?
+        let items: [NoraMacroAnalysis.PlanItem]
+
+        var totalCalories: Int { items.reduce(0) { $0 + $1.calories } }
+        var totalProtein: Int { items.reduce(0) { $0 + $1.protein } }
+        var totalCarbs: Int { items.reduce(0) { $0 + $1.carbs } }
+        var totalFat: Int { items.reduce(0) { $0 + $1.fat } }
+    }
+
+    enum PlanMealEditError: LocalizedError {
+        case emptyPrompt
+        case parsingFailed(String)
+        case noItems
+
+        var errorDescription: String? {
+            switch self {
+            case .emptyPrompt: return "Tell Nora what to change first."
+            case .parsingFailed(let detail): return "Nora couldn't parse that: \(detail)"
+            case .noItems: return "Nora returned no foods. Try a more specific prompt."
+            }
+        }
+    }
+
+    /// Regenerates a single meal from the user's instruction (e.g. "swap
+    /// chicken for steak", "no dairy", "lower carbs by 20g"). Keeps the
+    /// reference macros close to the existing meal unless the prompt asks
+    /// for a calorie change. Routed through `macraMealEdit` so the bridge
+    /// can apply per-feature rate limits and gpt-5 param translation.
+    func generateMealForPlan(
+        bodyContext: String,
+        existingPlanContext: String,
+        userPrompt: String,
+        completion: @escaping (Result<PlanMealEditResult, Error>) -> Void
+    ) {
+        let trimmedPrompt = userPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else {
+            completion(.failure(PlanMealEditError.emptyPrompt))
+            return
+        }
+
+        let systemPrompt = """
+        You are Nora, Macra's nutrition coach. The user is adding ONE new meal to an existing meal plan.
+
+        Return a complete meal with realistic foods, quantities, and macro estimates. Match the user's requested meal role and the plan context. If the user asks for a pre-workout, post-workout, rest-day, or pre-bed meal, make the food choices fit that role.
+
+        \(Self.mealAnalyzerAccuracyRules)
+
+        Return ONLY valid JSON, no prose, no markdown:
+        {
+          "title": "short meal title under 40 chars",
+          "notes": "optional one-line note under 120 chars, or null",
+          "items": [
+            { "name": "food item", "quantity": "amount with unit", "calories": int, "protein": int, "carbs": int, "fat": int }
+          ]
+        }
+
+        - Every item needs a non-empty `quantity` and non-zero per-item macros.
+        - All macro fields are integers.
+        - Prefer 2-5 items unless the user asks for something very simple.
+        """
+
+        let userText = """
+        \(bodyContext)
+
+        Existing plan:
+        \(existingPlanContext.isEmpty ? "No existing meals provided." : existingPlanContext)
+
+        Meal to add:
+        \(trimmedPrompt)
+        """
+
+        MacraOpenAIBridge.postChat(
+            messages: [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user", "content": userText]
+            ],
+            model: "gpt-4o",
+            maxTokens: 1500,
+            temperature: 0.3,
+            responseFormat: ["type": "json_object"],
+            organization: "macraMealEdit"
+        ) { result in
+            switch result {
+            case .success(let raw):
+                do {
+                    let meal = try Self.parsePlanMealEditJSON(raw)
+                    guard !meal.items.isEmpty else {
+                        completion(.failure(PlanMealEditError.noItems))
+                        return
+                    }
+                    print("[Macra][Nora.generateMealForPlan] ✅ '\(meal.title)' \(meal.totalCalories)kcal · items:\(meal.items.count)")
+                    completion(.success(meal))
+                } catch {
+                    print("[Macra][Nora.generateMealForPlan] raw preview: \(Self.debugPreview(raw))")
+                    print("[Macra][Nora.generateMealForPlan] ❌ parse error: \(error.localizedDescription)")
+                    completion(.failure(error))
+                }
+
+            case .failure(let error):
+                print("[Macra][Nora.generateMealForPlan] ❌ bridge error: \(error.localizedDescription)")
+                completion(.failure(error))
+            }
+        }
+    }
+
+    func regenerateMeal(
+        currentMeal: GPTService.NoraMacroAnalysis.PlanMeal,
+        bodyContext: String,
+        userPrompt: String,
+        completion: @escaping (Result<PlanMealEditResult, Error>) -> Void
+    ) {
+        let trimmedPrompt = userPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else {
+            completion(.failure(PlanMealEditError.emptyPrompt))
+            return
+        }
+
+        let currentItemsLines = currentMeal.items.map { item -> String in
+            let qty = item.quantity.isEmpty ? item.name : "\(item.quantity) \(item.name)"
+            return "  - \(qty) — \(item.calories) kcal / \(item.protein)P / \(item.carbs)C / \(item.fat)F"
+        }.joined(separator: "\n")
+        let currentTotalsLine = "Current totals: \(currentMeal.totalCalories) kcal / \(currentMeal.totalProtein)P / \(currentMeal.totalCarbs)C / \(currentMeal.totalFat)F"
+
+        print("[Macra][Nora.regenerateMeal] ▶️ promptLen:\(trimmedPrompt.count) currentItems:\(currentMeal.items.count) currentCal:\(currentMeal.totalCalories)")
+
+        let systemPrompt = """
+        You are Nora, Macra's nutrition coach, editing ONE meal in an existing meal plan based on the user's instruction. Your job is to return a replacement meal — same slot, updated foods.
+
+        Rules:
+        - Keep the meal's calories within ±10% of the existing meal's calories UNLESS the user explicitly asks for a calorie change (e.g. "lower this by 100 cal", "make it bigger", "double the carbs").
+        - Preserve the meal's role in the day (e.g. if it was the post-workout meal, keep a fast-digesting carb + protein profile; if it was the pre-bed meal, keep a slower-digesting profile).
+        - Honor the user's instruction literally. If they say "swap chicken for steak", swap it. If they say "no dairy", remove dairy. If they say "make it dairy-free and add a fruit", do both.
+        - Use realistic whole-food ingredients. Match the user's phase from the body context — don't introduce high-variance foods if they're in contest prep.
+        \(Self.mealAnalyzerAccuracyRules)
+
+        Return ONLY valid JSON, no prose, no markdown:
+        {
+          "title": "short meal title (under 40 chars, e.g. 'Meal 2' or 'Steak & Rice')",
+          "notes": "optional one-line note about the change (under 120 chars), or null",
+          "items": [
+            { "name": "food item", "quantity": "amount with unit", "calories": int, "protein": int, "carbs": int, "fat": int }
+          ]
+        }
+
+        - Every item needs a non-empty `quantity` and non-zero per-item macros.
+        - All macro fields are integers (round to nearest whole number).
+        """
+
+        let userText = """
+        \(bodyContext)
+
+        Current meal: \(currentMeal.title)
+        \(currentItemsLines)
+        \(currentTotalsLine)
+
+        User instruction: \(trimmedPrompt)
+        """
+
+        MacraOpenAIBridge.postChat(
+            messages: [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user", "content": userText]
+            ],
+            model: "gpt-4o",
+            maxTokens: 1500,
+            temperature: 0.3,
+            responseFormat: ["type": "json_object"],
+            organization: "macraMealEdit"
+        ) { result in
+            switch result {
+            case .success(let raw):
+                do {
+                    let edited = try Self.parsePlanMealEditJSON(raw)
+                    guard !edited.items.isEmpty else {
+                        completion(.failure(PlanMealEditError.noItems))
+                        return
+                    }
+                    print("[Macra][Nora.regenerateMeal] ✅ '\(edited.title)' \(edited.totalCalories)kcal · items:\(edited.items.count)")
+                    completion(.success(edited))
+                } catch {
+                    print("[Macra][Nora.regenerateMeal] raw preview: \(Self.debugPreview(raw))")
+                    print("[Macra][Nora.regenerateMeal] ❌ parse error: \(error.localizedDescription)")
+                    completion(.failure(error))
+                }
+
+            case .failure(let error):
+                print("[Macra][Nora.regenerateMeal] ❌ bridge error: \(error.localizedDescription)")
+                completion(.failure(error))
+            }
+        }
+    }
+
+    private static func parsePlanMealEditJSON(_ raw: String) throws -> PlanMealEditResult {
+        let dict: [String: Any]
+        do {
+            dict = try Self.jsonObjectDictionary(fromOpenAIContent: raw)
+        } catch let error as JSONContentParseError {
+            throw PlanMealEditError.parsingFailed(error.detail)
+        } catch {
+            throw PlanMealEditError.parsingFailed("JSON deserialize failed: \(error.localizedDescription)")
+        }
+
+        let title = ((dict["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines))
+            .flatMap { $0.isEmpty ? nil : $0 } ?? "Meal"
+        let notes = (dict["notes"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rawItems = dict["items"] as? [[String: Any]] ?? []
+        let items = rawItems.flatMap(planItems)
+
+        return PlanMealEditResult(
+            title: title,
+            notes: notes?.isEmpty == false ? notes : nil,
+            items: items
         )
     }
 
@@ -1360,7 +1907,14 @@ class GPTService {
                 rawCarbs: intValue(item["carbs"]),
                 rawFat: intValue(item["fat"]),
                 rawFiber: optionalIntValue(item["fiber"]),
-                rawSugarAlcohols: optionalIntValue(item["sugarAlcohols"])
+                rawSugarAlcohols: optionalIntValue(item["sugarAlcohols"]),
+                rawSugars: optionalIntValue(item["sugars"]),
+                rawSodium: optionalIntValue(item["sodium"]),
+                rawCholesterol: optionalIntValue(item["cholesterol"]),
+                rawSaturatedFat: optionalIntValue(item["saturatedFat"]),
+                rawUnsaturatedFat: optionalIntValue(item["unsaturatedFat"]),
+                rawVitamins: optionalIntDictionary(item["vitamins"]),
+                rawMinerals: optionalIntDictionary(item["minerals"])
             )
         ]
     }
@@ -1388,7 +1942,14 @@ class GPTService {
         rawCarbs: Int,
         rawFat: Int,
         rawFiber: Int?,
-        rawSugarAlcohols: Int?
+        rawSugarAlcohols: Int?,
+        rawSugars: Int? = nil,
+        rawSodium: Int? = nil,
+        rawCholesterol: Int? = nil,
+        rawSaturatedFat: Int? = nil,
+        rawUnsaturatedFat: Int? = nil,
+        rawVitamins: [String: Int]? = nil,
+        rawMinerals: [String: Int]? = nil
     ) -> MealAnalysisIngredient {
         if let estimate = estimateKnownFoodMacros(name: name, quantity: quantity) {
             return mealAnalysisIngredient(
@@ -1396,7 +1957,14 @@ class GPTService {
                 quantity: quantity,
                 estimate: estimate,
                 fiber: rawFiber,
-                sugarAlcohols: rawSugarAlcohols
+                sugarAlcohols: rawSugarAlcohols,
+                sugars: rawSugars,
+                sodium: rawSodium,
+                cholesterol: rawCholesterol,
+                saturatedFat: rawSaturatedFat,
+                unsaturatedFat: rawUnsaturatedFat,
+                vitamins: rawVitamins,
+                minerals: rawMinerals
             )
         }
 
@@ -1408,7 +1976,14 @@ class GPTService {
             carbs: rawCarbs,
             fat: rawFat,
             fiber: rawFiber,
-            sugarAlcohols: rawSugarAlcohols
+            sugarAlcohols: rawSugarAlcohols,
+            sugars: rawSugars,
+            sodium: rawSodium,
+            cholesterol: rawCholesterol,
+            saturatedFat: rawSaturatedFat,
+            unsaturatedFat: rawUnsaturatedFat,
+            vitamins: rawVitamins,
+            minerals: rawMinerals
         )
     }
 
@@ -1417,7 +1992,14 @@ class GPTService {
         quantity: String,
         estimate: MacroEstimate,
         fiber: Int? = nil,
-        sugarAlcohols: Int? = nil
+        sugarAlcohols: Int? = nil,
+        sugars: Int? = nil,
+        sodium: Int? = nil,
+        cholesterol: Int? = nil,
+        saturatedFat: Int? = nil,
+        unsaturatedFat: Int? = nil,
+        vitamins: [String: Int]? = nil,
+        minerals: [String: Int]? = nil
     ) -> MealAnalysisIngredient {
         MealAnalysisIngredient(
             name: name,
@@ -1427,7 +2009,14 @@ class GPTService {
             carbs: max(0, Int(estimate.carbs.rounded())),
             fat: max(0, Int(estimate.fat.rounded())),
             fiber: fiber,
-            sugarAlcohols: sugarAlcohols
+            sugarAlcohols: sugarAlcohols,
+            sugars: sugars,
+            sodium: sodium,
+            cholesterol: cholesterol,
+            saturatedFat: saturatedFat,
+            unsaturatedFat: unsaturatedFat,
+            vitamins: vitamins,
+            minerals: minerals
         )
     }
 
@@ -1899,15 +2488,15 @@ enum MacraOpenAIBridge {
                     return
                 }
 
-                guard
-                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                    let choices = json["choices"] as? [[String: Any]],
-                    let firstChoice = choices.first,
-                    let message = firstChoice["message"] as? [String: Any],
-                    let content = message["content"] as? String,
-                    !content.isEmpty
-                else {
-                    print("[Macra][Bridge] ❌ could not extract message.content (org:\(organization))")
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    let preview = String(data: data, encoding: .utf8) ?? "<non-utf8>"
+                    print("[Macra][Bridge] ❌ response JSON parse failed (org:\(organization)): \(preview.prefix(300))")
+                    completion(.failure(BridgeError.emptyContent))
+                    return
+                }
+
+                guard let content = extractAssistantContent(from: json), !content.isEmpty else {
+                    print("[Macra][Bridge] ❌ could not extract assistant content (org:\(organization)): \(debugPreview(json))")
                     completion(.failure(BridgeError.emptyContent))
                     return
                 }
@@ -1916,5 +2505,53 @@ enum MacraOpenAIBridge {
                 completion(.success(content))
             }.resume()
         }
+    }
+
+    private static func extractAssistantContent(from json: [String: Any]) -> String? {
+        guard
+            let choices = json["choices"] as? [[String: Any]],
+            let firstChoice = choices.first,
+            let message = firstChoice["message"] as? [String: Any]
+        else {
+            return nil
+        }
+
+        if let content = message["content"] as? String {
+            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+
+        if let contentParts = message["content"] as? [[String: Any]] {
+            let text = contentParts.compactMap { part -> String? in
+                if let text = part["text"] as? String { return text }
+                if let outputText = part["output_text"] as? String { return outputText }
+                if let nestedText = (part["text"] as? [String: Any])?["value"] as? String { return nestedText }
+                return nil
+            }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { return text }
+        }
+
+        if let text = firstChoice["text"] as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+
+        if let refusal = message["refusal"] as? String {
+            let trimmed = refusal.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+
+        return nil
+    }
+
+    private static func debugPreview(_ json: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]),
+              let string = String(data: data, encoding: .utf8)
+        else {
+            return "<unserializable json>"
+        }
+        return String(string.prefix(500))
     }
 }
