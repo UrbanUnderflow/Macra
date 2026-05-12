@@ -21,7 +21,7 @@ struct PreviewCardView: View {
                     VStack(alignment:.leading) {
                         Text("Foundation First")
                             .font(.headline)
-                        Text("Begin with essential puppy commands")
+                        Text("Start with your calorie and macro targets")
                             .font(.subheadline)
                             .multilineTextAlignment(.leading)
                     }
@@ -30,7 +30,7 @@ struct PreviewCardView: View {
                     VStack(alignment:.leading) {
                         Text("Daily Insights")
                             .font(.headline)
-                        Text("Monitor everyday growth and behaviors")
+                        Text("See how each meal changes your day")
                             .font(.subheadline)
                             .multilineTextAlignment(.leading)
                     }
@@ -43,7 +43,7 @@ struct PreviewCardView: View {
                     VStack(alignment:.leading) {
                         Text("Growth & Learning")
                             .font(.headline)
-                        Text("As your puppy evolves, so does the training")
+                        Text("Nora adjusts around your real food logs")
                             .font(.subheadline)
                             .multilineTextAlignment(.leading)
                     }
@@ -53,7 +53,7 @@ struct PreviewCardView: View {
                     VStack(alignment:.leading) {
                         Text("Timely Alerts")
                             .font(.headline)
-                        Text("Receive crucial updates at pivotal moments.")
+                        Text("Get nudges before your day gets away from you")
                             .font(.subheadline)
                             .multilineTextAlignment(.leading)
                     }
@@ -67,7 +67,7 @@ struct PreviewCardView: View {
                     VStack(alignment:.leading) {
                         Text("Mastery")
                             .font(.headline)
-                        Text("Master each comand at the right time")
+                        Text("Hit your macros without doing food math")
                             .font(.subheadline)
                             .multilineTextAlignment(.leading)
                     }

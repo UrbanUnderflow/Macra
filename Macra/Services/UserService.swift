@@ -1,5 +1,5 @@
 import Foundation
-import Firebase
+import FirebaseAuth
 import FirebaseFirestore
 
 enum UserServiceError: Error {

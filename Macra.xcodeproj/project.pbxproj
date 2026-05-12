@@ -125,6 +125,7 @@
 		6E1647D59E1F83D92AA6ADFF /* BuddyMealDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78CE0834738453CB9416E12 /* BuddyMealDetailView.swift */; };
 		73ED05C407D795171417EFFD /* MealSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C912D53FE24240D88E2A87 /* MealSelectionView.swift */; };
 		753E9E8DA4C68D6C4104EB37 /* ManageSubscriptionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FA8B30885C422F84A7DF8FE /* ManageSubscriptionView.swift */; };
+		775A2F2AC02E475181E642B3 /* MacraDemoModeEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 778FE4553E0348D3A4CA8BF3 /* MacraDemoModeEnvironment.swift */; };
 		79957F0624AB16E52019773B /* MacroRecommendationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A9318954916C0E8D8DB927F /* MacroRecommendationService.swift */; };
 		7F3D985BF7CE31A5EE6CA443 /* MacraAudioService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B806F81BC381E884F10C517 /* MacraAudioService.swift */; };
 		894F92E2E46DE253418F04DD /* NoraOrb.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63A076FC4659CCF2038EDD18 /* NoraOrb.swift */; };
@@ -145,6 +146,8 @@
 		C6C755A47780A648572C2D84 /* BuddiesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1818696A812D008D9EB8F335 /* BuddiesView.swift */; };
 		C6D6E78C644E8AAC3BD25867 /* MealSocialModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAD551BFFD594329519C59B4 /* MealSocialModels.swift */; };
 		C7E5E8E22FAA624500E057FB /* AppsFlyerLib-Strict in Frameworks */ = {isa = PBXBuildFile; productRef = C7E5E8E12FAA624500E057FB /* AppsFlyerLib-Strict */; };
+		C7E5FA192FB126EC00E057FB /* TikTokBusinessSDK in Frameworks */ = {isa = PBXBuildFile; productRef = C7E5FA182FB126EC00E057FB /* TikTokBusinessSDK */; };
+		C7E5FA212FB1330000E057FB /* MacraAnalyticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E5FA202FB1330000E057FB /* MacraAnalyticsService.swift */; };
 		C7F9A0102F8B100100000001 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = C7F9A0112F8B100100000001 /* FirebaseMessaging */; };
 		C86AAB347F83472293EB9F1F /* MacraNutritionInsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86BC286054F0765ED3EFBF80 /* MacraNutritionInsightsView.swift */; };
 		CA77ADB196E9546ACF7FFD6E /* MealRowSocialObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69DF056D452DE7AF4CB79E6A /* MealRowSocialObserver.swift */; };
@@ -153,6 +156,7 @@
 		DDF7B6128A453C304FCAD5E0 /* LoggedSupplement.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6540DFF3EF77D4A371C2788 /* LoggedSupplement.swift */; };
 		E4E31F75F22228EAD9D340D3 /* MacraSportConfigService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A39C7846784E7C54734FFC9B /* MacraSportConfigService.swift */; };
 		E5E2497DA5EE5A88D4C2A039 /* MacraFoodJournalLabelViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23EC6FADC69951CE83A7073A /* MacraFoodJournalLabelViews.swift */; };
+		E8A5B4055458419BB1F5A380 /* MacraScreenDemoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCD33EB0B615485F9D9B44F2 /* MacraScreenDemoView.swift */; };
 		EC04C2D87632C3E2AC86AAB0 /* ConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23E08F80A7CBA4F1904E0AF6 /* ConfigManager.swift */; };
 		EFB906737EE00A9C63DAC997 /* MacraNotificationPreferencesStepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82DA5FD2EBA38FD63F4E42E9 /* MacraNotificationPreferencesStepView.swift */; };
 		F24DF303A3F235EDEB8106EC /* MealSocialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9365104D5029586850C06738 /* MealSocialView.swift */; };
@@ -290,6 +294,7 @@
 		70EACC799CAB44842A82728F /* MacraFoodJournalMacroBreakdownView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalMacroBreakdownView.swift; path = Features/FoodJournal/MacraFoodJournalMacroBreakdownView.swift; sourceTree = "<group>"; };
 		70FA55D050BE9821C3560DDE /* MacraFoodJournalHealthBadges.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalHealthBadges.swift; path = Features/FoodJournal/MacraFoodJournalHealthBadges.swift; sourceTree = "<group>"; };
 		762C6C6FC7ED11FD894532CD /* MacraOnboardingModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraOnboardingModels.swift; path = Features/Onboarding/MacraOnboardingModels.swift; sourceTree = "<group>"; };
+		778FE4553E0348D3A4CA8BF3 /* MacraDemoModeEnvironment.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MacraDemoModeEnvironment.swift; sourceTree = "<group>"; };
 		7D50F970FF8F48D8649CF58A /* MacraFoodJournalJournalViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalJournalViews.swift; path = Features/FoodJournal/MacraFoodJournalJournalViews.swift; sourceTree = "<group>"; };
 		800972D5438983A6181B0AA3 /* MealService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealService.swift; path = NutritionCore/Services/MealService.swift; sourceTree = "<group>"; };
 		80D4C297D9A6F1963FE7D0D3 /* FWPHandoffService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FWPHandoffService.swift; path = Features/Onboarding/FWPHandoffService.swift; sourceTree = "<group>"; };
@@ -310,7 +315,9 @@
 		B89CD153F07287CF1E67B2E2 /* MacraVersionService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraVersionService.swift; path = Services/MacraVersionService.swift; sourceTree = "<group>"; };
 		B8C912D53FE24240D88E2A87 /* MealSelectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealSelectionView.swift; path = Features/MealPlanning/MealSelectionView.swift; sourceTree = "<group>"; };
 		C7C3E94B2F97813D00170CAE /* Macra.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Macra.entitlements; sourceTree = "<group>"; };
+		C7E5FA202FB1330000E057FB /* MacraAnalyticsService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraAnalyticsService.swift; path = Services/MacraAnalyticsService.swift; sourceTree = "<group>"; };
 		CAD551BFFD594329519C59B4 /* MealSocialModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealSocialModels.swift; path = Features/Buddies/MealSocialModels.swift; sourceTree = "<group>"; };
+		CCD33EB0B615485F9D9B44F2 /* MacraScreenDemoView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MacraScreenDemoView.swift; sourceTree = "<group>"; };
 		D348E064F69ACC18B2C2F98B /* MacraFoodJournalCaptureViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalCaptureViews.swift; path = Features/FoodJournal/MacraFoodJournalCaptureViews.swift; sourceTree = "<group>"; };
 		D46405C8BEBB1FBDD73A958D /* MealPlanningComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealPlanningComponents.swift; path = Features/MealPlanning/MealPlanningComponents.swift; sourceTree = "<group>"; };
 		D6540DFF3EF77D4A371C2788 /* LoggedSupplement.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = LoggedSupplement.swift; path = NutritionCore/Models/LoggedSupplement.swift; sourceTree = "<group>"; };
@@ -332,6 +339,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				21E8FB632A9EDC0800671B49 /* FirebaseAnalytics in Frameworks */,
+				C7E5FA192FB126EC00E057FB /* TikTokBusinessSDK in Frameworks */,
 				21E8FB672A9EDC0800671B49 /* FirebaseCrashlytics in Frameworks */,
 				21E8FB732A9EDC2400671B49 /* Lottie in Frameworks */,
 				21E8FB6B2A9EDC0800671B49 /* FirebasePerformance in Frameworks */,
@@ -454,6 +462,7 @@
 				80D4C297D9A6F1963FE7D0D3 /* FWPHandoffService.swift */,
 				12EEB949A7E844E068A51B91 /* FWPMacrosHandoffStepView.swift */,
 				32A45687B06E28BEA3FDA58D /* AppleSignInService.swift */,
+				C7E5FA202FB1330000E057FB /* MacraAnalyticsService.swift */,
 				67D7D59E5735BFC9A718E562 /* MacraFoodJournalNutritionBreakdownCard.swift */,
 				A39C7846784E7C54734FFC9B /* MacraSportConfigService.swift */,
 				FB0296153587DF3F118D9B81 /* MacraDailyInsightService.swift */,
@@ -555,6 +564,7 @@
 			children = (
 				219390042A9FC157006EF2A9 /* New Group */,
 				21E8FB872A9EE0D100671B49 /* AboutView.swift */,
+				254030BFA73B48698CB837F3 /* Admin */,
 				21E8FB882A9EE0D100671B49 /* Settings */,
 				21E8FB8A2A9EE0D100671B49 /* Home */,
 				21E8FB8E2A9EE0D100671B49 /* TermsAndConditionsView.swift */,
@@ -777,6 +787,15 @@
 			path = Services;
 			sourceTree = "<group>";
 		};
+		254030BFA73B48698CB837F3 /* Admin */ = {
+			isa = PBXGroup;
+			children = (
+				778FE4553E0348D3A4CA8BF3 /* MacraDemoModeEnvironment.swift */,
+				CCD33EB0B615485F9D9B44F2 /* MacraScreenDemoView.swift */,
+			);
+			path = Admin;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -807,6 +826,7 @@
 				21E8FB6F2A9EDC1800671B49 /* OpenAISwift */,
 				21E8FB722A9EDC2400671B49 /* Lottie */,
 				C7E5E8E12FAA624500E057FB /* AppsFlyerLib-Strict */,
+				C7E5FA182FB126EC00E057FB /* TikTokBusinessSDK */,
 			);
 			productName = Macra;
 			productReference = 21E8FA8D2A9EDB0B00671B49 /* MacraFoodJournal.app */;
@@ -886,6 +906,7 @@
 				21E8FB6E2A9EDC1800671B49 /* XCRemoteSwiftPackageReference "OpenAISwift" */,
 				21E8FB712A9EDC2300671B49 /* XCRemoteSwiftPackageReference "lottie-ios" */,
 				C7E5E8E02FAA624500E057FB /* XCRemoteSwiftPackageReference "AppsFlyerFramework-Strict" */,
+				C7E5FA172FB126EC00E057FB /* XCRemoteSwiftPackageReference "tiktok-business-ios-sdk" */,
 			);
 			productRefGroup = 21E8FA8E2A9EDB0B00671B49 /* Products */;
 			projectDirPath = "";
@@ -1013,6 +1034,8 @@
 				21E8FBFF2A9EE0D100671B49 /* SnapScrollView.swift in Sources */,
 				21E8FBF42A9EE0D100671B49 /* PrivacyPolicyView.swift in Sources */,
 				21E8FBE22A9EE0D100671B49 /* SettingView.swift in Sources */,
+				775A2F2AC02E475181E642B3 /* MacraDemoModeEnvironment.swift in Sources */,
+				E8A5B4055458419BB1F5A380 /* MacraScreenDemoView.swift in Sources */,
 				21E8FBD72A9EE0D100671B49 /* User.swift in Sources */,
 				21E8FC0E2A9EE0D100671B49 /* DottedLine.swift in Sources */,
 				21E8FBFA2A9EE0D100671B49 /* CustomTabBarView.swift in Sources */,
@@ -1091,6 +1114,7 @@
 				351D6F1F1B217A541C2789BF /* FWPHandoffService.swift in Sources */,
 				AFFC8DE905E05EAD6ACA5B4F /* FWPMacrosHandoffStepView.swift in Sources */,
 				C6341FDB24E6B3D8891D51FD /* AppleSignInService.swift in Sources */,
+				C7E5FA212FB1330000E057FB /* MacraAnalyticsService.swift in Sources */,
 				0E127F693AFD7E4902FFED32 /* MacraFoodJournalNutritionBreakdownCard.swift in Sources */,
 				E4E31F75F22228EAD9D340D3 /* MacraSportConfigService.swift in Sources */,
 				18862A51E921780B030A4AAB /* MacraDailyInsightService.swift in Sources */,
@@ -1285,7 +1309,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.05;
+				MARKETING_VERSION = 1.06;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1327,7 +1351,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.05;
+				MARKETING_VERSION = 1.06;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1471,7 +1495,7 @@
 			repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git";
 			requirement = {
 				kind = upToNextMajorVersion;
-				minimumVersion = 10.0.0;
+				minimumVersion = 12.0.0;
 			};
 		};
 		21E8FB6E2A9EDC1800671B49 /* XCRemoteSwiftPackageReference "OpenAISwift" */ = {
@@ -1496,6 +1520,14 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 6.18.0;
+			};
+		};
+		C7E5FA172FB126EC00E057FB /* XCRemoteSwiftPackageReference "tiktok-business-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tiktok/tiktok-business-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.6.1;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -1550,6 +1582,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C7E5E8E02FAA624500E057FB /* XCRemoteSwiftPackageReference "AppsFlyerFramework-Strict" */;
 			productName = "AppsFlyerLib-Strict";
+		};
+		C7E5FA182FB126EC00E057FB /* TikTokBusinessSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C7E5FA172FB126EC00E057FB /* XCRemoteSwiftPackageReference "tiktok-business-ios-sdk" */;
+			productName = TikTokBusinessSDK;
 		};
 		C7F9A0112F8B100100000001 /* FirebaseMessaging */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -1,5 +1,4 @@
 import SwiftUI
-import RevenueCat
 
 class PayWallViewModel: ObservableObject {
     @Published var appCoordinator: AppCoordinator
@@ -10,145 +9,973 @@ class PayWallViewModel: ObservableObject {
 }
 
 struct PayWallView: View {
-    var offeringViewModel = PurchaseService.sharedInstance.offering
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var offeringViewModel = PurchaseService.sharedInstance.offering
     @ObservedObject var viewModel: PayWallViewModel
+    @State private var didTrackPaywallView = false
+    @State private var standaloneSelectedPlanID: String?
+    @State private var standalonePurchaseError: String?
+    @State private var isStandalonePurchasing = false
+    private let isDemoMode: Bool
+    private let onboardingCoordinator: MacraOnboardingCoordinator?
+    private let onDismiss: (() -> Void)?
+
+    init(
+        viewModel: PayWallViewModel,
+        isDemoMode: Bool = false,
+        onboardingCoordinator: MacraOnboardingCoordinator? = nil,
+        onDismiss: (() -> Void)? = nil
+    ) {
+        self._viewModel = ObservedObject(wrappedValue: viewModel)
+        self.isDemoMode = isDemoMode
+        self.onboardingCoordinator = onboardingCoordinator
+        self.onDismiss = onDismiss
+    }
+
+    private var isOnboarding: Bool { onboardingCoordinator != nil }
+
+    private var isRenewalFlow: Bool {
+        onboardingCoordinator?.startingStep == .commitTrial
+    }
+
+    private var availablePlans: [SubscriptionPlanOption] {
+        if let coordinator = onboardingCoordinator {
+            return coordinator.availablePlanOptions
+        }
+        return isDemoMode ? Self.demoPlanOptions : offeringViewModel.planOptions
+    }
+
+    private var displayedPlans: [SubscriptionPlanOption] {
+        Self.paywallPlans(from: availablePlans)
+    }
+
+    private var selectedPlan: SubscriptionPlanOption? {
+        if let coordinator = onboardingCoordinator {
+            if let current = coordinator.selectedPlan,
+               displayedPlans.contains(where: { $0.id == current.id }) {
+                return current
+            }
+            return displayedPlans.first ?? coordinator.selectedPlan
+        }
+
+        if let id = standaloneSelectedPlanID,
+           let match = displayedPlans.first(where: { $0.id == id }) {
+            return match
+        }
+        return displayedPlans.first
+    }
+
+    private var isPurchasing: Bool {
+        onboardingCoordinator?.isPurchasing ?? isStandalonePurchasing
+    }
+
+    private var purchaseError: String? {
+        onboardingCoordinator?.purchaseError ?? standalonePurchaseError
+    }
+
+    private var isLoadingPackages: Bool {
+        offeringViewModel.isLoadingPackages
+    }
+
+    private var packageLoadError: String? {
+        isDemoMode ? nil : offeringViewModel.packageLoadError
+    }
 
     var body: some View {
-        VStack {
-            HeaderView(viewModel: HeaderViewModel(headerTitle: "", type: .close, closeModal: {
-                viewModel.appCoordinator.closeModals()
-            }, actionCallBack: {
-                //
-            }))
-            ScrollView {
-                VStack(spacing: 0) {
-                    Rectangle()
-                        .frame(height: 350)
-                        .foregroundColor(.white)
-                    ZStack {
-                        VStack(spacing: 0) {
-                            Rectangle()
-                                .fill(Color.black)
-                                .ignoresSafeArea(.all)
-                            Rectangle()
-                                .fill(Color.white)
-                                .ignoresSafeArea(.all)
+        ZStack {
+            MacraChromaticBackground()
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                topBar
+
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        heroSection
+
+                        revealOrPersonalizedSection
+
+                        unlockHighlightsCard
+
+                        tierPickerSection
+
+                        priceDisclosureCard
+
+                        if let purchaseError, !purchaseError.isEmpty {
+                            Text(purchaseError)
+                                .font(.system(size: 14))
+                                .foregroundColor(Color(hex: "FF8A80"))
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 10) {
-                                if let package = offeringViewModel.yearlyPackage {
-
-                                    PackageCardView(badgeLabel: "Best Value", title: "Annual Pro Plan", subtitle: "Macra premium + Fit With Pulse Pro included — AI food logging, macro coaching, AI workouts, and live rounds in one subscription.", breakDownPrice: "About $6 per month", billPrice: "$79.99 billed annually", bottomLabel: "Most popular plan", buttonTitle: "Get 7 day Trial w/ Annual", package: package, offeringViewModel: offeringViewModel) {
-
-                                        self.offeringViewModel.purchase(package) { result in
-                                            switch result {
-                                            case .success:
-                                                print("Success")
-                                                viewModel.appCoordinator.closeModals()
-                                            case .failure(let error):
-                                                print("There was an error while purchasing \(error)")
-                                            }
-                                        }
-                                    }
-                                }
-                                if let package = offeringViewModel.monthlyPackage {
-                                    PackageCardView(badgeLabel: "Most Flexible", title: "Monthly Pro Plan", subtitle: "Macra premium + Fit With Pulse Pro included — month-to-month, cancel anytime.", breakDownPrice: "12.99 /month", billPrice: "Billed monthly", bottomLabel: "Flexible monthly access", buttonTitle: "Get Monthly", package: package, offeringViewModel: offeringViewModel) {
-
-                                        self.offeringViewModel.purchase(package) { result in
-                                            switch result {
-                                            case .success:
-                                                print("Success")
-                                                viewModel.appCoordinator.closeModals()
-                                            case .failure(let error):
-                                                print("There was an error while purchasing \(error)")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 8) // Add padding to the HStack to center the cards
-                        }
-                        .frame(height: 400) // Set a fixed height for the ScrollView
                     }
-                    .padding(.bottom, 50)
-                    
-                    PreviewCardView()
-                    
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
+                    .padding(.bottom, 32)
+                }
+
+                bottomCTASection
+            }
+        }
+        .preferredColorScheme(.dark)
+        .task {
+            await loadPlansAndTrackPaywallView()
+        }
+        .onAppear {
+            if let coordinator = onboardingCoordinator {
+                if !coordinator.isDemoMode {
+                    coordinator.loadPlanMacros()
+                }
+                coordinator.ensureOfferingsLoaded()
+            }
+            ensureVisiblePlanSelected()
+        }
+        .onChange(of: availablePlans.map(\.id).joined(separator: ",")) { _ in
+            ensureVisiblePlanSelected()
+            guard !isDemoMode else { return }
+            trackPaywallViewedIfReady()
+        }
+    }
+
+    // MARK: - Top bar
+
+    @ViewBuilder
+    private var topBar: some View {
+        if let coordinator = onboardingCoordinator {
+            PaywallTopBar(
+                canGoBack: coordinator.canGoBack,
+                onBack: coordinator.back,
+                onClose: coordinator.dismissPaywall
+            )
+        } else {
+            HStack {
+                Spacer()
+                Button {
+                    closePaywall()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.78))
+                        .frame(width: 40, height: 40)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(Circle())
+                }
+                .accessibilityIdentifier("macra-paywall-close-button")
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+        }
+    }
+
+    // MARK: - Hero
+
+    private var heroSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(headerEyebrow)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.4)
+                .foregroundColor(.primaryGreen)
+
+            Text(headerTitle)
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(headerSubtitle)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundColor(.white.opacity(0.68))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var showsPersonalizedPlan: Bool {
+        guard !isRenewalFlow else { return false }
+        return onboardingCoordinator?.planMacros != nil
+    }
+
+    private var headerEyebrow: String {
+        if isRenewalFlow { return "SUBSCRIPTION REQUIRED" }
+        return "MACRA PLUS"
+    }
+
+    private var headerTitle: String {
+        if isRenewalFlow { return "Renew Macra Pro." }
+        guard let plan = selectedPlan else { return "Know exactly what to eat next." }
+        switch plan.periodKind {
+        case .year: return "Know exactly what to eat next, all year."
+        case .month: return "Reveal this month's plan."
+        default: return "Know exactly what to eat next."
+        }
+    }
+
+    private var headerSubtitle: String {
+        "Scan the meal in front of you. Macra reveals the macros, shows whether it fits today, and lets Nora fix the rest of your day."
+    }
+
+    // MARK: - Personalized plan (when available) + Reveal teaser (always)
+
+    @ViewBuilder
+    private var revealOrPersonalizedSection: some View {
+        if showsPersonalizedPlan, let macros = onboardingCoordinator?.planMacros {
+            planSummaryCard(macros: macros)
+        }
+        PayWallRevealMoment()
+    }
+
+    @ViewBuilder
+    private func planSummaryCard(macros: MacroRecommendation) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("YOUR PLAN")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.3)
+                .foregroundColor(Color.primaryGreen)
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("\(macros.calories)")
+                    .font(.system(size: 34, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white)
+                Text("kcal daily")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white.opacity(0.6))
+            }
+
+            HStack(spacing: 8) {
+                planSummaryChip(label: "P", value: "\(macros.protein)g", color: Color.primaryBlue)
+                planSummaryChip(label: "C", value: "\(macros.carbs)g", color: Color.primaryGreen)
+                planSummaryChip(label: "F", value: "\(macros.fat)g", color: Color(hex: "FFB454"))
+            }
+
+            if let plan = onboardingCoordinator?.suggestedMealPlan, !plan.meals.isEmpty {
+                Divider().background(Color.white.opacity(0.08))
+                HStack(spacing: 10) {
+                    Image(systemName: "fork.knife")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color.primaryGreen)
+                    Text("\(plan.meals.count) meals planned")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.9))
                     Spacer()
-                        .frame(height: 50)
-                    
-                    HStack {
-                        VStack(alignment: .leading, spacing: 10) {
-    //                                    HStack {
-    //                                        IconImage(.sfSymbol(.upArrow, color: .primaryPurple))
-    //                                        Text("Back to plans")
-    //                                            .foregroundColor(.primaryPurple)
-    //                                    }
-    //                                    .onTapGesture {
-    //                                        withAnimation {
-    //                                            scrollProxy.scrollTo(0, anchor: .top)
-    //                                        }
-    //                                    }
-                                HStack {
-                                    IconImage(.sfSymbol(.reload, color: .gray))
-                                    Text("Restore Purchases")
-                                        .foregroundColor(.gray)
-                                }
-    //                                                                .onTapGesture {
-    //                                                                    PurchaseService.sharedInstance.restorePurchases { result in
-    //                                                                        switch result {
-    //                                                                        case .success:
-    //                                                                            viewModel.appCoordinator.showHomeScreen()
-    //                                                                        case .failure(let error):
-    //                                                                            print(error)
-    //                                                                            viewModel.appCoordinator.showToast(viewModel: ToastViewModel(message: "We were unable to restore your purchase. Please contact support at puppyschoolapp@gmail.com", backgroundColor: .secondaryCharcoal, textColor: .secondaryWhite))
-    //                                                                        }
-    //                                                                    }
-    //                                                                }
-                                HStack {
-                                    IconImage(.sfSymbol(.privacy, color: .gray))
-                                    Text("Privacy Policy")
-                                        .foregroundColor(.gray)
-                                }
-                                .onTapGesture {
-                                    viewModel.appCoordinator.showPrivacyScreenModal()
-                                }
-                                HStack {
-                                    IconImage(.sfSymbol(.doc, color: .gray))
-                                    Text("Terms of Service")
-                                        .foregroundColor(.gray)
-                                }
-                                .onTapGesture {
-    //                                                                    viewModel.appCoordinator.showTermsScreenModal()
-                                }
-                              //  if BetaService.sharedInstance.betaEligibleUsers.contains(UserService.sharedInstance.user?.email ?? "nothing") {
-                                    HStack {
-                                        IconImage(.sfSymbol(.doc, color: .gray))
-                                        Text("Enroll in Beta")
-                                            .foregroundColor(.gray)
-                                    }
-                                    .onTapGesture {
-                                        viewModel.appCoordinator.showHomeScreen()
-                                    }
-                              //  }
-                            }
-                        .padding(.leading, 20)
-                        .padding(.bottom, 50)
-                        Spacer()
-                    }
-                    
-                    
                 }
             }
-            .ignoresSafeArea(.all)
+
+            if let struggle = onboardingCoordinator?.answers.biggestStruggle {
+                Divider().background(Color.white.opacity(0.08))
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color.primaryGreen)
+                        .padding(.top, 2)
+                    Text(struggle.paywallProofLine)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.78))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color.primaryGreen.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(Color.primaryGreen.opacity(0.25), lineWidth: 1)
+        )
+    }
+
+    private func planSummaryChip(label: String, value: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(color)
+            Text(value)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.85))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(color.opacity(0.1)))
+        .overlay(Capsule().strokeBorder(color.opacity(0.25), lineWidth: 1))
+    }
+
+    // MARK: - What unlocks
+
+    private var unlockHighlightsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("WHAT UNLOCKS")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.3)
+                .foregroundColor(Color.primaryGreen)
+
+            unlockHighlightRow(
+                icon: "camera.viewfinder",
+                title: "Scan meals",
+                body: "Turn food photos into calorie and macro estimates."
+            )
+            unlockHighlightRow(
+                icon: "qrcode.viewfinder",
+                title: "Read labels",
+                body: "See product and ingredient tradeoffs before you eat."
+            )
+            unlockHighlightRow(
+                icon: "bubble.left.and.bubble.right.fill",
+                title: "Ask Nora",
+                body: "Get day-specific coaching from your targets and logs."
+            )
+            unlockHighlightRow(
+                icon: "dumbbell",
+                title: "Fit With Pulse Pro included",
+                body: "One subscription also unlocks AI workouts, live rounds, and clubs."
+            )
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18).fill(Color.white.opacity(0.045)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private func unlockHighlightRow(icon: String, title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(Color.primaryGreen)
+                .frame(width: 28, height: 28)
+                .background(Color.primaryGreen.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                Text(body)
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.62))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    // MARK: - Tier picker
+
+    @ViewBuilder
+    private var tierPickerSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("CHOOSE YOUR PLAN")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.3)
+                .foregroundColor(Color.primaryGreen)
+
+            if isLoadingPackages && availablePlans.isEmpty {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .tint(Color.primaryGreen)
+                    Text("Loading plans...")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 8)
+            } else if displayedPlans.isEmpty {
+                planStatusCard(message: packageLoadError ?? "No subscription plans are available right now.")
+            } else {
+                ForEach(Array(displayedPlans.enumerated()), id: \.element.id) { index, plan in
+                    TierCard(
+                        title: plan.displayTitle,
+                        perPeriodPrice: plan.perPeriodDisplay,
+                        billingNote: plan.billingNote,
+                        badge: tierSavingsBadge(for: plan),
+                        emphasized: index == 0,
+                        isSelected: selectedPlan?.id == plan.id,
+                        onTap: { selectPlan(plan) }
+                    )
+                }
+            }
+        }
+    }
+
+    private func planStatusCard(message: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(message)
+                .font(.system(size: 14))
+                .foregroundColor(.white.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                if let coordinator = onboardingCoordinator {
+                    coordinator.ensureOfferingsLoaded(force: true)
+                } else {
+                    Task { await offeringViewModel.start() }
+                }
+            } label: {
+                Text("Retry loading plans")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Color.primaryGreen)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.06)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    }
+
+    private func tierSavingsBadge(for plan: SubscriptionPlanOption) -> String? {
+        guard plan.periodKind == .year,
+              let comparisonPlan = availablePlans.first(where: { $0.periodKind == .month }) else { return nil }
+        let yearlyPrice = NSDecimalNumber(decimal: plan.price).doubleValue
+        let comparisonPrice = NSDecimalNumber(decimal: comparisonPlan.price).doubleValue
+        let annualizedComparison = comparisonPrice * 12
+        guard annualizedComparison > 0, yearlyPrice < annualizedComparison else { return nil }
+        let pct = Int(((annualizedComparison - yearlyPrice) / annualizedComparison * 100).rounded())
+        return pct > 0 ? "SAVE \(pct)%" : nil
+    }
+
+    private func selectPlan(_ plan: SubscriptionPlanOption) {
+        if let coordinator = onboardingCoordinator {
+            coordinator.selectPlan(plan)
+        } else {
+            standaloneSelectedPlanID = plan.id
+        }
+    }
+
+    private func ensureVisiblePlanSelected() {
+        guard let firstVisiblePlan = displayedPlans.first else { return }
+
+        if let coordinator = onboardingCoordinator {
+            if let current = coordinator.selectedPlan,
+               displayedPlans.contains(where: { $0.id == current.id }) {
+                return
+            }
+            coordinator.selectPlan(firstVisiblePlan)
+            return
+        }
+
+        if let id = standaloneSelectedPlanID,
+           displayedPlans.contains(where: { $0.id == id }) {
+            return
+        }
+        standaloneSelectedPlanID = firstVisiblePlan.id
+    }
+
+    // MARK: - Price disclosure
+
+    private var priceDisclosureCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Auto-renews at the price shown until canceled. Cancel anytime in Settings → [your name] → Subscriptions.")
+                .font(.system(size: 13))
+                .foregroundColor(.white.opacity(0.75))
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let plan = selectedPlan {
+                HStack {
+                    Text("Plan")
+                        .foregroundColor(.white.opacity(0.6))
+                        .font(.system(size: 12))
+                    Spacer()
+                    Text(plan.priceLabel)
+                        .foregroundColor(.white)
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(16)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.04)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Bottom CTA + footer
+
+    private var bottomCTASection: some View {
+        VStack(spacing: 14) {
+            MacraPrimaryButton(
+                title: isPurchasing ? "Processing..." : ctaTitle,
+                accent: Color.primaryGreen,
+                isLoading: isPurchasing,
+                action: triggerPurchase
+            )
+            .disabled(isPurchasing || (availablePlans.isEmpty && isLoadingPackages) || selectedPlan == nil)
+
+            HStack(spacing: 16) {
+                Button(action: triggerRestore) {
+                    Text("Restore Purchases")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+
+                Button(action: openPrivacy) {
+                    Text("Privacy")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+
+                Button(action: openTerms) {
+                    Text("Terms")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 20)
+    }
+
+    private var ctaTitle: String {
+        guard let plan = selectedPlan else { return "Continue" }
+        switch plan.periodKind {
+        case .year: return "Unlock yearly plan"
+        case .month: return "Unlock Macra Pro"
+        default: return "Continue"
+        }
+    }
+
+    // MARK: - Actions
+
+    private func triggerPurchase() {
+        if let coordinator = onboardingCoordinator {
+            coordinator.purchaseAndContinue()
+            return
+        }
+        guard let plan = selectedPlan else { return }
+        purchaseStandalone(plan)
+    }
+
+    private func purchaseStandalone(_ plan: SubscriptionPlanOption) {
+        if isDemoMode {
+            viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
+                message: "Demo purchase tapped: \(plan.displayTitle)",
+                backgroundColor: .secondaryCharcoal,
+                textColor: .secondaryWhite
+            ))
+            return
+        }
+
+        isStandalonePurchasing = true
+        standalonePurchaseError = nil
+
+        offeringViewModel.purchase(plan) { result in
+            isStandalonePurchasing = false
+            switch result {
+            case .success:
+                MacraAnalyticsService.shared.trackSubscriptionStart(plan: plan, source: "legacy_paywall")
+                finishStandalonePaywall()
+            case .failure(let error):
+                standalonePurchaseError = (error as NSError).localizedDescription
+                print("There was an error while purchasing \(error)")
+            }
+        }
+    }
+
+    private func triggerRestore() {
+        if let coordinator = onboardingCoordinator {
+            coordinator.restorePurchasesAndContinue()
+            return
+        }
+        restoreStandalone()
+    }
+
+    private func restoreStandalone() {
+        if isDemoMode {
+            viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
+                message: "Demo restore tapped",
+                backgroundColor: .secondaryCharcoal,
+                textColor: .secondaryWhite
+            ))
+            return
+        }
+
+        PurchaseService.sharedInstance.restoreSubscriptionStatus { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let restored):
+                    if restored {
+                        finishStandalonePaywall()
+                    } else {
+                        viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
+                            message: "No active subscription found for this Apple ID.",
+                            backgroundColor: .secondaryCharcoal,
+                            textColor: .secondaryWhite
+                        ))
+                    }
+                case .failure(let error):
+                    print("There was an error while restoring purchases \(error)")
+                    viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
+                        message: "We could not restore purchases. Please try again.",
+                        backgroundColor: .secondaryCharcoal,
+                        textColor: .secondaryWhite
+                    ))
+                }
+            }
+        }
+    }
+
+    private func openPrivacy() {
+        if let coordinator = onboardingCoordinator {
+            coordinator.appCoordinator.showPrivacyScreenModal()
+        } else if !isDemoMode {
+            viewModel.appCoordinator.showPrivacyScreenModal()
+        }
+    }
+
+    private func openTerms() {
+        if let coordinator = onboardingCoordinator {
+            coordinator.appCoordinator.modalScreen = .terms
+        } else if !isDemoMode {
+            viewModel.appCoordinator.modalScreen = .terms
+        }
+    }
+
+    private func closePaywall() {
+        if let onDismiss {
+            onDismiss()
+            return
+        }
+
+        if isDemoMode {
+            dismiss()
+        } else {
+            viewModel.appCoordinator.closeModals()
+        }
+    }
+
+    private func finishStandalonePaywall() {
+        if let onDismiss {
+            onDismiss()
+        } else {
+            viewModel.appCoordinator.closeModals()
+        }
+    }
+
+    // MARK: - Tracking / loading
+
+    @MainActor
+    private func loadPlansAndTrackPaywallView() async {
+        if isDemoMode {
+            didTrackPaywallView = true
+            return
+        }
+
+        if onboardingCoordinator == nil,
+           offeringViewModel.planOptions.isEmpty,
+           !offeringViewModel.isLoadingPackages {
+            await offeringViewModel.start()
+        }
+
+        trackPaywallViewedIfReady()
+    }
+
+    @MainActor
+    private func trackPaywallViewedIfReady() {
+        guard !isDemoMode, !didTrackPaywallView else { return }
+        guard !availablePlans.isEmpty else { return }
+
+        didTrackPaywallView = true
+        MacraAnalyticsService.shared.trackPaywallViewed(
+            source: isOnboarding ? "onboarding_paywall" : "legacy_paywall",
+            selectedPlan: selectedPlan,
+            availablePlans: availablePlans
+        )
+    }
+
+    // MARK: - Plan list helpers
+
+    private static func paywallPlans(from plans: [SubscriptionPlanOption]) -> [SubscriptionPlanOption] {
+        let annual = plans.first(where: { $0.periodKind == .year })
+        let monthly = plans.first(where: { $0.periodKind == .month })
+        let primaryPlans = [annual, monthly].compactMap { $0 }
+
+        if !primaryPlans.isEmpty {
+            return primaryPlans
+        }
+
+        return plans
+            .filter { [.year, .month].contains($0.periodKind) }
+            .sorted { $0.periodKind.rawValue < $1.periodKind.rawValue }
+    }
+
+    private static var demoPlanOptions: [SubscriptionPlanOption] {
+        [
+            .local(LocalSubscriptionPlanViewModel(
+                id: "rc_annual_demo",
+                displayTitle: "Annual",
+                localizedPriceString: "$39.99",
+                price: Decimal(39.99),
+                periodKind: .year,
+                trialDays: nil,
+                product: nil
+            )),
+            .local(LocalSubscriptionPlanViewModel(
+                id: "rc_monthly_demo",
+                displayTitle: "Monthly",
+                localizedPriceString: "$4.99",
+                price: Decimal(4.99),
+                periodKind: .month,
+                trialDays: nil,
+                product: nil
+            ))
+        ]
+    }
+}
+
+// MARK: - Photo-scan moment with animated scan sweep + macro reveal
+
+private struct PayWallRevealMoment: View {
+    @State private var scanStartedAt: Date?
+    @State private var revealStartedAt: Date?
+    @State private var showNoraLine = false
+    @State private var animateBars = false
+
+    private static let scanDuration: TimeInterval = 1.35
+    private static let countDuration: TimeInterval = 0.95
+
+    var body: some View {
+        MacraGlassCard(accent: .primaryGreen, tint: .primaryGreen, tintOpacity: 0.06) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("PHOTO SCAN")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .tracking(1.3)
+                        .foregroundColor(.white.opacity(0.62))
+
+                    Spacer()
+
+                    Label("10 sec", systemImage: "bolt.fill")
+                        .font(.caption.weight(.bold))
+                        .foregroundColor(.primaryGreen)
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    PayWallMealSnapshot(
+                        scanStartedAt: scanStartedAt,
+                        scanDuration: Self.scanDuration,
+                        countDuration: Self.countDuration
+                    )
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        PayWallMacroLine(label: "Protein", target: 48, fillTarget: 0.82, tint: .primaryGreen, revealStartedAt: revealStartedAt, duration: Self.countDuration, animateBar: animateBars)
+                        PayWallMacroLine(label: "Carbs", target: 63, fillTarget: 0.62, tint: .primaryBlue, revealStartedAt: revealStartedAt, duration: Self.countDuration, animateBar: animateBars)
+                        PayWallMacroLine(label: "Fat", target: 19, fillTarget: 0.38, tint: .secondaryPink, revealStartedAt: revealStartedAt, duration: Self.countDuration, animateBar: animateBars)
+                    }
+                    .padding(13)
+                    .background(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.black)
+                        .frame(width: 28, height: 28)
+                        .background(Color.primaryGreen)
+                        .clipShape(Circle())
+
+                    Text("Nora: You're short 42g protein. Dinner should be lean protein + low-fat carbs.")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.88))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .opacity(showNoraLine ? 1 : 0)
+                .offset(y: showNoraLine ? 0 : 8)
+                .animation(.easeOut(duration: 0.45), value: showNoraLine)
+            }
+        }
+        .onAppear { runAnimationSequence() }
+    }
+
+    private func runAnimationSequence() {
+        guard scanStartedAt == nil else { return }
+        scanStartedAt = Date()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.scanDuration) {
+            revealStartedAt = Date()
+            withAnimation(.easeOut(duration: Self.countDuration)) {
+                animateBars = true
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.scanDuration + Self.countDuration + 0.12) {
+            showNoraLine = true
+        }
+    }
+}
+
+private struct PayWallMealSnapshot: View {
+    let scanStartedAt: Date?
+    let scanDuration: TimeInterval
+    let countDuration: TimeInterval
+
+    private let frameSize: CGFloat = 118
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ZStack {
+                Image("chipotleBowl")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: frameSize, height: frameSize)
+
+                LinearGradient(
+                    colors: [.black.opacity(0.02), .black.opacity(0.52)],
+                    startPoint: .center,
+                    endPoint: .bottom
+                )
+                .frame(width: frameSize, height: frameSize)
+
+                if let scanStartedAt {
+                    scanOverlay(startedAt: scanStartedAt)
+                }
+
+                VStack(spacing: 6) {
+                    Image(systemName: "camera.viewfinder")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(.white)
+
+                    Text("Chipotle bowl")
+                        .font(.caption.weight(.black))
+                        .foregroundColor(.white)
+                }
+            }
+            .frame(width: frameSize, height: frameSize)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+            )
+            .accessibilityLabel("Chipotle bowl scan preview")
+
+            countingCalories
+                .font(.title3.weight(.black))
+                .foregroundColor(.white)
+                .monospacedDigit()
+
+            Text("Fits today with one adjustment")
+                .font(.caption.weight(.semibold))
+                .foregroundColor(.white.opacity(0.62))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private func scanOverlay(startedAt: Date) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { context in
+            let elapsed = max(0, context.date.timeIntervalSince(startedAt))
+            let progress = min(1, elapsed / scanDuration)
+            let lineY = frameSize * CGFloat(progress)
+            let scanning = progress < 1.0
+
+            ZStack(alignment: .top) {
+                if scanning {
+                    LinearGradient(
+                        colors: [
+                            Color.primaryGreen.opacity(0),
+                            Color.primaryGreen.opacity(0.32),
+                            Color.primaryGreen.opacity(0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(width: frameSize, height: 42)
+                    .offset(y: lineY - 21)
+                    .blendMode(.plusLighter)
+
+                    Rectangle()
+                        .fill(Color.primaryGreen.opacity(0.95))
+                        .frame(width: frameSize, height: 1.4)
+                        .offset(y: lineY - 0.7)
+                        .shadow(color: Color.primaryGreen.opacity(0.65), radius: 4)
+                        .blendMode(.plusLighter)
+                }
+            }
+            .frame(width: frameSize, height: frameSize, alignment: .top)
+            .clipped()
+        }
+    }
+
+    @ViewBuilder
+    private var countingCalories: some View {
+        if let scanStartedAt {
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { context in
+                let elapsed = max(0, context.date.timeIntervalSince(scanStartedAt) - scanDuration)
+                let progress = max(0, min(1, elapsed / countDuration))
+                let eased = 1 - pow(1 - progress, 3)
+                let value = Int((730.0 * eased).rounded())
+                Text("\(value) kcal")
+            }
+        } else {
+            Text("0 kcal")
+        }
+    }
+}
+
+private struct PayWallMacroLine: View {
+    let label: String
+    let target: Int
+    let fillTarget: CGFloat
+    let tint: Color
+    let revealStartedAt: Date?
+    let duration: TimeInterval
+    let animateBar: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(label)
+                    .font(.caption.weight(.bold))
+                    .foregroundColor(.black.opacity(0.58))
+
+                Spacer()
+
+                countingValue
+                    .font(.caption.weight(.black))
+                    .foregroundColor(.black)
+                    .monospacedDigit()
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.black.opacity(0.08))
+
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: max(0, proxy.size.width * (animateBar ? fillTarget : 0)))
+                }
+            }
+            .frame(height: 8)
+        }
+    }
+
+    @ViewBuilder
+    private var countingValue: some View {
+        if let revealStartedAt {
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { context in
+                let elapsed = max(0, context.date.timeIntervalSince(revealStartedAt))
+                let progress = min(1, elapsed / duration)
+                let eased = 1 - pow(1 - progress, 3)
+                let value = Int((Double(target) * eased).rounded())
+                Text("\(value)g")
+            }
+        } else {
+            Text("0g")
         }
     }
 }
 
 struct PayWallView_Previews: PreviewProvider {
     static var previews: some View {
-        PayWallView(viewModel: PayWallViewModel(appCoordinator: AppCoordinator(serviceManager: ServiceManager())))
+        PayWallView(viewModel: PayWallViewModel(appCoordinator: AppCoordinator(serviceManager: ServiceManager())), isDemoMode: true)
     }
 }
 
@@ -212,7 +1039,7 @@ struct MacraReviewPaywallScreenshotView: View {
                             tint: .primaryBlue,
                             badge: "Flexible",
                             title: "Monthly",
-                            subtitle: "Stay consistent month to month",
+                            subtitle: "Unlock your scan and Nora plan today",
                             price: monthlyPrice,
                             cadence: "per month",
                             supportingLine: "Start anytime, cancel anytime"

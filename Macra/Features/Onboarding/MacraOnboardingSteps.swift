@@ -3,45 +3,75 @@ import SwiftUI
 
 struct WelcomeStepView: View {
     @ObservedObject var coordinator: MacraOnboardingCoordinator
+    private let accent = Color(hex: "E0FE10")
 
     var body: some View {
         ZStack {
             MacraChromaticBackground()
 
-            VStack(spacing: 24) {
+            VStack(spacing: 22) {
                 Spacer()
 
-                VStack(spacing: 16) {
-                    Text("PULSE NUTRITION")
+                VStack(spacing: 18) {
+                    NoraOrb(size: 62, isActive: true)
+
+                    Text("NORA NUTRITION AI")
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .tracking(1.4)
-                        .foregroundColor(Color.primaryGreen)
+                        .foregroundColor(accent)
 
-                    Text("We'll build your plan\nin about 2 minutes.")
+                    Text("Get your calories,\nmacros, meal plan,\nand goal date.")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
 
-                    Text("Tell us about your body and goals. Macra will calculate your calorie target and project the date you'll reach your goal weight.")
+                    Text("Answer a few questions. Macra builds the numbers, then Nora helps you follow them day by day.")
                         .font(.system(size: 15))
                         .foregroundColor(Color.white.opacity(0.72))
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 16)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        welcomePromiseRow(icon: "target", title: "Daily calorie and macro target")
+                        welcomePromiseRow(icon: "calendar", title: "Projected date to reach your goal")
+                        welcomePromiseRow(icon: "fork.knife", title: "Meal ideas that fit your numbers")
+                    }
+                    .padding(16)
+                    .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.white.opacity(0.05)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 6)
                 }
                 .padding(.horizontal, 20)
 
                 Spacer()
 
                 MacraPrimaryButton(
-                    title: "Let's start",
-                    accent: Color.primaryGreen,
+                    title: "Build my plan",
+                    accent: accent,
                     isLoading: false,
                     action: coordinator.advance
                 )
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
             }
+        }
+    }
+
+    private func welcomePromiseRow(icon: String, title: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(accent)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(accent.opacity(0.14)))
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white.opacity(0.88))
+            Spacer(minLength: 0)
         }
     }
 }
@@ -941,6 +971,8 @@ struct PlanReadyStepView: View {
 
                         macroPlanCard
 
+                        coachingFocusCard
+
                         mealPlanSection
                     }
                     .padding(.horizontal, 20)
@@ -949,7 +981,7 @@ struct PlanReadyStepView: View {
                 }
 
                 MacraPrimaryButton(
-                    title: "Continue",
+                    title: "Continue to unlock",
                     accent: Color.primaryGreen,
                     isLoading: false,
                     action: coordinator.advance
@@ -1003,12 +1035,17 @@ struct PlanReadyStepView: View {
                     }
                 }
             } else if coordinator.isLoadingMealPlan {
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .tint(Color.primaryGreen)
-                    Text("Generating your meal plan…")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.7))
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .tint(Color.primaryGreen)
+                        Text("Nora is building your meal plan...")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.82))
+                    }
+                    Text("You can keep going while this finishes.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.58))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 8)
@@ -1028,6 +1065,35 @@ struct PlanReadyStepView: View {
                 }
                 .padding(.vertical, 8)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var coachingFocusCard: some View {
+        if let struggle = coordinator.answers.biggestStruggle {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Color.primaryGreen)
+                    Text(struggle.coachingFocusTitle.uppercased())
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .tracking(1.2)
+                        .foregroundColor(Color.primaryGreen)
+                }
+
+                Text(struggle.coachingFocusBody)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white.opacity(0.86))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 18).fill(Color.primaryGreen.opacity(0.06)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .strokeBorder(Color.primaryGreen.opacity(0.22), lineWidth: 1)
+            )
         }
     }
 
@@ -1266,110 +1332,15 @@ struct FeaturesStepView: View {
 
 struct CommitTrialStepView: View {
     @ObservedObject var coordinator: MacraOnboardingCoordinator
-    @ObservedObject private var offering: OfferingViewModel = PurchaseService.sharedInstance.offering
     @State private var betaTapCount = 0
-
-    private static let fullDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "MMMM d, yyyy"
-        return f
-    }()
-
-    private var selectedPlan: SubscriptionPlanOption? {
-        coordinator.selectedPlan
-    }
-
-    private var isSubscriptionRenewalFlow: Bool {
-        coordinator.startingStep == .commitTrial
-    }
-
-    private var trialDays: Int? {
-        guard !isSubscriptionRenewalFlow else { return nil }
-        return selectedPlan?.trialDays
-    }
-
-    private var trialEndDate: Date? {
-        guard let days = trialDays else { return nil }
-        return Calendar.current.date(byAdding: .day, value: days, to: Date())
-    }
 
     var body: some View {
         ZStack {
-            MacraChromaticBackground()
-
-            VStack(spacing: 0) {
-                PaywallTopBar(
-                    canGoBack: coordinator.canGoBack,
-                    onBack: coordinator.back,
-                    onClose: coordinator.dismissPaywall
-                )
-
-                ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 20) {
-                        Text(headerEyebrow)
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .tracking(1.4)
-                            .foregroundColor(Color.primaryGreen)
-
-                        Text(headerTitle)
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        if !isSubscriptionRenewalFlow {
-                            planSummaryCard
-                        }
-
-                        tierPickerSection
-
-                        timelineCard
-
-                        priceDisclosureCard
-
-                        if let errorMessage = coordinator.purchaseError {
-                            Text(errorMessage)
-                                .font(.system(size: 14))
-                                .foregroundColor(Color(hex: "FF8A80"))
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    .padding(.bottom, 32)
-                }
-
-                VStack(spacing: 14) {
-                    MacraPrimaryButton(
-                        title: coordinator.isPurchasing ? "Processing..." : ctaTitle,
-                        accent: Color.primaryGreen,
-                        isLoading: coordinator.isPurchasing,
-                        action: coordinator.purchaseAndContinue
-                    )
-                    .disabled(coordinator.isPurchasing || offering.isLoadingPackages || selectedPlan == nil)
-
-                    HStack(spacing: 16) {
-                        Button(action: coordinator.restorePurchasesAndContinue) {
-                            Text("Restore Purchases")
-                                .font(.system(size: 13))
-                                .foregroundColor(.white.opacity(0.55))
-                        }
-
-                        Button(action: { coordinator.appCoordinator.showPrivacyScreenModal() }) {
-                            Text("Privacy")
-                                .font(.system(size: 13))
-                                .foregroundColor(.white.opacity(0.55))
-                        }
-
-                        Button(action: {}) {
-                            Text("Terms")
-                                .font(.system(size: 13))
-                                .foregroundColor(.white.opacity(0.55))
-                        }
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
-            }
+            PayWallView(
+                viewModel: PayWallViewModel(appCoordinator: coordinator.appCoordinator),
+                isDemoMode: coordinator.isDemoMode,
+                onboardingCoordinator: coordinator
+            )
 
             VStack(spacing: 0) {
                 Color.clear
@@ -1387,280 +1358,8 @@ struct CommitTrialStepView: View {
             }
         }
         .onAppear {
-            print("[BetaUnlock] CommitTrialStepView appeared — renewal=\(isSubscriptionRenewalFlow), tap the top 260pt area 5x quickly to unlock beta")
-            if !isSubscriptionRenewalFlow {
-                coordinator.loadPlanMacros()
-            }
-            coordinator.ensureOfferingsLoaded()
+            print("[BetaUnlock] CommitTrialStepView appeared — tap the top 260pt area 5x quickly to unlock beta")
         }
-    }
-
-    @ViewBuilder
-    private var planSummaryCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("YOUR PLAN")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .tracking(1.3)
-                .foregroundColor(Color.primaryGreen)
-
-            if let macros = coordinator.planMacros {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(macros.calories)")
-                        .font(.system(size: 34, weight: .heavy, design: .rounded))
-                        .foregroundColor(.white)
-                    Text("kcal daily")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.6))
-                }
-
-                HStack(spacing: 8) {
-                    planSummaryChip(label: "P", value: "\(macros.protein)g", color: Color.primaryBlue)
-                    planSummaryChip(label: "C", value: "\(macros.carbs)g", color: Color.primaryGreen)
-                    planSummaryChip(label: "F", value: "\(macros.fat)g", color: Color(hex: "FFB454"))
-                }
-            }
-
-            if let plan = coordinator.suggestedMealPlan, !plan.meals.isEmpty {
-                Divider().background(Color.white.opacity(0.08))
-                HStack(spacing: 10) {
-                    Image(systemName: "fork.knife")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Color.primaryGreen)
-                    Text("\(plan.meals.count) meals planned")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.9))
-                    Spacer()
-                }
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color.primaryGreen.opacity(0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .strokeBorder(Color.primaryGreen.opacity(0.25), lineWidth: 1)
-        )
-    }
-
-    private func planSummaryChip(label: String, value: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Text(label)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundColor(color)
-            Text(value)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.white.opacity(0.85))
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Capsule().fill(color.opacity(0.1)))
-        .overlay(Capsule().strokeBorder(color.opacity(0.25), lineWidth: 1))
-    }
-
-    @ViewBuilder
-    private var tierPickerSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("CHOOSE YOUR PLAN")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .tracking(1.3)
-                .foregroundColor(Color.primaryGreen)
-
-            if offering.isLoadingPackages {
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .tint(Color.primaryGreen)
-                    Text("Loading plans...")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.7))
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 8)
-            } else if let packageLoadError = offering.packageLoadError, offering.planOptions.isEmpty {
-                planStatusCard(message: packageLoadError)
-            } else if offering.planOptions.isEmpty {
-                planStatusCard(message: "No subscription plans are available right now.")
-            } else {
-                ForEach(Array(offering.planOptions.enumerated()), id: \.element.id) { index, plan in
-                    TierCard(
-                        title: plan.displayTitle,
-                        perPeriodPrice: plan.perPeriodDisplay,
-                        billingNote: plan.billingNote,
-                        badge: tierSavingsBadge(for: plan),
-                        emphasized: index == 0,
-                        isSelected: coordinator.selectedPlan?.id == plan.id,
-                        onTap: { coordinator.selectPlan(plan) }
-                    )
-                }
-            }
-        }
-    }
-
-    private func planStatusCard(message: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(message)
-                .font(.system(size: 14))
-                .foregroundColor(.white.opacity(0.72))
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button(action: { coordinator.ensureOfferingsLoaded(force: true) }) {
-                Text("Retry loading plans")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color.primaryGreen)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white.opacity(0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
-        )
-    }
-
-    private func tierSavingsBadge(for plan: SubscriptionPlanOption) -> String? {
-        guard plan.periodKind == .year,
-              let monthly = offering.planOptions.first(where: { $0.periodKind == .month }) else { return nil }
-        let yearlyPrice = NSDecimalNumber(decimal: plan.price).doubleValue
-        let monthlyPrice = NSDecimalNumber(decimal: monthly.price).doubleValue
-        let annualizedMonthly = monthlyPrice * 12
-        guard annualizedMonthly > 0, yearlyPrice < annualizedMonthly else { return nil }
-        let pct = Int(((annualizedMonthly - yearlyPrice) / annualizedMonthly * 100).rounded())
-        return pct > 0 ? "SAVE \(pct)%" : nil
-    }
-
-    private var headerEyebrow: String {
-        if isSubscriptionRenewalFlow { return "SUBSCRIPTION REQUIRED" }
-        return trialDays != nil ? "START YOUR FREE TRIAL" : "CONFIRM YOUR PLAN"
-    }
-
-    private var headerTitle: String {
-        if isSubscriptionRenewalFlow { return "Renew Macra Pro." }
-        if let days = trialDays {
-            return "\(days) days free, then you decide."
-        }
-        guard let plan = selectedPlan else { return "Unlock Macra Pro." }
-        switch plan.periodKind {
-        case .year: return "Unlock Macra Pro for a year."
-        case .month: return "Unlock Macra Pro."
-        case .week: return "Unlock Macra Pro for the week."
-        default: return "Unlock Macra Pro."
-        }
-    }
-
-    private var ctaTitle: String {
-        if trialDays != nil { return "Start free trial" }
-        guard let plan = selectedPlan else { return "Continue" }
-        let price = plan.priceLabel
-        switch plan.periodKind {
-        case .year: return "Subscribe \(price)/yr"
-        case .month: return "Subscribe \(price)/mo"
-        case .week: return "Subscribe \(price)/wk"
-        default: return "Continue"
-        }
-    }
-
-    @ViewBuilder
-    private var timelineCard: some View {
-        if let days = trialDays, let endDate = trialEndDate {
-            VStack(alignment: .leading, spacing: 14) {
-                timelineRow(
-                    dot: Color.primaryGreen,
-                    title: "Today",
-                    body: "Full access to Macra Pro. No charge."
-                )
-                timelineRow(
-                    dot: Color.white.opacity(0.4),
-                    title: "Day \(max(1, days - 2))",
-                    body: "We'll send a reminder 2 days before your trial ends."
-                )
-                timelineRow(
-                    dot: Color.white.opacity(0.4),
-                    title: Self.fullDateFormatter.string(from: endDate),
-                    body: billingAfterTrialCopy
-                )
-            }
-            .padding(16)
-            .background(RoundedRectangle(cornerRadius: 18).fill(Color.white.opacity(0.05)))
-            .overlay(
-                RoundedRectangle(cornerRadius: 18)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-            )
-        }
-    }
-
-    private func timelineRow(dot: Color, title: String, body: String) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Circle()
-                .fill(dot)
-                .frame(width: 10, height: 10)
-                .padding(.top, 6)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                Text(body)
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.7))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    private var billingAfterTrialCopy: String {
-        guard let plan = selectedPlan else { return "Your plan begins billing." }
-        switch plan.periodKind {
-        case .year: return "\(plan.priceLabel) charged annually. Your trial ends."
-        case .month: return "\(plan.priceLabel) charged monthly. Your trial ends."
-        case .week: return "\(plan.priceLabel) charged weekly. Your trial ends."
-        default: return "Your trial ends."
-        }
-    }
-
-    private var priceDisclosureCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if trialDays != nil {
-                Text("Cancel anytime in Settings → [your name] → Subscriptions. You won't be charged if you cancel before the trial ends.")
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.75))
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("Auto-renews at the price shown until canceled. Cancel anytime in Settings → [your name] → Subscriptions.")
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.75))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let plan = selectedPlan {
-                HStack {
-                    Text("Plan")
-                        .foregroundColor(.white.opacity(0.6))
-                        .font(.system(size: 12))
-                    Spacer()
-                    Text(plan.priceLabel)
-                        .foregroundColor(.white)
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .padding(.top, 4)
-            }
-        }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.04)))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
-        )
-    }
-
-    private func triggerBetaUnlock() {
-        print("[BetaUnlock] triggerBetaUnlock — activating beta bypass")
-        betaTapCount = 0
-        performBetaUnlock()
     }
 
     private func addToBetaGroup() {
@@ -1674,7 +1373,6 @@ struct CommitTrialStepView: View {
     }
 
     private func performBetaUnlock() {
-
         coordinator.appCoordinator.showToast(viewModel: ToastViewModel(
             message: "Welcome to the Macra beta.",
             backgroundColor: .secondaryCharcoal,

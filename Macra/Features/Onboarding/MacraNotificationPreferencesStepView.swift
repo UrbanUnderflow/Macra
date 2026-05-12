@@ -14,12 +14,12 @@ struct NotificationPreferencesStepView: View {
 
     var body: some View {
         OnboardingScaffold(
-            title: "How should Nora hold you accountable?",
-            subtitle: "Pick any combination of reminders — you can change these any time.",
+            title: "Want Nora to keep you on track?",
+            subtitle: "Your plan is unlocked. Pick the reminders you want, or leave everything off.",
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
-            ctaTitle: "Continue",
+            ctaTitle: "Finish",
             isLoading: isRequesting,
             onBack: coordinator.back,
             onForward: confirmAndAdvance
@@ -115,7 +115,7 @@ struct NotificationPreferencesStepView: View {
     private func confirmAndAdvance() {
         coordinator.answers.notificationPreferences = preferences
 
-        guard preferences.hasAnyEnabled else {
+        guard preferences.hasAnyEnabled, !coordinator.isDemoMode else {
             coordinator.persistNotificationPreferencesAndNotifyWelcome()
             coordinator.advance()
             return

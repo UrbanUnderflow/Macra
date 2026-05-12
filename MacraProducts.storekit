@@ -49,22 +49,6 @@
           "familyShareable" : false,
           "groupNumber" : 1,
           "internalID" : "CC2AB1FE",
-          "introductoryOffer" : {
-            "billingPlanType" : "BILLED_UPFRONT",
-            "internalID" : "E289A559",
-            "numberOfPeriods" : 1,
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P3D"
-          },
-          "introductoryOffers" : [
-            {
-              "billingPlanType" : "BILLED_UPFRONT",
-              "internalID" : "E289A559",
-              "numberOfPeriods" : 1,
-              "paymentMode" : "free",
-              "subscriptionPeriod" : "P3D"
-            }
-          ],
           "localizations" : [
             {
               "description" : "Track macros, scan meals, and follow your personalized plan month to month.",
@@ -92,22 +76,6 @@
           "familyShareable" : false,
           "groupNumber" : 1,
           "internalID" : "42634499",
-          "introductoryOffer" : {
-            "billingPlanType" : "BILLED_UPFRONT",
-            "internalID" : "6E2B0E18",
-            "numberOfPeriods" : 1,
-            "paymentMode" : "free",
-            "subscriptionPeriod" : "P3D"
-          },
-          "introductoryOffers" : [
-            {
-              "billingPlanType" : "BILLED_UPFRONT",
-              "internalID" : "6E2B0E18",
-              "numberOfPeriods" : 1,
-              "paymentMode" : "free",
-              "subscriptionPeriod" : "P3D"
-            }
-          ],
           "localizations" : [
             {
               "description" : "A full year of Macra Pro — save vs. monthly and lock in your plan.",

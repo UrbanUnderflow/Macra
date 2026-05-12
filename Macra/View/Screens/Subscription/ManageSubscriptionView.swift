@@ -175,6 +175,7 @@ final class ManageSubscriptionViewModel: ObservableObject {
     private func cadenceLabel(for productID: String?, fallback: SubscriptionType?) -> String {
         if let productID {
             if productID.contains("annual") || productID.contains("yearly") { return "Annual" }
+            if productID.contains("weekly") { return "Weekly" }
             if productID.contains("monthly") { return "Monthly" }
         }
         switch fallback {
@@ -194,7 +195,7 @@ final class ManageSubscriptionViewModel: ObservableObject {
         if let monthly = offering.monthlyPackage, monthly.package.storeProduct.productIdentifier == identifier {
             return monthly
         }
-        return nil
+        return offering.packageViewModel.first(where: { $0.package.storeProduct.productIdentifier == identifier })
     }
 }
 

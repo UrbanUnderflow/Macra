@@ -8,8 +8,11 @@ final class LoginViewModel: ObservableObject {
     @Published var password = ""
     @Published var confirmPassword = ""
     @Published var isSignUp = false
+    @Published var isForgotPassword = false
+    @Published var hasSentPasswordReset = false
     @Published var showPassword = false
     @Published var errorMessage: String?
+    @Published var passwordResetSuccessMessage: String?
     @Published var isWorking = false
 
     init(appCoordinator: AppCoordinator, isSignUp: Bool) {
@@ -80,27 +83,61 @@ final class LoginViewModel: ObservableObject {
 
     func forgotPasswordTapped() {
         errorMessage = nil
+        passwordResetSuccessMessage = nil
+        hasSentPasswordReset = false
 
         guard isValidEmail(email) else {
-            errorMessage = "Enter the email you used for your account first."
+            errorMessage = "Enter a valid email address."
             return
         }
 
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isWorking else { return }
+
         isWorking = true
-        Auth.auth().sendPasswordReset(withEmail: email.trimmingCharacters(in: .whitespacesAndNewlines)) { [weak self] error in
+        Auth.auth().sendPasswordReset(withEmail: trimmedEmail) { [weak self] error in
             DispatchQueue.main.async {
                 self?.isWorking = false
                 if let error {
                     self?.errorMessage = error.localizedDescription
                 } else {
-                    self?.errorMessage = "Password reset email sent. Check your inbox and spam folder."
+                    self?.hasSentPasswordReset = true
+                    self?.errorMessage = nil
+                    self?.passwordResetSuccessMessage = "A message has been sent to \(trimmedEmail) with instructions to reset your password. Check your inbox and spam folder."
                 }
             }
         }
     }
 
+    func showForgotPasswordForm() {
+        guard !isWorking else { return }
+
+        isForgotPassword = true
+        hasSentPasswordReset = false
+        passwordResetSuccessMessage = nil
+        errorMessage = nil
+        password = ""
+        confirmPassword = ""
+        showPassword = false
+    }
+
+    func backToLogin() {
+        isForgotPassword = false
+        hasSentPasswordReset = false
+        passwordResetSuccessMessage = nil
+        errorMessage = nil
+        isWorking = false
+        isSignUp = false
+        password = ""
+        confirmPassword = ""
+        showPassword = false
+    }
+
     func switchMode(isSignUp: Bool) {
         self.isSignUp = isSignUp
+        self.isForgotPassword = false
+        self.hasSentPasswordReset = false
+        self.passwordResetSuccessMessage = nil
         self.errorMessage = nil
         self.password = ""
         self.confirmPassword = ""
@@ -214,125 +251,215 @@ struct LoginView: View {
 
     private var authCard: some View {
         MacraAuthSheet {
-            VStack(alignment: .leading, spacing: 20) {
-                MacraAuthTabSwitch(
-                    isSignUp: viewModel.isSignUp,
-                    onSelect: { mode in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
-                            viewModel.switchMode(isSignUp: mode)
+            if viewModel.isForgotPassword {
+                forgotPasswordContent
+            } else {
+                VStack(alignment: .leading, spacing: 20) {
+                    MacraAuthTabSwitch(
+                        isSignUp: viewModel.isSignUp,
+                        onSelect: { mode in
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                                viewModel.switchMode(isSignUp: mode)
+                            }
                         }
-                    }
-                )
-
-                VStack(spacing: 12) {
-                    MacraMinimalInputField(
-                        title: "Email",
-                        text: $viewModel.email,
-                        prompt: "you@example.com",
-                        textContentType: .emailAddress,
-                        keyboardType: .emailAddress,
-                        isSecure: false,
-                        isFocused: focusedField == .email
                     )
-                    .focused($focusedField, equals: .email)
-                    .submitLabel(.next)
-                    .onSubmit {
-                        focusedField = .password
-                    }
 
-                    MacraMinimalInputField(
-                        title: "Password",
-                        text: $viewModel.password,
-                        prompt: "Enter your password",
-                        textContentType: .password,
-                        keyboardType: .default,
-                        isSecure: !viewModel.showPassword,
-                        isFocused: focusedField == .password,
-                        trailingSystemImage: viewModel.showPassword ? "eye.slash" : "eye",
-                        trailingAction: { viewModel.showPassword.toggle() }
-                    )
-                    .focused($focusedField, equals: .password)
-                    .submitLabel(viewModel.isSignUp ? .next : .go)
-                    .onSubmit {
-                        focusedField = viewModel.isSignUp ? .confirmPassword : nil
-                        if !viewModel.isSignUp {
-                            viewModel.submit()
+                    VStack(spacing: 12) {
+                        MacraMinimalInputField(
+                            title: "Email",
+                            text: $viewModel.email,
+                            prompt: "you@example.com",
+                            textContentType: .emailAddress,
+                            keyboardType: .emailAddress,
+                            isSecure: false,
+                            isFocused: focusedField == .email
+                        )
+                        .focused($focusedField, equals: .email)
+                        .submitLabel(.next)
+                        .onSubmit {
+                            focusedField = .password
+                        }
+
+                        MacraMinimalInputField(
+                            title: "Password",
+                            text: $viewModel.password,
+                            prompt: "Enter your password",
+                            textContentType: .password,
+                            keyboardType: .default,
+                            isSecure: !viewModel.showPassword,
+                            isFocused: focusedField == .password,
+                            trailingSystemImage: viewModel.showPassword ? "eye.slash" : "eye",
+                            trailingAction: { viewModel.showPassword.toggle() }
+                        )
+                        .focused($focusedField, equals: .password)
+                        .submitLabel(viewModel.isSignUp ? .next : .go)
+                        .onSubmit {
+                            focusedField = viewModel.isSignUp ? .confirmPassword : nil
+                            if !viewModel.isSignUp {
+                                viewModel.submit()
+                            }
+                        }
+
+                        if viewModel.isSignUp {
+                            MacraMinimalInputField(
+                                title: "Confirm password",
+                                text: $viewModel.confirmPassword,
+                                prompt: "Re-enter your password",
+                                textContentType: .password,
+                                keyboardType: .default,
+                                isSecure: !viewModel.showPassword,
+                                isFocused: focusedField == .confirmPassword
+                            )
+                            .focused($focusedField, equals: .confirmPassword)
+                            .submitLabel(.go)
+                            .onSubmit {
+                                focusedField = nil
+                                viewModel.submit()
+                            }
+                            .transition(.move(edge: .top).combined(with: .opacity))
                         }
                     }
 
                     if viewModel.isSignUp {
-                        MacraMinimalInputField(
-                            title: "Confirm password",
-                            text: $viewModel.confirmPassword,
-                            prompt: "Re-enter your password",
-                            textContentType: .password,
-                            keyboardType: .default,
-                            isSecure: !viewModel.showPassword,
-                            isFocused: focusedField == .confirmPassword
-                        )
-                        .focused($focusedField, equals: .confirmPassword)
-                        .submitLabel(.go)
-                        .onSubmit {
+                        HStack(spacing: 6) {
+                            ForEach(viewModel.passwordRequirements) { requirement in
+                                MacraRequirementTick(requirement: requirement)
+                            }
+                        }
+                        .transition(.opacity)
+                    }
+
+                    if !viewModel.isSignUp {
+                        Button(action: viewModel.showForgotPasswordForm) {
+                            Text("Forgot password?")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(Color.white.opacity(0.55))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.top, -4)
+                        .disabled(viewModel.isWorking)
+                        .opacity(viewModel.isWorking ? 0.5 : 1)
+                    }
+
+                    if let errorMessage = viewModel.errorMessage {
+                        MacraAuthMessage(message: errorMessage, isSuccess: false)
+                    }
+
+                    MacraPrimaryButton(
+                        title: viewModel.submitTitle,
+                        accent: Color.primaryGreen,
+                        isLoading: viewModel.isWorking,
+                        action: {
                             focusedField = nil
                             viewModel.submit()
                         }
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                    )
+
+                    MacraAuthDivider()
+
+                    MacraAppleAuthButton(
+                        isSignUp: viewModel.isSignUp,
+                        isWorking: viewModel.isWorking
+                    ) {
+                        focusedField = nil
+                        viewModel.signInWithApple()
                     }
                 }
+            }
+        }
+    }
 
-                if viewModel.isSignUp {
-                    HStack(spacing: 6) {
-                        ForEach(viewModel.passwordRequirements) { requirement in
-                            MacraRequirementTick(requirement: requirement)
-                        }
-                    }
-                    .transition(.opacity)
-                }
+    private var forgotPasswordContent: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(viewModel.hasSentPasswordReset ? "Check your email" : "Reset password")
+                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
 
-                if !viewModel.isSignUp {
-                    Button(action: viewModel.forgotPasswordTapped) {
-                        Text("Forgot password?")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Color.white.opacity(0.55))
+                Text(viewModel.hasSentPasswordReset
+                    ? "Use the link in that email to choose a new password."
+                    : "Enter your email and we'll send you a link to reset your password."
+                )
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.66))
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if viewModel.hasSentPasswordReset {
+                MacraAuthMessage(
+                    message: viewModel.passwordResetSuccessMessage ?? "A message has been sent to your email with instructions to reset your password.",
+                    isSuccess: true
+                )
+
+                MacraPrimaryButton(
+                    title: "Back to Login",
+                    accent: Color.primaryGreen,
+                    isLoading: false,
+                    action: {
+                        focusedField = nil
+                        viewModel.backToLogin()
                     }
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.top, -4)
+                )
+            } else {
+                MacraMinimalInputField(
+                    title: "Email",
+                    text: $viewModel.email,
+                    prompt: "you@example.com",
+                    textContentType: .emailAddress,
+                    keyboardType: .emailAddress,
+                    isSecure: false,
+                    isFocused: focusedField == .email
+                )
+                .focused($focusedField, equals: .email)
+                .submitLabel(.go)
+                .onSubmit {
+                    focusedField = nil
+                    viewModel.forgotPasswordTapped()
                 }
 
                 if let errorMessage = viewModel.errorMessage {
-                    HStack(alignment: .top, spacing: 8) {
-                        Rectangle()
-                            .fill(errorMessage.contains("sent") ? Color.primaryGreen : Color(hex: "FF8A80"))
-                            .frame(width: 2)
-                        Text(errorMessage)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.88))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.leading, 2)
+                    MacraAuthMessage(message: errorMessage, isSuccess: false)
                 }
 
                 MacraPrimaryButton(
-                    title: viewModel.submitTitle,
+                    title: "Send Reset Link",
                     accent: Color.primaryGreen,
                     isLoading: viewModel.isWorking,
                     action: {
                         focusedField = nil
-                        viewModel.submit()
+                        viewModel.forgotPasswordTapped()
                     }
                 )
 
-                MacraAuthDivider()
-
-                MacraAppleAuthButton(
-                    isSignUp: viewModel.isSignUp,
-                    isWorking: viewModel.isWorking
-                ) {
+                Button(action: {
                     focusedField = nil
-                    viewModel.signInWithApple()
+                    viewModel.backToLogin()
+                }) {
+                    Text("Back to Login")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundColor(Color.primaryGreen)
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
+    }
+}
+
+struct MacraAuthMessage: View {
+    let message: String
+    let isSuccess: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Rectangle()
+                .fill(isSuccess ? Color.primaryGreen : Color(hex: "FF8A80"))
+                .frame(width: 2)
+            Text(message)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.88))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.leading, 2)
     }
 }
 

@@ -71,6 +71,7 @@ class ServiceManager: ObservableObject {
             // the prompt rather than at launch is what kept the app
             // from crashing in the previous turn.
             DispatchQueue.main.async {
+                MacraAnalyticsService.shared.configureTikTokSDK()
                 MacraDeepLinkService.sharedInstance.startSDK()
             }
         })

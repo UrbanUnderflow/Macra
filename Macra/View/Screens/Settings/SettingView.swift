@@ -1,4 +1,8 @@
 import SwiftUI
+#if DEBUG
+import FirebaseAuth
+import FirebaseFirestore
+#endif
 
 class SettingsViewModel: ObservableObject {
     let appCoordinator: AppCoordinator
@@ -13,6 +17,10 @@ struct SettingsView: View {
     @ObservedObject private var userService = UserService.sharedInstance
     @ObservedObject private var purchaseService = PurchaseService.sharedInstance
     @State var showMailView = false
+#if DEBUG
+    @State private var showingScreenDemo = false
+    @State private var canShowScreenDemo = false
+#endif
 
     private var subscriptionSubtitle: String {
         purchaseService.isSubscribed ? "Current Plan: Macra Plus" : "Not subscribed — tap to subscribe"
@@ -59,6 +67,17 @@ struct SettingsView: View {
                                 viewModel.appCoordinator.showPayWallModal()
                             }
                         }
+#if DEBUG
+                    if canShowScreenDemo {
+                        Button {
+                            showingScreenDemo = true
+                        } label: {
+                            SettingCard(title: "Screen Demo", subtitle: "Preview Macra UI with mocked data")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("macra-settings-screen-demo-button")
+                    }
+#endif
                     SettingCard(title: "Notifications", subtitle: "Meal reminders, check-ins, emails")
                         .onTapGesture {
                             viewModel.appCoordinator.showMacraNotificationSettingsModal()
@@ -149,8 +168,49 @@ struct SettingsView: View {
                 Spacer()
             }
         }
+#if DEBUG
+        .fullScreenCover(isPresented: $showingScreenDemo) {
+            if canShowScreenDemo {
+                MacraScreenDemoView(appCoordinator: viewModel.appCoordinator)
+            }
+        }
+        .task(id: userService.user?.email) {
+            canShowScreenDemo = await MacraScreenDemoAccess.loadFirestoreAdminStatus(email: userService.user?.email)
+        }
+#endif
     }
 }
+
+#if DEBUG
+private enum MacraScreenDemoAccess {
+    /// Mirrors QuickLifts-Web admin management:
+    /// `/admin/users` grants access by creating `admin/{email}`.
+    static func loadFirestoreAdminStatus(email fallbackEmail: String?) async -> Bool {
+        let authEmail = Auth.auth().currentUser?.email
+        let rawEmail = (authEmail ?? fallbackEmail ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawEmail.isEmpty else { return false }
+
+        var candidates = [rawEmail]
+        let lowercaseEmail = rawEmail.lowercased()
+        if lowercaseEmail != rawEmail {
+            candidates.append(lowercaseEmail)
+        }
+
+        for email in candidates {
+            do {
+                let snapshot = try await Firestore.firestore().collection("admin").document(email).getDocument()
+                if snapshot.exists {
+                    return true
+                }
+            } catch {
+                continue
+            }
+        }
+
+        return false
+    }
+}
+#endif
 
 private struct SettingsProfileHeader: View {
     let user: User?

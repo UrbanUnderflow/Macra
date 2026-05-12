@@ -1155,6 +1155,9 @@ struct HomeView: View {
                             switch viewModel.appCoordinator.nutritionShellTab {
                             case .journal:
                                 journalSurface
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                    .simultaneousGesture(journalDaySwipeGesture)
                             case .planner:
                                 plannerSurface
                             case .scanner:
@@ -1350,6 +1353,7 @@ struct HomeView: View {
                 buddyRequestsBadge.start()
                 presentPendingLogMenuIfNeeded()
                 presentPendingBuddyInviteIfNeeded()
+                trackJournalTabView(source: "home_appear")
             }
             .onDisappear {
                 buddyRequestsBadge.stop()
@@ -1365,7 +1369,10 @@ struct HomeView: View {
                 case .supplements:
                     supplementViewModel.setSelectedDate(viewModel.selectedDate)
                     supplementViewModel.load()
-                case .journal, .scanner, .planner:
+                case .journal:
+                    viewModel.load()
+                    trackJournalTabView(source: "journal_tab")
+                case .scanner, .planner:
                     viewModel.load()
                 default:
                     break
@@ -1628,6 +1635,35 @@ struct HomeView: View {
         }
     }
 
+    private var journalDaySwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 28, coordinateSpace: .local)
+            .onEnded { value in
+                let horizontal = value.translation.width
+                let predictedHorizontal = value.predictedEndTranslation.width
+                let effectiveHorizontal: CGFloat
+                if abs(predictedHorizontal) > abs(horizontal) {
+                    effectiveHorizontal = predictedHorizontal
+                } else {
+                    effectiveHorizontal = horizontal
+                }
+                let vertical = abs(value.translation.height)
+                let threshold: CGFloat = 56
+
+                guard abs(effectiveHorizontal) >= threshold,
+                      abs(effectiveHorizontal) > vertical * 1.35 else {
+                    return
+                }
+
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                    if effectiveHorizontal < 0 {
+                        viewModel.navigateToNextDay()
+                    } else {
+                        viewModel.navigateToPreviousDay()
+                    }
+                }
+            }
+    }
+
     private var canCopyDay: Bool {
         !viewModel.todaysMeals.isEmpty && !Calendar.current.isDateInToday(viewModel.selectedDate)
     }
@@ -1834,6 +1870,11 @@ struct HomeView: View {
         guard requestID != handledLogMenuRequestID else { return }
         handledLogMenuRequestID = requestID
         isLogMenuPresented = true
+    }
+
+    private func trackJournalTabView(source: String) {
+        guard viewModel.appCoordinator.nutritionShellTab == .journal else { return }
+        MacraAnalyticsService.shared.trackJournalViewed(source: source)
     }
 
     private func saveMealToHomeLog(_ foodJournalMeal: MacraFoodJournalMeal) {

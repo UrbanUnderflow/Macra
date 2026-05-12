@@ -84,6 +84,7 @@ final class MacraDeepLinkService: NSObject {
     func startSDK() {
         #if canImport(AppsFlyerLib)
         AppsFlyerLib.shared().start()
+        MacraAnalyticsService.shared.trackAppOpened()
         print("[Macra][DeepLink.startSDK] AppsFlyer started")
         #endif
     }

@@ -2353,10 +2353,10 @@ private extension Array where Element: Hashable {
 
 // MARK: - Shared OpenAI bridge client
 
-/// Routes all Macra OpenAI traffic through the fitwithpulse.ai server bridge at
-/// `/api/openai/v1/chat/completions`. The bridge holds the real OpenAI API key;
-/// the client authenticates with a short-lived Firebase ID token so we never
-/// ship an `OPENAI_API_KEY` in the app bundle.
+/// Routes all Macra OpenAI traffic through the configured Pulse web server
+/// bridge at `/api/openai/v1/chat/completions`. The bridge holds the real
+/// OpenAI API key; the client authenticates with a short-lived Firebase ID token
+/// so we never ship an `OPENAI_API_KEY` in the app bundle.
 ///
 /// Mirrors the request shape the `generate-macra-meal-plan` and
 /// `nora-nutrition-chat` Netlify functions already use.
@@ -2425,18 +2425,7 @@ enum MacraOpenAIBridge {
             return
         }
 
-        user.getIDToken { token, error in
-            if let error {
-                print("[Macra][Bridge] ❌ getIDToken failed (org:\(organization)): \(error.localizedDescription)")
-                completion(.failure(error))
-                return
-            }
-            guard let token, !token.isEmpty else {
-                print("[Macra][Bridge] ❌ getIDToken returned empty token (org:\(organization))")
-                completion(.failure(BridgeError.notAuthenticated))
-                return
-            }
-
+        func post(with token: String, didForceRefresh: Bool) {
             var payload: [String: Any] = [
                 "model": model,
                 "messages": messages,
@@ -2461,10 +2450,12 @@ enum MacraOpenAIBridge {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue(organization, forHTTPHeaderField: "openai-organization")
+            request.setValue("prod", forHTTPHeaderField: "x-pulsecheck-firebase-mode")
             request.httpBody = bodyData
             request.timeoutInterval = timeoutInterval
 
-            print("[Macra][Bridge] ▶️ POST \(url.absoluteString) org:\(organization) model:\(model) msgs:\(messages.count)")
+            let refreshLabel = didForceRefresh ? "forced-refresh" : "cached-token"
+            print("[Macra][Bridge] ▶️ POST \(url.absoluteString) org:\(organization) model:\(model) msgs:\(messages.count) auth:\(refreshLabel)")
 
             session.dataTask(with: request) { data, response, error in
                 if let error {
@@ -2484,6 +2475,25 @@ enum MacraOpenAIBridge {
                 guard (200..<300).contains(httpResponse.statusCode) else {
                     let bodyString = String(data: data, encoding: .utf8) ?? ""
                     print("[Macra][Bridge] ❌ HTTP \(httpResponse.statusCode) (org:\(organization)): \(bodyString.prefix(300))")
+
+                    if httpResponse.statusCode == 401, !didForceRefresh {
+                        print("[Macra][Bridge] 🔄 forcing Firebase token refresh after 401 (org:\(organization))")
+                        user.getIDTokenForcingRefresh(true) { refreshedToken, refreshError in
+                            if let refreshError {
+                                print("[Macra][Bridge] ❌ forced token refresh failed (org:\(organization)): \(refreshError.localizedDescription)")
+                                completion(.failure(BridgeError.httpError(status: httpResponse.statusCode, body: bodyString)))
+                                return
+                            }
+                            guard let refreshedToken, !refreshedToken.isEmpty else {
+                                print("[Macra][Bridge] ❌ forced token refresh returned empty token (org:\(organization))")
+                                completion(.failure(BridgeError.httpError(status: httpResponse.statusCode, body: bodyString)))
+                                return
+                            }
+                            post(with: refreshedToken, didForceRefresh: true)
+                        }
+                        return
+                    }
+
                     completion(.failure(BridgeError.httpError(status: httpResponse.statusCode, body: bodyString)))
                     return
                 }
@@ -2504,6 +2514,21 @@ enum MacraOpenAIBridge {
                 print("[Macra][Bridge] ✅ \(httpResponse.statusCode) (org:\(organization)) — content:\(content.count) chars")
                 completion(.success(content))
             }.resume()
+        }
+
+        user.getIDToken { token, error in
+            if let error {
+                print("[Macra][Bridge] ❌ getIDToken failed (org:\(organization)): \(error.localizedDescription)")
+                completion(.failure(error))
+                return
+            }
+            guard let token, !token.isEmpty else {
+                print("[Macra][Bridge] ❌ getIDToken returned empty token (org:\(organization))")
+                completion(.failure(BridgeError.notAuthenticated))
+                return
+            }
+
+            post(with: token, didForceRefresh: false)
         }
     }
 

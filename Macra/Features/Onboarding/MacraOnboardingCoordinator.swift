@@ -170,8 +170,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case prediction
         case planReady
         case features
-        case notificationPreferences
         case commitTrial
+        case notificationPreferences
     }
 
     enum FWPHandoffState: Equatable {
@@ -196,6 +196,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     @Published var fwpHandoffState: FWPHandoffState = .checking
     /// True when the user accepted FWP macros — skip biometric steps + use FWP macros verbatim.
     private(set) var usingFWPMacros: Bool = false
+    private var trackedPaywallViewSources: Set<String> = []
 
     /// Coach-assigned meal plan (Pulse 1-on-1) detected for this user.
     /// `.checking` while we resolve, `.unavailable` when the user has
@@ -216,11 +217,137 @@ final class MacraOnboardingCoordinator: ObservableObject {
 
     let appCoordinator: AppCoordinator
     let startingStep: Step
+    let isDemoMode: Bool
+    private let onDemoDismiss: (() -> Void)?
 
-    init(appCoordinator: AppCoordinator, startingStep: Step = .welcome) {
+    init(
+        appCoordinator: AppCoordinator,
+        startingStep: Step = .welcome,
+        isDemoMode: Bool = false,
+        onDemoDismiss: (() -> Void)? = nil
+    ) {
         self.appCoordinator = appCoordinator
         self.startingStep = startingStep
         self.currentStep = startingStep
+        self.isDemoMode = isDemoMode
+        self.onDemoDismiss = onDemoDismiss
+
+        if isDemoMode {
+            self.answers = Self.demoAnswers
+            self.planMacros = Self.demoMacroRecommendation
+            self.suggestedMealPlan = Self.demoMealPlan
+        }
+    }
+
+    private static var demoAnswers: MacraOnboardingAnswers {
+        var answers = MacraOnboardingAnswers()
+        answers.sex = .male
+        answers.birthdate = Calendar.current.date(byAdding: .year, value: -31, to: Date())
+        answers.heightCm = 180
+        answers.currentWeightKg = 88
+        answers.goalWeightKg = 82
+        answers.pace = .moderate
+        answers.activityLevel = .moderate
+        answers.dietaryPreference = .none
+        answers.biggestStruggle = .planning
+        return answers
+    }
+
+    private static var demoMacroRecommendation: MacroRecommendation {
+        MacroRecommendation(
+            userId: "screen-demo-user",
+            calories: 2380,
+            protein: 185,
+            carbs: 255,
+            fat: 70
+        )
+    }
+
+    private static var demoMealPlan: MacraSuggestedMealPlan {
+        MacraSuggestedMealPlan(
+            meals: [
+                MacraSuggestedMeal(
+                    title: "Protein oats",
+                    items: [
+                        MacraSuggestedMealItem(name: "Rolled oats", quantity: "60g", calories: 230, protein: 8, carbs: 40, fat: 4, imageURL: nil, imageMatch: nil),
+                        MacraSuggestedMealItem(name: "Whey isolate", quantity: "1 scoop", calories: 120, protein: 25, carbs: 2, fat: 1, imageURL: nil, imageMatch: nil),
+                        MacraSuggestedMealItem(name: "Blueberries", quantity: "80g", calories: 45, protein: 1, carbs: 11, fat: 0, imageURL: nil, imageMatch: nil)
+                    ],
+                    notes: "Good first meal if training is later in the day.",
+                    imageURL: nil,
+                    imageURLs: nil,
+                    imageMatches: nil,
+                    order: 1,
+                    daysActive: nil
+                ),
+                MacraSuggestedMeal(
+                    title: "Chicken burrito bowl",
+                    items: [
+                        MacraSuggestedMealItem(name: "Chicken", quantity: "6 oz", calories: 280, protein: 52, carbs: 0, fat: 6, imageURL: nil, imageMatch: nil),
+                        MacraSuggestedMealItem(name: "Brown rice", quantity: "1 cup", calories: 215, protein: 5, carbs: 45, fat: 2, imageURL: nil, imageMatch: nil),
+                        MacraSuggestedMealItem(name: "Black beans", quantity: "1/2 cup", calories: 110, protein: 7, carbs: 20, fat: 0, imageURL: nil, imageMatch: nil),
+                        MacraSuggestedMealItem(name: "Salsa + lettuce", quantity: "1 serving", calories: 35, protein: 1, carbs: 8, fat: 0, imageURL: nil, imageMatch: nil)
+                    ],
+                    notes: "This is the ad-friendly reveal meal: easy to scan and easy to adjust.",
+                    imageURL: nil,
+                    imageURLs: nil,
+                    imageMatches: nil,
+                    order: 2,
+                    daysActive: nil
+                ),
+                MacraSuggestedMeal(
+                    title: "Greek yogurt snack",
+                    items: [
+                        MacraSuggestedMealItem(name: "Greek yogurt", quantity: "250g", calories: 150, protein: 25, carbs: 10, fat: 0, imageURL: nil, imageMatch: nil),
+                        MacraSuggestedMealItem(name: "Granola", quantity: "35g", calories: 160, protein: 4, carbs: 28, fat: 5, imageURL: nil, imageMatch: nil)
+                    ],
+                    notes: "Keeps protein high without making dinner huge.",
+                    imageURL: nil,
+                    imageURLs: nil,
+                    imageMatches: nil,
+                    order: 3,
+                    daysActive: nil
+                ),
+                MacraSuggestedMeal(
+                    title: "Lean dinner plate",
+                    items: [
+                        MacraSuggestedMealItem(name: "Turkey patties", quantity: "7 oz", calories: 330, protein: 48, carbs: 0, fat: 14, imageURL: nil, imageMatch: nil),
+                        MacraSuggestedMealItem(name: "Sweet potato", quantity: "250g", calories: 215, protein: 4, carbs: 50, fat: 0, imageURL: nil, imageMatch: nil),
+                        MacraSuggestedMealItem(name: "Green beans", quantity: "2 cups", calories: 70, protein: 4, carbs: 14, fat: 0, imageURL: nil, imageMatch: nil)
+                    ],
+                    notes: "Nora keeps dinner lean because the bowl used more fat earlier.",
+                    imageURL: nil,
+                    imageURLs: nil,
+                    imageMatches: nil,
+                    order: 4,
+                    daysActive: nil
+                )
+            ],
+            notes: "Demo plan only. Shows the full onboarding reveal without calling the meal-plan service."
+        )
+    }
+
+    private static var demoPlanOptions: [SubscriptionPlanOption] {
+        [
+            .local(LocalSubscriptionPlanViewModel(
+                id: "rc_annual_demo",
+                displayTitle: "Annual",
+                localizedPriceString: "$39.99",
+                price: Decimal(39.99),
+                periodKind: .year,
+                trialDays: nil,
+                product: nil
+            )),
+            .local(LocalSubscriptionPlanViewModel(
+                id: "rc_monthly_demo",
+                displayTitle: "Monthly",
+                localizedPriceString: "$4.99",
+                price: Decimal(4.99),
+                periodKind: .month,
+                trialDays: nil,
+                product: nil
+            ))
+        ]
     }
 
     var progress: Double {
@@ -231,7 +358,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     var canGoBack: Bool {
         if currentStep == startingStep { return false }
         switch currentStep {
-        case .welcome, .generatingPlan:
+        case .welcome, .generatingPlan, .notificationPreferences:
             return false
         default:
             return currentStep.rawValue > 0
@@ -260,20 +387,24 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case .biggestStruggle: return answers.biggestStruggle != nil
         case .generatingPlan: return true
         case .prediction: return true
-        case .planReady: return suggestedMealPlan != nil || mealPlanError != nil
+        case .planReady: return true
         case .features: return true
-        case .notificationPreferences: return true
         case .commitTrial: return !isPurchasing
+        case .notificationPreferences: return true
         }
     }
 
     var selectedPlan: SubscriptionPlanOption? {
-        let offering = PurchaseService.sharedInstance.offering
         if let id = selectedPackageId,
-           let match = offering.planOptions.first(where: { $0.id == id }) {
+           let match = availablePlanOptions.first(where: { $0.id == id }) {
             return match
         }
-        return offering.planOptions.first
+        return availablePlanOptions.first
+    }
+
+    var availablePlanOptions: [SubscriptionPlanOption] {
+        if isDemoMode { return Self.demoPlanOptions }
+        return PurchaseService.sharedInstance.offering.planOptions
     }
 
     var selectedPackage: PackageViewModel? {
@@ -285,12 +416,50 @@ final class MacraOnboardingCoordinator: ObservableObject {
     }
 
     func ensureOfferingsLoaded(force: Bool = false) {
+        guard !isDemoMode else {
+            if currentStep == .commitTrial {
+                trackPaywallViewedIfNeeded()
+            }
+            return
+        }
+
         let offering = PurchaseService.sharedInstance.offering
         guard !offering.isLoadingPackages else { return }
-        guard force || offering.planOptions.isEmpty else { return }
+        guard force || offering.planOptions.isEmpty else {
+            if currentStep == .commitTrial {
+                trackPaywallViewedIfNeeded()
+            }
+            return
+        }
         Task {
             await offering.start()
+            if self.currentStep == .commitTrial {
+                self.trackPaywallViewedIfNeeded()
+            }
         }
+    }
+
+    func trackPaywallViewedIfNeeded(source: String? = nil) {
+        guard !isDemoMode else { return }
+
+        let resolvedSource = source ?? paywallAnalyticsSource
+        guard !trackedPaywallViewSources.contains(resolvedSource) else { return }
+
+        trackedPaywallViewSources.insert(resolvedSource)
+        let offering = PurchaseService.sharedInstance.offering
+        MacraAnalyticsService.shared.trackPaywallViewed(
+            source: resolvedSource,
+            selectedPlan: selectedPlan,
+            availablePlans: offering.planOptions
+        )
+    }
+
+    private var paywallAnalyticsSource: String {
+        startingStep == .commitTrial ? "subscription_required" : "onboarding"
+    }
+
+    private func trackSubscriptionStart(plan: SubscriptionPlanOption) {
+        MacraAnalyticsService.shared.trackSubscriptionStart(plan: plan, source: paywallAnalyticsSource)
     }
 
     // MARK: - FWP Handoff
@@ -299,6 +468,12 @@ final class MacraOnboardingCoordinator: ObservableObject {
     /// from Firestore and either auto-advances past this step (no FWP macros) or
     /// surfaces the choice card.
     func loadFWPHandoff() {
+        guard !isDemoMode else {
+            fwpHandoffState = .unavailable
+            advance()
+            return
+        }
+
         fwpHandoffState = .checking
         FWPHandoffService.fetchProfile { [weak self] profile in
             guard let self = self else { return }
@@ -347,6 +522,12 @@ final class MacraOnboardingCoordinator: ObservableObject {
     /// from a Pulse 1-on-1 trainer. Called when the user lands on the
     /// `.coachAssignedPlan` step. Auto-advances when nothing's there.
     func loadCoachPlanHandoff() {
+        guard !isDemoMode else {
+            coachPlanState = .unavailable
+            advance()
+            return
+        }
+
         coachPlanState = .checking
         CoachMealPlanService.shared.fetchLatestCoachPlan { [weak self] result in
             DispatchQueue.main.async {
@@ -459,6 +640,11 @@ final class MacraOnboardingCoordinator: ObservableObject {
     }
 
     func loadPlanMacros() {
+        if isDemoMode {
+            planMacros = Self.demoMacroRecommendation
+            return
+        }
+
         // When the user accepted FWP macros, planMacros is already set from the
         // shared User doc — don't overwrite it with a prediction computed from
         // partially-populated answers.
@@ -485,6 +671,13 @@ final class MacraOnboardingCoordinator: ObservableObject {
     }
 
     func loadSuggestedMealPlan(forceRegenerate: Bool = false) {
+        if isDemoMode {
+            suggestedMealPlan = Self.demoMealPlan
+            isLoadingMealPlan = false
+            mealPlanError = nil
+            return
+        }
+
         guard let macros = planMacros else { return }
         guard !isLoadingMealPlan else { return }
         if suggestedMealPlan != nil && !forceRegenerate { return }
@@ -537,16 +730,39 @@ final class MacraOnboardingCoordinator: ObservableObject {
             return
         }
 
+        // Welcome now carries the Nora/value setup in production, so skip the
+        // old standalone intro card there. Demo mode keeps it visible so the
+        // Screen Demo can review every onboarding surface.
+        if !isDemoMode, nextStep == .meetNora {
+            currentStep = nextStep
+            advance()
+            return
+        }
+
+        if isDemoMode, [.coachAssignedPlan, .fwpMacrosHandoff].contains(nextStep) {
+            currentStep = nextStep
+            advance()
+            return
+        }
+
         // When the user accepted the coach plan, skip everything
-        // between FWP handoff and `.features` — the macros are
+        // between FWP handoff and `.commitTrial` — the macros are
         // already set from the trainer's plan and we don't want the
         // member doing biometrics or sitting through generate /
         // prediction / planReady screens for a plan they've already
-        // accepted. Land them on `.features` next.
+        // accepted.
         if usingCoachPlan,
            [.fwpMacrosHandoff, .sex, .age, .height, .currentWeight, .goalWeight,
             .pace, .activityLevel, .sportSelection, .dietaryPreference,
-            .biggestStruggle, .generatingPlan, .prediction, .planReady].contains(nextStep) {
+            .biggestStruggle, .generatingPlan, .prediction, .planReady, .features].contains(nextStep) {
+            currentStep = nextStep
+            advance()
+            return
+        }
+
+        // The feature list now lives inside the purchase screen in production
+        // so the post-reveal flow can move straight from value to conversion.
+        if !isDemoMode, nextStep == .features {
             currentStep = nextStep
             advance()
             return
@@ -577,10 +793,28 @@ final class MacraOnboardingCoordinator: ObservableObject {
         let prev = currentStep.rawValue - 1
         guard let prevStep = Step(rawValue: prev) else { return }
 
+        if !isDemoMode, prevStep == .meetNora {
+            currentStep = prevStep
+            back()
+            return
+        }
+
+        if isDemoMode, [.coachAssignedPlan, .fwpMacrosHandoff].contains(prevStep) {
+            currentStep = prevStep
+            back()
+            return
+        }
+
         if usingCoachPlan,
            [.fwpMacrosHandoff, .sex, .age, .height, .currentWeight, .goalWeight,
             .pace, .activityLevel, .sportSelection, .dietaryPreference,
-            .biggestStruggle, .generatingPlan, .prediction, .planReady].contains(prevStep) {
+            .biggestStruggle, .generatingPlan, .prediction, .planReady, .features].contains(prevStep) {
+            currentStep = prevStep
+            back()
+            return
+        }
+
+        if !isDemoMode, prevStep == .features {
             currentStep = prevStep
             back()
             return
@@ -606,6 +840,18 @@ final class MacraOnboardingCoordinator: ObservableObject {
 
     func completeQuestionnaire() {
         guard !isFinishing else { return }
+
+        if isDemoMode {
+            isFinishing = true
+            planMacros = Self.demoMacroRecommendation
+            suggestedMealPlan = Self.demoMealPlan
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                self.isFinishing = false
+                self.advance()
+            }
+            return
+        }
+
         isFinishing = true
 
         UserService.sharedInstance.saveMacraProfile(answers: answers) { _ in
@@ -624,6 +870,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
     /// Persists prefs to Firestore, installs the on-device schedules, and
     /// kicks off the Macra welcome email (which is idempotent server-side).
     func persistNotificationPreferencesAndNotifyWelcome() {
+        guard !isDemoMode else { return }
+
         let preferences = answers.notificationPreferences
         UserService.sharedInstance.saveMacraNotificationPreferences(preferences)
         NotificationService.sharedInstance.syncScheduledNotifications(with: preferences)
@@ -674,6 +922,11 @@ final class MacraOnboardingCoordinator: ObservableObject {
     }
 
     func dismissPaywall() {
+        if isDemoMode {
+            onDemoDismiss?()
+            return
+        }
+
         let cachedUserHasAccess =
             UserService.sharedInstance.user?.subscriptionType.grantsMacraAccess == true ||
             UserService.sharedInstance.isBetaUser
@@ -693,6 +946,13 @@ final class MacraOnboardingCoordinator: ObservableObject {
 
     func purchaseAndContinue() {
         guard !isPurchasing else { return }
+
+        if isDemoMode {
+            purchaseError = nil
+            continueAfterVerifiedAccess()
+            return
+        }
+
         let offering = PurchaseService.sharedInstance.offering
         guard !offering.isLoadingPackages else {
             purchaseError = "Plans are still loading. Please try again in a moment."
@@ -715,6 +975,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
                 self?.isPurchasing = false
                 switch result {
                 case .success:
+                    self?.trackSubscriptionStart(plan: plan)
                     self?.verifySubscriptionAndContinue()
                 case .failure(let error):
                     let nsError = error as NSError
@@ -732,6 +993,12 @@ final class MacraOnboardingCoordinator: ObservableObject {
 
     func restorePurchasesAndContinue() {
         guard !isPurchasing else { return }
+
+        if isDemoMode {
+            purchaseError = nil
+            continueAfterVerifiedAccess()
+            return
+        }
 
         isPurchasing = true
         purchaseError = nil
@@ -778,21 +1045,41 @@ final class MacraOnboardingCoordinator: ObservableObject {
     private func handleSubscriptionVerificationResult(_ result: Result<Bool, Error>, inactiveMessage: String) {
         switch result {
         case .success(true):
-            purchaseError = nil
-            appCoordinator.showHomeScreen()
+            continueAfterVerifiedAccess()
         case .success(false):
             purchaseError = inactiveMessage
         case .failure(let error):
             purchaseError = error.localizedDescription
         }
     }
+
+    private func continueAfterVerifiedAccess() {
+        purchaseError = nil
+
+        guard currentStep == .commitTrial, startingStep != .commitTrial else {
+            appCoordinator.showHomeScreen()
+            return
+        }
+
+        advance()
+    }
 }
 
 struct MacraOnboardingFlowView: View {
     @StateObject private var coordinator: MacraOnboardingCoordinator
 
-    init(appCoordinator: AppCoordinator, startingStep: MacraOnboardingCoordinator.Step = .welcome) {
-        _coordinator = StateObject(wrappedValue: MacraOnboardingCoordinator(appCoordinator: appCoordinator, startingStep: startingStep))
+    init(
+        appCoordinator: AppCoordinator,
+        startingStep: MacraOnboardingCoordinator.Step = .welcome,
+        isDemoMode: Bool = false,
+        onDemoDismiss: (() -> Void)? = nil
+    ) {
+        _coordinator = StateObject(wrappedValue: MacraOnboardingCoordinator(
+            appCoordinator: appCoordinator,
+            startingStep: startingStep,
+            isDemoMode: isDemoMode,
+            onDemoDismiss: onDemoDismiss
+        ))
     }
 
     var body: some View {
@@ -834,10 +1121,10 @@ struct MacraOnboardingFlowView: View {
                 PlanReadyStepView(coordinator: coordinator)
             case .features:
                 FeaturesStepView(coordinator: coordinator)
-            case .notificationPreferences:
-                NotificationPreferencesStepView(coordinator: coordinator)
             case .commitTrial:
                 CommitTrialStepView(coordinator: coordinator)
+            case .notificationPreferences:
+                NotificationPreferencesStepView(coordinator: coordinator)
             }
         }
     }

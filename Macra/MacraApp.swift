@@ -26,6 +26,7 @@ final class MacraAppDelegate: NSObject, UIApplicationDelegate {
         // network start happens after the ATT decision (handled in
         // ServiceManager.requestTrackingAuthorization).
         MacraDeepLinkService.sharedInstance.configure()
+        MacraAnalyticsService.shared.configureTikTokSDK()
 
         // Cold-start universal link — when iOS launches the app from a
         // Safari tap on `applinks:fitwithpulse.ai/macra/buddy/...`, the

@@ -36,9 +36,7 @@ struct LocalSubscriptionPlanViewModel: Identifiable {
 
     var perPeriodDisplay: String {
         switch periodKind {
-        case .year:
-            let perMonth = NSDecimalNumber(decimal: price).doubleValue / 12.0
-            return String(format: "$%.2f/mo", perMonth)
+        case .year: return "\(localizedPriceString)/yr"
         case .month: return "\(localizedPriceString)/mo"
         case .week: return "\(localizedPriceString)/wk"
         case .day: return "\(localizedPriceString)/day"
@@ -203,44 +201,21 @@ final class OfferingViewModel: ObservableObject, OfferingViewModelProtocol {
             let productPlans = products.map(LocalSubscriptionPlanViewModel.init(product:))
 
             if productPlans.isEmpty {
-                localPlanViewModel = Self.staticFallbackPlans()
-                packageLoadError = nil
+                localPlanViewModel = []
+                packageLoadError = "StoreKit did not return subscription products. Check the App Store product IDs or the local StoreKit configuration."
                 return
             }
 
             localPlanViewModel = productPlans
             packageLoadError = nil
         } catch {
-            localPlanViewModel = Self.staticFallbackPlans()
-            packageLoadError = nil
+            localPlanViewModel = []
+            packageLoadError = "Unable to load subscription plans from StoreKit. Please try again."
             print("Unable to Fetch StoreKit fallback products \(error)")
         }
 #else
         packageLoadError = "Unable to load subscription plans. Please try again."
 #endif
-    }
-
-    private static func staticFallbackPlans() -> [LocalSubscriptionPlanViewModel] {
-        return [
-            LocalSubscriptionPlanViewModel(
-                id: "rc_annual",
-                displayTitle: "Annual",
-                localizedPriceString: "$39.99",
-                price: Decimal(39.99),
-                periodKind: .year,
-                trialDays: 3,
-                product: nil
-            ),
-            LocalSubscriptionPlanViewModel(
-                id: "rc_monthly",
-                displayTitle: "Monthly",
-                localizedPriceString: "$4.99",
-                price: Decimal(4.99),
-                periodKind: .month,
-                trialDays: 3,
-                product: nil
-            )
-        ]
     }
     
     func purchase(_ viewmodel: PackageViewModel, completion: @escaping (PurchaseResult) -> Void) {

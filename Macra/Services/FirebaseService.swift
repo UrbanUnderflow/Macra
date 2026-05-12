@@ -1,4 +1,5 @@
-import Firebase
+import FirebaseAuth
+import FirebaseCore
 import FirebaseFirestore
 import FirebaseStorage
 import AuthenticationServices
@@ -109,7 +110,7 @@ class FirebaseService: NSObject  {
     }
     
     func signInWithApple(idTokenString: String, completion: @escaping (Result<AuthDataResult, Error>) -> Void) {
-        let credential = OAuthProvider.credential(withProviderID: "apple.com", idToken: idTokenString, rawNonce: nil)
+        let credential = OAuthProvider.appleCredential(withIDToken: idTokenString, rawNonce: nil, fullName: nil)
         Auth.auth().signIn(with: credential) { (authResult, error) in
             if let error = error {
                 completion(.failure(error))

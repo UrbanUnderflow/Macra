@@ -54,9 +54,7 @@ struct PackageViewModel: Identifiable, PackageViewModelProtocol {
 
     var perPeriodDisplay: String {
         switch subscriptionPeriodUnit {
-        case .year:
-            let perMonth = NSDecimalNumber(decimal: package.storeProduct.price).doubleValue / 12.0
-            return String(format: "$%.2f/mo", perMonth)
+        case .year: return "\(price)/yr"
         case .month: return "\(price)/mo"
         case .week: return "\(price)/wk"
         case .day: return "\(price)/day"

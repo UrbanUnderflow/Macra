@@ -1,6 +1,6 @@
 //
 //  PackageCardView.swift
-//  PuppySchool
+//  Macra
 //
 //  Created by Tremaine Grant on 8/24/23.
 //
@@ -79,10 +79,6 @@ struct MockPackage: PackageViewModelProtocol {
     var title: String?
     
     var price: String
-    
-    // Fill in properties or methods that PackageViewModel expects.
-    // For example:
-    // var price: String = "$199.99"
 }
 
 struct MockOfferingViewModel: OfferingViewModelProtocol {
@@ -109,10 +105,6 @@ struct MockOfferingViewModel: OfferingViewModelProtocol {
     func purchase(_ plan: SubscriptionPlanOption, completion: @escaping (PurchaseResult) -> Void) {
 
     }
-    
-    // Fill in properties or methods that OfferingViewModel expects.
-    // For example:
-    // var offerings: [Offering] = []
 }
 
 struct PackageCardView_Previews: PreviewProvider {
@@ -121,12 +113,12 @@ struct PackageCardView_Previews: PreviewProvider {
             badgeLabel: "Best Value",
             title: "Annual Pro Plan",
             subtitle: "A full year of Macra Pro with premium nutrition features.",
-            breakDownPrice: "About $6 per month",
-            billPrice: "$79.99 billed annually",
+            breakDownPrice: "Price from App Store",
+            billPrice: "Billed by App Store",
             bottomLabel: "Most popular plan",
             buttonTitle: "Get Annual",
-            package: PackageViewModelProtocol.self as! PackageViewModelProtocol,
-            offeringViewModel: OfferingViewModelProtocol.self as! OfferingViewModelProtocol) {
+            package: MockPackage(id: "preview", title: "Annual", price: ""),
+            offeringViewModel: MockOfferingViewModel(packageViewModel: [])) {
         }
     }
 }

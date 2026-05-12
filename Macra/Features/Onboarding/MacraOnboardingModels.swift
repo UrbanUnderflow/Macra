@@ -149,6 +149,45 @@ enum BiggestStruggle: String, CaseIterable, Identifiable, Hashable {
         case .motivation: return "I lose steam after a few weeks."
         }
     }
+
+    var coachingFocusTitle: String {
+        switch self {
+        case .consistency: return "Built for consistency"
+        case .cravings: return "Built around cravings"
+        case .portions: return "Built for portion clarity"
+        case .planning: return "Built for meal planning"
+        case .knowledge: return "Built to cut through noise"
+        case .motivation: return "Built to keep momentum"
+        }
+    }
+
+    var coachingFocusBody: String {
+        switch self {
+        case .consistency:
+            return "Nora keeps your target visible and turns logging into a quick daily check-in."
+        case .cravings:
+            return "Nora watches protein, timing, and open calories so one snack does not quietly wreck the day."
+        case .portions:
+            return "Meal scans and labels turn guesses into calories and macros you can actually adjust."
+        case .planning:
+            return "Nora starts with simple meals that fit your numbers, then adapts as you log."
+        case .knowledge:
+            return "Nora explains what matters for your body and filters out generic nutrition noise."
+        case .motivation:
+            return "Nora gives you a next move each day instead of leaving you with a blank tracker."
+        }
+    }
+
+    var paywallProofLine: String {
+        switch self {
+        case .consistency: return "Daily targets, reminders, and Nora check-ins keep the plan from fading out."
+        case .cravings: return "Your plan keeps room for real life while protecting your calorie target."
+        case .portions: return "Photo logging and label scanning make food math visible before it turns into guesswork."
+        case .planning: return "Meal planning stays connected to your live macros, not a static PDF."
+        case .knowledge: return "Ask Nora what to change and get answers grounded in your own logs."
+        case .motivation: return "Macra keeps the next useful action close, from meal scans to daily coaching."
+        }
+    }
 }
 
 struct MacraOnboardingAnswers {

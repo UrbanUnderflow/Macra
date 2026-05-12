@@ -47,6 +47,14 @@
 	<string>Macra needs permission to save shared images and meal photos to your photo library.</string>
 	<key>NSUserTrackingUsageDescription</key>
 	<string>Macra uses tracking to attribute buddy invite links and measure how the app is performing. Your meal data is never shared with advertisers.</string>
+	<key>TikTokAccessToken</key>
+	<string>TTRcYoB8Pik1jNXHBZFYIV1CxBWIsDfR</string>
+	<key>TikTokAppID</key>
+	<string>7638323708423159815</string>
+	<key>TikTokDeveloperAppID</key>
+	<string>6463771067</string>
+	<key>TikTokManualDebugModeEnabled</key>
+	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
