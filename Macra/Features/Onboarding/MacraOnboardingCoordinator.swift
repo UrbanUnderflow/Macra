@@ -151,7 +151,7 @@ struct MacraPlanHistoryItem: Identifiable, Hashable {
 
 @MainActor
 final class MacraOnboardingCoordinator: ObservableObject {
-    enum Step: Int, CaseIterable {
+    enum Step: Int, CaseIterable, Hashable {
         case welcome
         case meetNora
         case coachAssignedPlan
@@ -214,6 +214,10 @@ final class MacraOnboardingCoordinator: ObservableObject {
     /// `advance()` then skips biometrics + macro analysis the same
     /// way `usingFWPMacros` does.
     private(set) var usingCoachPlan: Bool = false
+    private var visibleStepVisitCounts: [Step: Int] = [:]
+    private var lastTrackedVisibleStep: Step?
+    private var suppressNextOnboardingExit = false
+    private var pendingOnboardingCompletionAction: String?
 
     let appCoordinator: AppCoordinator
     let startingStep: Step
@@ -454,12 +458,171 @@ final class MacraOnboardingCoordinator: ObservableObject {
         )
     }
 
-    private var paywallAnalyticsSource: String {
-        startingStep == .commitTrial ? "subscription_required" : "onboarding"
+    var paywallAnalyticsSource: String {
+        startingStep == .commitTrial ? "subscription_required" : "onboarding_paywall"
+    }
+
+    var onboardingAnalyticsSource: String {
+        startingStep == .commitTrial ? "subscription_required" : "new_user_onboarding"
+    }
+
+    func trackCurrentOnboardingStepViewed(trigger: String) {
+        guard !isDemoMode else { return }
+
+        let step = currentStep
+        let visitCount = (visibleStepVisitCounts[step] ?? 0) + 1
+        visibleStepVisitCounts[step] = visitCount
+        lastTrackedVisibleStep = step
+
+        MacraAnalyticsService.shared.trackOnboardingStepViewed(
+            stepId: step.analyticsId,
+            stepName: step.analyticsName,
+            stepIndex: step.rawValue,
+            stepCount: Step.allCases.count,
+            source: onboardingAnalyticsSource,
+            startingStepId: startingStep.analyticsId,
+            visitCount: visitCount,
+            trigger: trigger,
+            metadata: onboardingAnalyticsMetadata
+        )
+    }
+
+    private func trackCurrentOnboardingStepCompleted(action: String, destination: Step?) {
+        guard shouldTrackCurrentVisibleStep else { return }
+
+        let resolvedAction = pendingOnboardingCompletionAction ?? action
+        pendingOnboardingCompletionAction = nil
+
+        MacraAnalyticsService.shared.trackOnboardingStepCompleted(
+            stepId: currentStep.analyticsId,
+            stepName: currentStep.analyticsName,
+            stepIndex: currentStep.rawValue,
+            stepCount: Step.allCases.count,
+            source: onboardingAnalyticsSource,
+            startingStepId: startingStep.analyticsId,
+            completionAction: resolvedAction,
+            destinationStepId: destination?.analyticsId,
+            metadata: onboardingAnalyticsMetadata
+        )
+    }
+
+    private func trackCurrentOnboardingStepBack(destination: Step?) {
+        guard shouldTrackCurrentVisibleStep else { return }
+
+        MacraAnalyticsService.shared.trackOnboardingStepBack(
+            stepId: currentStep.analyticsId,
+            stepName: currentStep.analyticsName,
+            stepIndex: currentStep.rawValue,
+            stepCount: Step.allCases.count,
+            source: onboardingAnalyticsSource,
+            startingStepId: startingStep.analyticsId,
+            destinationStepId: destination?.analyticsId,
+            metadata: onboardingAnalyticsMetadata
+        )
+    }
+
+    private func trackCurrentOnboardingExit(action: String) {
+        guard shouldTrackCurrentVisibleStep else { return }
+
+        MacraAnalyticsService.shared.trackOnboardingExited(
+            stepId: currentStep.analyticsId,
+            stepName: currentStep.analyticsName,
+            stepIndex: currentStep.rawValue,
+            stepCount: Step.allCases.count,
+            source: onboardingAnalyticsSource,
+            startingStepId: startingStep.analyticsId,
+            exitAction: action,
+            metadata: onboardingAnalyticsMetadata
+        )
+    }
+
+    private var shouldTrackCurrentVisibleStep: Bool {
+        !isDemoMode && lastTrackedVisibleStep == currentStep
+    }
+
+    private var onboardingAnalyticsMetadata: [String: Any] {
+        [
+            "progress": progress,
+            "can_go_forward": canGoForward,
+            "using_fwp_macros": usingFWPMacros,
+            "using_coach_plan": usingCoachPlan,
+            "has_plan_macros": planMacros != nil,
+            "has_suggested_meal_plan": suggestedMealPlan != nil
+        ]
     }
 
     private func trackSubscriptionStart(plan: SubscriptionPlanOption) {
         MacraAnalyticsService.shared.trackSubscriptionStart(plan: plan, source: paywallAnalyticsSource)
+    }
+
+    private func trackSubscriptionPurchaseAttempted(plan: SubscriptionPlanOption) {
+        MacraAnalyticsService.shared.trackSubscriptionPurchaseAttempted(plan: plan, source: paywallAnalyticsSource)
+    }
+
+    private func trackSubscriptionPurchaseCancelled(plan: SubscriptionPlanOption) {
+        MacraAnalyticsService.shared.trackSubscriptionPurchaseCancelled(plan: plan, source: paywallAnalyticsSource)
+    }
+
+    private func trackSubscriptionPurchaseFailed(plan: SubscriptionPlanOption, error: Error, reason: String? = nil) {
+        MacraAnalyticsService.shared.trackSubscriptionPurchaseFailed(
+            plan: plan,
+            source: paywallAnalyticsSource,
+            error: error,
+            reason: reason
+        )
+    }
+
+    private func trackSubscriptionPurchaseAlreadyActive(plan: SubscriptionPlanOption, error: Error) {
+        trackSubscriptionPurchaseFailed(plan: plan, error: error, reason: "already_subscribed")
+    }
+
+    private func trackRestoreResult(_ result: Result<Bool, Error>) {
+        switch result {
+        case .success(true):
+            MacraAnalyticsService.shared.trackSubscriptionRestoreSucceeded(source: paywallAnalyticsSource)
+        case .success(false):
+            MacraAnalyticsService.shared.trackSubscriptionRestoreFailed(
+                source: paywallAnalyticsSource,
+                reason: "no_active_subscription"
+            )
+        case .failure(let error):
+            MacraAnalyticsService.shared.trackSubscriptionRestoreFailed(
+                source: paywallAnalyticsSource,
+                reason: "restore_error",
+                error: error
+            )
+        }
+    }
+
+    private func trackSubscriptionVerificationResult(
+        _ result: Result<Bool, Error>,
+        plan: SubscriptionPlanOption?,
+        context: String,
+        inactiveReason: String
+    ) {
+        switch result {
+        case .success(true):
+            MacraAnalyticsService.shared.trackSubscriptionAccessVerified(
+                plan: plan,
+                source: paywallAnalyticsSource,
+                context: context
+            )
+        case .success(false):
+            MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
+                plan: plan,
+                source: paywallAnalyticsSource,
+                context: context,
+                reason: inactiveReason
+            )
+        case .failure(let error):
+            MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
+                plan: plan,
+                source: paywallAnalyticsSource,
+                context: context,
+                reason: "verification_error",
+                error: error
+            )
+        }
     }
 
     // MARK: - FWP Handoff
@@ -505,6 +668,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
             carbs: macros.carbs,
             fat: macros.fat
         )
+        pendingOnboardingCompletionAction = "accept_fwp_macros"
         advance()
     }
 
@@ -513,6 +677,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     func reassessAfterHandoff() {
         usingFWPMacros = false
         fwpHandoffState = .reassessing
+        pendingOnboardingCompletionAction = "reassess_after_fwp_handoff"
         advance()
     }
 
@@ -578,6 +743,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
         )
 
         adoptCoachPlan(plan) { _ in }
+        pendingOnboardingCompletionAction = "accept_coach_plan"
         advance()
     }
 
@@ -587,6 +753,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     func declineCoachPlan() {
         usingCoachPlan = false
         coachPlanState = .unavailable
+        pendingOnboardingCompletionAction = "decline_coach_plan"
         advance()
     }
 
@@ -726,9 +893,13 @@ final class MacraOnboardingCoordinator: ObservableObject {
     func advance() {
         let next = currentStep.rawValue + 1
         guard let nextStep = Step(rawValue: next) else {
+            trackCurrentOnboardingStepCompleted(action: "flow_finished", destination: nil)
+            suppressNextOnboardingExit = true
             dismissPaywall()
             return
         }
+
+        trackCurrentOnboardingStepCompleted(action: "advance", destination: nextStep)
 
         // Welcome now carries the Nora/value setup in production, so skip the
         // old standalone intro card there. Demo mode keeps it visible so the
@@ -793,6 +964,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
         let prev = currentStep.rawValue - 1
         guard let prevStep = Step(rawValue: prev) else { return }
 
+        trackCurrentOnboardingStepBack(destination: prevStep)
+
         if !isDemoMode, prevStep == .meetNora {
             currentStep = prevStep
             back()
@@ -847,6 +1020,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
             suggestedMealPlan = Self.demoMealPlan
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 self.isFinishing = false
+                self.pendingOnboardingCompletionAction = "questionnaire_completed"
                 self.advance()
             }
             return
@@ -859,6 +1033,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
                 self?.saveMacroTargetsFromPrediction {
                     DispatchQueue.main.async {
                         self?.isFinishing = false
+                        self?.pendingOnboardingCompletionAction = "questionnaire_completed"
                         self?.advance()
                     }
                 }
@@ -876,6 +1051,13 @@ final class MacraOnboardingCoordinator: ObservableObject {
         UserService.sharedInstance.saveMacraNotificationPreferences(preferences)
         NotificationService.sharedInstance.syncScheduledNotifications(with: preferences)
         UserService.sharedInstance.sendMacraWelcomeEmail()
+    }
+
+    func finishNotificationPreferencesAndAdvance() {
+        pendingOnboardingCompletionAction = answers.notificationPreferences.hasAnyEnabled
+            ? "notification_preferences_enabled"
+            : "notification_preferences_skipped"
+        advance()
     }
 
     private func saveMacroTargetsFromPrediction(completion: @escaping () -> Void) {
@@ -927,6 +1109,19 @@ final class MacraOnboardingCoordinator: ObservableObject {
             return
         }
 
+        if suppressNextOnboardingExit {
+            suppressNextOnboardingExit = false
+        } else {
+            trackCurrentOnboardingExit(action: "dismiss")
+        }
+
+        if currentStep == .commitTrial {
+            MacraAnalyticsService.shared.trackPaywallDismissed(
+                source: paywallAnalyticsSource,
+                selectedPlan: selectedPlan
+            )
+        }
+
         let cachedUserHasAccess =
             UserService.sharedInstance.user?.subscriptionType.grantsMacraAccess == true ||
             UserService.sharedInstance.isBetaUser
@@ -969,6 +1164,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
 
         isPurchasing = true
         purchaseError = nil
+        trackSubscriptionPurchaseAttempted(plan: plan)
 
         PurchaseService.sharedInstance.offering.purchase(plan) { [weak self] result in
             DispatchQueue.main.async {
@@ -976,14 +1172,16 @@ final class MacraOnboardingCoordinator: ObservableObject {
                 switch result {
                 case .success:
                     self?.trackSubscriptionStart(plan: plan)
-                    self?.verifySubscriptionAndContinue()
+                    self?.verifySubscriptionAndContinue(plan: plan)
                 case .failure(let error):
-                    let nsError = error as NSError
-                    if nsError.domain == "Purchase Canceled" {
+                    if PurchaseService.sharedInstance.isPurchaseCanceledError(error) {
+                        self?.trackSubscriptionPurchaseCancelled(plan: plan)
                         self?.purchaseError = nil
                     } else if PurchaseService.sharedInstance.isAlreadySubscribedError(error) {
+                        self?.trackSubscriptionPurchaseAlreadyActive(plan: plan, error: error)
                         self?.syncExistingSubscriptionAndContinue()
                     } else {
+                        self?.trackSubscriptionPurchaseFailed(plan: plan, error: error)
                         self?.purchaseError = error.localizedDescription
                     }
                 }
@@ -1002,10 +1200,12 @@ final class MacraOnboardingCoordinator: ObservableObject {
 
         isPurchasing = true
         purchaseError = nil
+        MacraAnalyticsService.shared.trackSubscriptionRestoreAttempted(source: paywallAnalyticsSource)
 
         PurchaseService.sharedInstance.restoreSubscriptionStatus { [weak self] result in
             DispatchQueue.main.async {
                 self?.isPurchasing = false
+                self?.trackRestoreResult(result)
                 self?.handleSubscriptionVerificationResult(
                     result,
                     inactiveMessage: "No active subscription found to restore."
@@ -1014,11 +1214,17 @@ final class MacraOnboardingCoordinator: ObservableObject {
         }
     }
 
-    private func verifySubscriptionAndContinue() {
+    private func verifySubscriptionAndContinue(plan: SubscriptionPlanOption) {
         isPurchasing = true
         PurchaseService.sharedInstance.checkSubscriptionStatus(forceRefresh: true) { [weak self] result in
             DispatchQueue.main.async {
                 self?.isPurchasing = false
+                self?.trackSubscriptionVerificationResult(
+                    result,
+                    plan: plan,
+                    context: "post_purchase",
+                    inactiveReason: "purchase_access_not_active"
+                )
                 self?.handleSubscriptionVerificationResult(
                     result,
                     inactiveMessage: "Your purchase went through, but subscription access is still syncing. Tap Restore Purchases to refresh it."
@@ -1034,6 +1240,12 @@ final class MacraOnboardingCoordinator: ObservableObject {
         PurchaseService.sharedInstance.syncSubscriptionStatus { [weak self] result in
             DispatchQueue.main.async {
                 self?.isPurchasing = false
+                self?.trackSubscriptionVerificationResult(
+                    result,
+                    plan: self?.selectedPlan,
+                    context: "already_subscribed_sync",
+                    inactiveReason: "already_subscribed_access_not_active"
+                )
                 self?.handleSubscriptionVerificationResult(
                     result,
                     inactiveMessage: "You're subscribed in StoreKit, but access did not sync yet. Tap Restore Purchases to refresh it."
@@ -1057,11 +1269,65 @@ final class MacraOnboardingCoordinator: ObservableObject {
         purchaseError = nil
 
         guard currentStep == .commitTrial, startingStep != .commitTrial else {
+            trackCurrentOnboardingStepCompleted(action: "access_verified", destination: nil)
             appCoordinator.showHomeScreen()
             return
         }
 
+        pendingOnboardingCompletionAction = "access_verified"
         advance()
+    }
+}
+
+private extension MacraOnboardingCoordinator.Step {
+    var analyticsId: String {
+        switch self {
+        case .welcome: return "welcome"
+        case .meetNora: return "meet_nora"
+        case .coachAssignedPlan: return "coach_assigned_plan"
+        case .fwpMacrosHandoff: return "fwp_macros_handoff"
+        case .sex: return "sex"
+        case .age: return "age"
+        case .height: return "height"
+        case .currentWeight: return "current_weight"
+        case .goalWeight: return "goal_weight"
+        case .pace: return "pace"
+        case .activityLevel: return "activity_level"
+        case .sportSelection: return "sport_selection"
+        case .dietaryPreference: return "dietary_preference"
+        case .biggestStruggle: return "biggest_struggle"
+        case .generatingPlan: return "generating_plan"
+        case .prediction: return "prediction"
+        case .planReady: return "plan_ready"
+        case .features: return "features"
+        case .commitTrial: return "commit_trial"
+        case .notificationPreferences: return "notification_preferences"
+        }
+    }
+
+    var analyticsName: String {
+        switch self {
+        case .welcome: return "Welcome"
+        case .meetNora: return "Meet Nora"
+        case .coachAssignedPlan: return "Coach assigned plan"
+        case .fwpMacrosHandoff: return "FWP macros handoff"
+        case .sex: return "Sex"
+        case .age: return "Age"
+        case .height: return "Height"
+        case .currentWeight: return "Current weight"
+        case .goalWeight: return "Goal weight"
+        case .pace: return "Pace"
+        case .activityLevel: return "Activity level"
+        case .sportSelection: return "Sport selection"
+        case .dietaryPreference: return "Dietary preference"
+        case .biggestStruggle: return "Biggest struggle"
+        case .generatingPlan: return "Generating plan"
+        case .prediction: return "Prediction"
+        case .planReady: return "Plan ready"
+        case .features: return "Features"
+        case .commitTrial: return "Commit trial"
+        case .notificationPreferences: return "Notification preferences"
+        }
     }
 }
 
@@ -1126,6 +1392,12 @@ struct MacraOnboardingFlowView: View {
             case .notificationPreferences:
                 NotificationPreferencesStepView(coordinator: coordinator)
             }
+        }
+        .onAppear {
+            coordinator.trackCurrentOnboardingStepViewed(trigger: "flow_appeared")
+        }
+        .onChange(of: coordinator.currentStep) { _ in
+            coordinator.trackCurrentOnboardingStepViewed(trigger: "step_changed")
         }
     }
 }

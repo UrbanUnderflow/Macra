@@ -81,6 +81,13 @@ struct PayWallView: View {
         isDemoMode ? nil : offeringViewModel.packageLoadError
     }
 
+    private var paywallAnalyticsSource: String {
+        if let onboardingCoordinator {
+            return onboardingCoordinator.paywallAnalyticsSource
+        }
+        return "standalone_paywall"
+    }
+
     var body: some View {
         ZStack {
             MacraChromaticBackground()
@@ -393,7 +400,7 @@ struct PayWallView: View {
                         badge: tierSavingsBadge(for: plan),
                         emphasized: index == 0,
                         isSelected: selectedPlan?.id == plan.id,
-                        onTap: { selectPlan(plan) }
+                        onTap: { selectPlan(plan, userInitiated: true) }
                     )
                 }
             }
@@ -439,11 +446,18 @@ struct PayWallView: View {
         return pct > 0 ? "SAVE \(pct)%" : nil
     }
 
-    private func selectPlan(_ plan: SubscriptionPlanOption) {
+    private func selectPlan(_ plan: SubscriptionPlanOption, userInitiated: Bool) {
         if let coordinator = onboardingCoordinator {
             coordinator.selectPlan(plan)
         } else {
             standaloneSelectedPlanID = plan.id
+        }
+
+        if userInitiated, !isDemoMode {
+            MacraAnalyticsService.shared.trackSubscriptionPlanSelected(
+                plan: plan,
+                source: paywallAnalyticsSource
+            )
         }
     }
 
@@ -564,16 +578,33 @@ struct PayWallView: View {
 
         isStandalonePurchasing = true
         standalonePurchaseError = nil
+        MacraAnalyticsService.shared.trackSubscriptionPurchaseAttempted(
+            plan: plan,
+            source: paywallAnalyticsSource
+        )
 
         offeringViewModel.purchase(plan) { result in
             isStandalonePurchasing = false
             switch result {
             case .success:
-                MacraAnalyticsService.shared.trackSubscriptionStart(plan: plan, source: "legacy_paywall")
+                MacraAnalyticsService.shared.trackSubscriptionStart(plan: plan, source: paywallAnalyticsSource)
                 finishStandalonePaywall()
             case .failure(let error):
-                standalonePurchaseError = (error as NSError).localizedDescription
-                print("There was an error while purchasing \(error)")
+                if PurchaseService.sharedInstance.isPurchaseCanceledError(error) {
+                    MacraAnalyticsService.shared.trackSubscriptionPurchaseCancelled(
+                        plan: plan,
+                        source: paywallAnalyticsSource
+                    )
+                    standalonePurchaseError = nil
+                } else {
+                    MacraAnalyticsService.shared.trackSubscriptionPurchaseFailed(
+                        plan: plan,
+                        source: paywallAnalyticsSource,
+                        error: error
+                    )
+                    standalonePurchaseError = (error as NSError).localizedDescription
+                    print("There was an error while purchasing \(error)")
+                }
             }
         }
     }
@@ -596,13 +627,20 @@ struct PayWallView: View {
             return
         }
 
+        MacraAnalyticsService.shared.trackSubscriptionRestoreAttempted(source: paywallAnalyticsSource)
+
         PurchaseService.sharedInstance.restoreSubscriptionStatus { result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let restored):
                     if restored {
+                        MacraAnalyticsService.shared.trackSubscriptionRestoreSucceeded(source: paywallAnalyticsSource)
                         finishStandalonePaywall()
                     } else {
+                        MacraAnalyticsService.shared.trackSubscriptionRestoreFailed(
+                            source: paywallAnalyticsSource,
+                            reason: "no_active_subscription"
+                        )
                         viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
                             message: "No active subscription found for this Apple ID.",
                             backgroundColor: .secondaryCharcoal,
@@ -610,6 +648,11 @@ struct PayWallView: View {
                         ))
                     }
                 case .failure(let error):
+                    MacraAnalyticsService.shared.trackSubscriptionRestoreFailed(
+                        source: paywallAnalyticsSource,
+                        reason: "restore_error",
+                        error: error
+                    )
                     print("There was an error while restoring purchases \(error)")
                     viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
                         message: "We could not restore purchases. Please try again.",
@@ -638,6 +681,13 @@ struct PayWallView: View {
     }
 
     private func closePaywall() {
+        if !isDemoMode {
+            MacraAnalyticsService.shared.trackPaywallDismissed(
+                source: paywallAnalyticsSource,
+                selectedPlan: selectedPlan
+            )
+        }
+
         if let onDismiss {
             onDismiss()
             return
@@ -683,7 +733,7 @@ struct PayWallView: View {
 
         didTrackPaywallView = true
         MacraAnalyticsService.shared.trackPaywallViewed(
-            source: isOnboarding ? "onboarding_paywall" : "legacy_paywall",
+            source: paywallAnalyticsSource,
             selectedPlan: selectedPlan,
             availablePlans: availablePlans
         )

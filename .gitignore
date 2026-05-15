@@ -1,0 +1,10 @@
+# macOS
+.DS_Store
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
+# Generated screenshots, marketing/ad outputs, and review artifacts
+artifacts/
+scripts/marketing/

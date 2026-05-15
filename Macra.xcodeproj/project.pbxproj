@@ -1309,7 +1309,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.06;
+				MARKETING_VERSION = 1.07;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1351,7 +1351,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.06;
+				MARKETING_VERSION = 1.07;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

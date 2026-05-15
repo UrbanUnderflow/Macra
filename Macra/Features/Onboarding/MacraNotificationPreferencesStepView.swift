@@ -117,7 +117,7 @@ struct NotificationPreferencesStepView: View {
 
         guard preferences.hasAnyEnabled, !coordinator.isDemoMode else {
             coordinator.persistNotificationPreferencesAndNotifyWelcome()
-            coordinator.advance()
+            coordinator.finishNotificationPreferencesAndAdvance()
             return
         }
 
@@ -127,7 +127,7 @@ struct NotificationPreferencesStepView: View {
             await MainActor.run {
                 coordinator.persistNotificationPreferencesAndNotifyWelcome()
                 isRequesting = false
-                coordinator.advance()
+                coordinator.finishNotificationPreferencesAndAdvance()
             }
         }
     }

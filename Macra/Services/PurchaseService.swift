@@ -201,6 +201,10 @@ final class PurchaseService: NSObject, PurchasesDelegate, ObservableObject {
         return message.contains("already subscribed") || message.contains("currently subscribed")
     }
 
+    func isPurchaseCanceledError(_ error: Error) -> Bool {
+        (error as NSError).domain == "Purchase Canceled"
+    }
+
     func isInvalidReceiptError(_ error: Error) -> Bool {
         let nsError = error as NSError
         let messageParts = [
