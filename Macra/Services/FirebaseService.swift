@@ -101,6 +101,7 @@ class FirebaseService: NSObject  {
                 completion(.failure(error))
             } else if let authResult = authResult {
                 self.createUserObject(registrationEntryPoint: .macra)
+                MacraAnalyticsService.shared.trackAccountRegistrationCompleted(method: "email")
                 completion(.success(authResult))
             } else {
                 // This case should never occur, but handle it anyway
@@ -117,6 +118,7 @@ class FirebaseService: NSObject  {
             } else if let authResult = authResult {
                 if authResult.additionalUserInfo?.isNewUser == true {
                     self.createUserObject(registrationEntryPoint: .macra)
+                    MacraAnalyticsService.shared.trackAccountRegistrationCompleted(method: "apple")
                 }
                 completion(.success(authResult))
             } else {

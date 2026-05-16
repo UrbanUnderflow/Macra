@@ -39,7 +39,7 @@ enum ActivityLevel: String, CaseIterable, Identifiable, Hashable {
         case .light: return "Light exercise 1–3 days/week"
         case .moderate: return "Moderate exercise 3–5 days/week"
         case .veryActive: return "Hard exercise 6–7 days/week"
-        case .athlete: return "Twice-a-day training"
+        case .athlete: return "I play a sport regularly"
         }
     }
 
@@ -164,17 +164,17 @@ enum BiggestStruggle: String, CaseIterable, Identifiable, Hashable {
     var coachingFocusBody: String {
         switch self {
         case .consistency:
-            return "Nora keeps your target visible and turns logging into a quick daily check-in."
+            return "I keep your target visible and turn logging into a quick daily check-in."
         case .cravings:
-            return "Nora watches protein, timing, and open calories so one snack does not quietly wreck the day."
+            return "I watch protein, timing, and open calories so one snack does not quietly wreck the day."
         case .portions:
             return "Meal scans and labels turn guesses into calories and macros you can actually adjust."
         case .planning:
-            return "Nora starts with simple meals that fit your numbers, then adapts as you log."
+            return "I start with simple meals that fit your numbers. The more you log, the more I learn what you like, what you skip, and how to make the plan feel like yours."
         case .knowledge:
-            return "Nora explains what matters for your body and filters out generic nutrition noise."
+            return "I explain what matters for your body and filter out generic nutrition noise."
         case .motivation:
-            return "Nora gives you a next move each day instead of leaving you with a blank tracker."
+            return "I give you a next move each day instead of leaving you with a blank tracker."
         }
     }
 

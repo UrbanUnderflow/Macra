@@ -5,6 +5,7 @@ struct MacraScreenDemoView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var appCoordinator: AppCoordinator
     @State private var activeDemo: MacraDemoScreen?
+    @State private var paywallDemoAudience: MacraPaywallDemoAudience = .nonSubscriber
 
     init(appCoordinator: AppCoordinator) {
         self._appCoordinator = ObservedObject(wrappedValue: appCoordinator)
@@ -59,17 +60,39 @@ struct MacraScreenDemoView: View {
                 MacraOnboardingFlowView(
                     appCoordinator: appCoordinator,
                     isDemoMode: true,
-                    onDemoDismiss: { activeDemo = nil }
+                    usesLivePurchasesInDemo: true,
+                    onDemoDismiss: { activeDemo = nil },
+                    existingSubscriptionAccessOverride: paywallDemoAudience.hasExistingSubscriptionAccess
                 )
                 .environment(\.isMacraDemoMode, true)
+                .overlay(alignment: .topTrailing) {
+                    screenDemoPaywallControls
+                }
             case .paywall:
                 PayWallView(
                     viewModel: PayWallViewModel(appCoordinator: appCoordinator),
-                    isDemoMode: false,
-                    onDismiss: { activeDemo = nil }
+                    isDemoMode: true,
+                    usesLivePurchasesInDemo: true,
+                    onDismiss: { activeDemo = nil },
+                    existingSubscriptionAccessOverride: paywallDemoAudience.hasExistingSubscriptionAccess
                 )
+                .overlay(alignment: .topTrailing) {
+                    screenDemoPaywallControls
+                }
             }
         }
+    }
+
+    private var screenDemoPaywallControls: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            MacraScreenDemoDismissButton {
+                activeDemo = nil
+            }
+
+            MacraPaywallDemoAudienceToggle(selection: $paywallDemoAudience)
+        }
+        .padding(.top, 52)
+        .padding(.trailing, 14)
     }
 
     private var header: some View {
@@ -79,7 +102,7 @@ struct MacraScreenDemoView: View {
                     .font(.largeTitle.weight(.bold))
                     .foregroundColor(.black)
 
-                Text("Preview production UI. Login shows the live auth surface, full onboarding uses safe mock data, and the paywall uses live RevenueCat/StoreKit products so you can test sandbox IAP.")
+                Text("Preview production UI. Login shows the live auth surface, onboarding uses safe mock profile data, and paywall surfaces use live RevenueCat/StoreKit products for sandbox purchase testing.")
                     .font(.subheadline.weight(.medium))
                     .foregroundColor(.black.opacity(0.62))
                     .fixedSize(horizontal: false, vertical: true)
@@ -99,6 +122,24 @@ struct MacraScreenDemoView: View {
             }
             .accessibilityIdentifier("macra-screen-demo-close-button")
         }
+    }
+}
+
+private enum MacraPaywallDemoAudience: String, CaseIterable, Identifiable {
+    case nonSubscriber
+    case existingSubscriber
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .nonSubscriber: return "New"
+        case .existingSubscriber: return "Subscriber"
+        }
+    }
+
+    var hasExistingSubscriptionAccess: Bool {
+        self == .existingSubscriber
     }
 }
 
@@ -124,7 +165,7 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
         case .onboarding:
             return "Walk the first-run Macra flow with mocked profile, plan, meals, and purchase."
         case .paywall:
-            return "Live App Store/RevenueCat prices with real sandbox purchase and restore."
+            return "Live App Store/RevenueCat products with real sandbox purchase, restore, and existing-subscriber paths."
         }
     }
 
@@ -154,8 +195,41 @@ private struct MacraScreenDemoDismissButton: View {
                 )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Close login demo")
-        .accessibilityIdentifier("macra-login-demo-close-button")
+        .accessibilityLabel("Close screen demo")
+        .accessibilityIdentifier("macra-screen-demo-active-close-button")
+    }
+}
+
+private struct MacraPaywallDemoAudienceToggle: View {
+    @Binding var selection: MacraPaywallDemoAudience
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(MacraPaywallDemoAudience.allCases) { audience in
+                Button {
+                    selection = audience
+                } label: {
+                    Text(audience.title)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(selection == audience ? .black : .white.opacity(0.78))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(selection == audience ? Color.primaryGreen : Color.clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("macra-paywall-demo-\(audience.id)-toggle")
+            }
+        }
+        .padding(4)
+        .background(Color.black.opacity(0.64))
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        )
     }
 }
 

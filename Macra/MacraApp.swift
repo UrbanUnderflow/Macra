@@ -27,6 +27,9 @@ final class MacraAppDelegate: NSObject, UIApplicationDelegate {
         // ServiceManager.requestTrackingAuthorization).
         MacraDeepLinkService.sharedInstance.configure()
         MacraAnalyticsService.shared.configureTikTokSDK()
+        Task { @MainActor in
+            MacraNoraVoiceService.shared.preloadOnboardingNarrations()
+        }
 
         // Cold-start universal link — when iOS launches the app from a
         // Safari tap on `applinks:fitwithpulse.ai/macra/buddy/...`, the

@@ -9,30 +9,42 @@ class PayWallViewModel: ObservableObject {
 }
 
 struct PayWallView: View {
-    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var offeringViewModel = PurchaseService.sharedInstance.offering
     @ObservedObject var viewModel: PayWallViewModel
     @State private var didTrackPaywallView = false
+    @State private var didTrackExistingAccessView = false
     @State private var standaloneSelectedPlanID: String?
     @State private var standalonePurchaseError: String?
     @State private var isStandalonePurchasing = false
     private let isDemoMode: Bool
+    private let usesLivePurchasesInDemo: Bool
     private let onboardingCoordinator: MacraOnboardingCoordinator?
     private let onDismiss: (() -> Void)?
+    private let existingSubscriptionAccessOverride: Bool?
 
     init(
         viewModel: PayWallViewModel,
         isDemoMode: Bool = false,
+        usesLivePurchasesInDemo: Bool = false,
         onboardingCoordinator: MacraOnboardingCoordinator? = nil,
-        onDismiss: (() -> Void)? = nil
+        onDismiss: (() -> Void)? = nil,
+        existingSubscriptionAccessOverride: Bool? = nil
     ) {
         self._viewModel = ObservedObject(wrappedValue: viewModel)
         self.isDemoMode = isDemoMode
+        self.usesLivePurchasesInDemo = usesLivePurchasesInDemo
         self.onboardingCoordinator = onboardingCoordinator
         self.onDismiss = onDismiss
+        self.existingSubscriptionAccessOverride = existingSubscriptionAccessOverride
     }
 
-    private var isOnboarding: Bool { onboardingCoordinator != nil }
+    private var shouldUseDemoPlans: Bool {
+        isDemoMode && !usesLivePurchasesInDemo
+    }
+
+    private var shouldTrackPaywallAnalytics: Bool {
+        !isDemoMode
+    }
 
     private var isRenewalFlow: Bool {
         onboardingCoordinator?.startingStep == .commitTrial
@@ -42,7 +54,7 @@ struct PayWallView: View {
         if let coordinator = onboardingCoordinator {
             return coordinator.availablePlanOptions
         }
-        return isDemoMode ? Self.demoPlanOptions : offeringViewModel.planOptions
+        return shouldUseDemoPlans ? Self.demoPlanOptions : offeringViewModel.planOptions
     }
 
     private var displayedPlans: [SubscriptionPlanOption] {
@@ -78,7 +90,7 @@ struct PayWallView: View {
     }
 
     private var packageLoadError: String? {
-        isDemoMode ? nil : offeringViewModel.packageLoadError
+        shouldUseDemoPlans ? nil : offeringViewModel.packageLoadError
     }
 
     private var paywallAnalyticsSource: String {
@@ -86,6 +98,25 @@ struct PayWallView: View {
             return onboardingCoordinator.paywallAnalyticsSource
         }
         return "standalone_paywall"
+    }
+
+    private var hasExistingSubscriptionAccess: Bool {
+        if let existingSubscriptionAccessOverride {
+            return existingSubscriptionAccessOverride
+        }
+
+        if let onboardingCoordinator {
+            return onboardingCoordinator.hasExistingSubscriptionAccess
+        }
+
+        return PurchaseService.sharedInstance.isSubscribed ||
+        UserService.sharedInstance.user?.subscriptionType.grantsMacraAccess == true ||
+        UserService.sharedInstance.isBetaUser
+    }
+
+    private var selectedTrialDays: Int? {
+        guard let trialDays = selectedPlan?.trialDays, trialDays > 0 else { return nil }
+        return trialDays
     }
 
     var body: some View {
@@ -102,11 +133,25 @@ struct PayWallView: View {
 
                         revealOrPersonalizedSection
 
-                        unlockHighlightsCard
+                        if hasExistingSubscriptionAccess {
+                            existingAccessCard
+                        } else {
+                            outcomeProofCard
 
-                        tierPickerSection
+                            foodFreedomCard
 
-                        priceDisclosureCard
+                            eatingOutCard
+
+                            noraDecisionCard
+
+                            socialLearningCard
+
+                            unlockHighlightsCard
+
+                            tierPickerSection
+
+                            priceDisclosureCard
+                        }
 
                         if let purchaseError, !purchaseError.isEmpty {
                             Text(purchaseError)
@@ -138,8 +183,11 @@ struct PayWallView: View {
         }
         .onChange(of: availablePlans.map(\.id).joined(separator: ",")) { _ in
             ensureVisiblePlanSelected()
-            guard !isDemoMode else { return }
+            guard shouldTrackPaywallAnalytics else { return }
             trackPaywallViewedIfReady()
+        }
+        .onChange(of: existingSubscriptionAccessOverride) { _ in
+            Task { await loadPlansAndTrackPaywallView() }
         }
     }
 
@@ -150,26 +198,10 @@ struct PayWallView: View {
         if let coordinator = onboardingCoordinator {
             PaywallTopBar(
                 canGoBack: coordinator.canGoBack,
-                onBack: coordinator.back,
-                onClose: coordinator.dismissPaywall
+                onBack: coordinator.back
             )
         } else {
-            HStack {
-                Spacer()
-                Button {
-                    closePaywall()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.78))
-                        .frame(width: 40, height: 40)
-                        .background(Color.white.opacity(0.06))
-                        .clipShape(Circle())
-                }
-                .accessibilityIdentifier("macra-paywall-close-button")
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
+            Color.clear.frame(height: 8)
         }
     }
 
@@ -201,22 +233,22 @@ struct PayWallView: View {
     }
 
     private var headerEyebrow: String {
+        if hasExistingSubscriptionAccess { return "MACRA ACCESS ACTIVE" }
         if isRenewalFlow { return "SUBSCRIPTION REQUIRED" }
         return "MACRA PLUS"
     }
 
     private var headerTitle: String {
+        if hasExistingSubscriptionAccess { return "Your Macra plan is ready." }
         if isRenewalFlow { return "Renew Macra Pro." }
-        guard let plan = selectedPlan else { return "Know exactly what to eat next." }
-        switch plan.periodKind {
-        case .year: return "Know exactly what to eat next, all year."
-        case .month: return "Reveal this month's plan."
-        default: return "Know exactly what to eat next."
-        }
+        return "Build the body you want without giving up the food you love."
     }
 
     private var headerSubtitle: String {
-        "Scan the meal in front of you. Macra reveals the macros, shows whether it fits today, and lets Nora fix the rest of your day."
+        if hasExistingSubscriptionAccess {
+            return "Your subscription already unlocks Macra. Continue when you're ready to start using this plan."
+        }
+        return "Macra turns your calories, meals out, labels, and Nora's AI insights into a plan you can actually live with."
     }
 
     // MARK: - Personalized plan (when available) + Reveal teaser (always)
@@ -226,7 +258,9 @@ struct PayWallView: View {
         if showsPersonalizedPlan, let macros = onboardingCoordinator?.planMacros {
             planSummaryCard(macros: macros)
         }
-        PayWallRevealMoment()
+        if !hasExistingSubscriptionAccess {
+            PayWallRevealMoment()
+        }
     }
 
     @ViewBuilder
@@ -307,34 +341,203 @@ struct PayWallView: View {
         .overlay(Capsule().strokeBorder(color.opacity(0.25), lineWidth: 1))
     }
 
+    // MARK: - Conversion proof
+
+    private var outcomeProofCard: some View {
+        conversionCard(
+            eyebrow: "WHAT YOU GET",
+            title: "A plan that turns today's food choices into progress.",
+            body: personalizedPlanProofLine,
+            accent: Color.primaryGreen
+        ) {
+            unlockHighlightRow(
+                icon: "target",
+                title: "Targets made personal",
+                body: "Your calorie, protein, carb, and fat targets become the guide for every meal.",
+                accent: Color.primaryGreen
+            )
+            unlockHighlightRow(
+                icon: "fork.knife",
+                title: "A day you can actually follow",
+                body: "Macra keeps the plan practical instead of forcing perfect meal-prep behavior.",
+                accent: Color.primaryBlue
+            )
+        }
+    }
+
+    private var foodFreedomCard: some View {
+        conversionCard(
+            eyebrow: "FOOD FREEDOM",
+            title: "Eat like someone with a plan, not someone starting over Monday.",
+            body: "Macra is built for people who want a leaner, healthier body and still want sushi, tacos, burgers, bowls, coffee runs, and nights out.",
+            accent: Color(hex: "FFB454")
+        ) {
+            unlockHighlightRow(
+                icon: "heart.fill",
+                title: "Keep the foods you love",
+                body: "Learn what fits, what needs a swap, and what just needs the rest of the day adjusted.",
+                accent: Color(hex: "FFB454")
+            )
+            unlockHighlightRow(
+                icon: "arrow.triangle.2.circlepath",
+                title: "Recover from messy days",
+                body: "Nora can rebalance dinner after a big lunch so one meal does not become a lost day.",
+                accent: Color.secondaryPink
+            )
+        }
+    }
+
+    private var eatingOutCard: some View {
+        conversionCard(
+            eyebrow: "EATING OUT MODE",
+            title: "Know what to order before hunger makes the decision.",
+            body: "Use Macra for menus, fast food, labels, and meal photos so the next choice is obvious.",
+            accent: Color.primaryBlue
+        ) {
+            unlockHighlightRow(
+                icon: "list.bullet.rectangle",
+                title: "Menu decisions",
+                body: "Ask Nora what fits your targets at the restaurant in front of you.",
+                accent: Color.primaryBlue
+            )
+            unlockHighlightRow(
+                icon: "takeoutbag.and.cup.and.straw",
+                title: "Fast-food recommendations",
+                body: "Get high-protein picks, swaps, and portions without guessing in the line.",
+                accent: Color(hex: "FFB454")
+            )
+            unlockHighlightRow(
+                icon: "qrcode.viewfinder",
+                title: "Label reality checks",
+                body: "Scan packaged foods and supplements before they become part of your day.",
+                accent: Color.primaryGreen
+            )
+        }
+    }
+
+    private var noraDecisionCard: some View {
+        conversionCard(
+            eyebrow: "NORA COACHING",
+            title: "Turn \"what should I eat?\" into the next clear move.",
+            body: "Nora uses your targets, logs, and context to coach the exact decision in front of you.",
+            accent: Color.secondaryPink
+        ) {
+            unlockHighlightRow(
+                icon: "bubble.left.and.bubble.right.fill",
+                title: "Can I fit pizza tonight?",
+                body: "Get the portion, sides, and day adjustment that keep the plan alive.",
+                accent: Color.secondaryPink
+            )
+            unlockHighlightRow(
+                icon: "sparkles",
+                title: "What should I order?",
+                body: "Turn cravings, menus, and macro gaps into a realistic recommendation.",
+                accent: Color.primaryGreen
+            )
+        }
+    }
+
+    private var socialLearningCard: some View {
+        conversionCard(
+            eyebrow: "SOCIAL LEARNING",
+            title: "Learn how other people structure eating habits.",
+            body: "Buddies lets you share food habits with friends, compare meal structure, and learn from days that look like the body and lifestyle you want.",
+            accent: Color.primaryGreen
+        ) {
+            unlockHighlightRow(
+                icon: "person.2.fill",
+                title: "Share eating habits",
+                body: "Invite friends to see your daily meals and swap accountability when you want it.",
+                accent: Color.primaryGreen
+            )
+            unlockHighlightRow(
+                icon: "chart.bar.xaxis",
+                title: "Copy better patterns",
+                body: "Study how high-protein days, meals out, and snacks are structured in real life.",
+                accent: Color.primaryBlue
+            )
+        }
+    }
+
+    private var personalizedPlanProofLine: String {
+        if let macros = onboardingCoordinator?.planMacros {
+            return "You are unlocking \(macros.calories) calories with \(macros.protein)g protein, \(macros.carbs)g carbs, and \(macros.fat)g fat as your daily operating system."
+        }
+
+        return "You are not buying generic advice. You are unlocking the system that turns your goals, meals, and cravings into daily decisions."
+    }
+
+    private func conversionCard<Content: View>(
+        eyebrow: String,
+        title: String,
+        body: String,
+        accent: Color,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(eyebrow)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.3)
+                .foregroundColor(accent)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(body)
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.68))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18).fill(accent.opacity(0.05)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(accent.opacity(0.16), lineWidth: 1)
+        )
+    }
+
     // MARK: - What unlocks
 
     private var unlockHighlightsCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("WHAT UNLOCKS")
+            Text("EVERYTHING INCLUDED")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))
                 .tracking(1.3)
                 .foregroundColor(Color.primaryGreen)
 
             unlockHighlightRow(
                 icon: "camera.viewfinder",
-                title: "Scan meals",
-                body: "Turn food photos into calorie and macro estimates."
+                title: "Photo macro scan",
+                body: "Scan meals and get calorie and macro estimates in seconds."
             )
             unlockHighlightRow(
                 icon: "qrcode.viewfinder",
-                title: "Read labels",
-                body: "See product and ingredient tradeoffs before you eat."
+                title: "Label scanner",
+                body: "Understand products, ingredients, and tradeoffs before they land in your cart."
             )
             unlockHighlightRow(
                 icon: "bubble.left.and.bubble.right.fill",
-                title: "Ask Nora",
-                body: "Get day-specific coaching from your targets and logs."
+                title: "Nora AI insights",
+                body: "Get day-specific coaching from your targets, logs, cravings, and schedule."
+            )
+            unlockHighlightRow(
+                icon: "person.2.fill",
+                title: "Buddies and share cards",
+                body: "Share meals, learn from friends, and make your progress more visible."
             )
             unlockHighlightRow(
                 icon: "dumbbell",
                 title: "Fit With Pulse Pro included",
-                body: "One subscription also unlocks AI workouts, live rounds, and clubs."
+                body: "One subscription also unlocks AI workouts, live challenges, and clubs."
             )
         }
         .padding(16)
@@ -346,13 +549,18 @@ struct PayWallView: View {
         )
     }
 
-    private func unlockHighlightRow(icon: String, title: String, body: String) -> some View {
+    private func unlockHighlightRow(
+        icon: String,
+        title: String,
+        body: String,
+        accent: Color = Color.primaryGreen
+    ) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(Color.primaryGreen)
+                .foregroundColor(accent)
                 .frame(width: 28, height: 28)
-                .background(Color.primaryGreen.opacity(0.12))
+                .background(accent.opacity(0.12))
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
@@ -367,6 +575,40 @@ struct PayWallView: View {
 
             Spacer(minLength: 0)
         }
+    }
+
+    private var existingAccessCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color.primaryGreen)
+                    .frame(width: 30, height: 30)
+                    .background(Color.primaryGreen.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Subscription recognized")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("No purchase is needed for this account.")
+                        .font(.system(size: 13))
+                        .foregroundColor(.white.opacity(0.66))
+                }
+            }
+
+            Text("Macra is unlocked through your existing subscription. Your plan, meal targets, scanner, and Nora are ready.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.white.opacity(0.76))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18).fill(Color.primaryGreen.opacity(0.055)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(Color.primaryGreen.opacity(0.22), lineWidth: 1)
+        )
     }
 
     // MARK: - Tier picker
@@ -484,10 +726,23 @@ struct PayWallView: View {
 
     private var priceDisclosureCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Auto-renews at the price shown until canceled. Cancel anytime in Settings → [your name] → Subscriptions.")
+            Text(priceDisclosureText)
                 .font(.system(size: 13))
                 .foregroundColor(.white.opacity(0.75))
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let trialDays = selectedTrialDays {
+                HStack {
+                    Text("Trial")
+                        .foregroundColor(.white.opacity(0.6))
+                        .font(.system(size: 12))
+                    Spacer()
+                    Text("\(trialLengthText(for: trialDays)) free")
+                        .foregroundColor(.white)
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .padding(.top, 4)
+            }
 
             if let plan = selectedPlan {
                 HStack {
@@ -510,6 +765,14 @@ struct PayWallView: View {
         )
     }
 
+    private var priceDisclosureText: String {
+        if let trialDays = selectedTrialDays {
+            return "Your \(trialLengthText(for: trialDays)) trial is free. After the trial, your selected plan auto-renews until canceled. Cancel anytime in Settings > [your name] > Subscriptions."
+        }
+
+        return "Auto-renews at the price shown until canceled. Cancel anytime in Settings > [your name] > Subscriptions."
+    }
+
     // MARK: - Bottom CTA + footer
 
     private var bottomCTASection: some View {
@@ -518,27 +781,51 @@ struct PayWallView: View {
                 title: isPurchasing ? "Processing..." : ctaTitle,
                 accent: Color.primaryGreen,
                 isLoading: isPurchasing,
-                action: triggerPurchase
+                action: hasExistingSubscriptionAccess ? triggerExistingAccessContinue : triggerPurchase
             )
-            .disabled(isPurchasing || (availablePlans.isEmpty && isLoadingPackages) || selectedPlan == nil)
+            .disabled(isPurchasing || (!hasExistingSubscriptionAccess && ((availablePlans.isEmpty && isLoadingPackages) || selectedPlan == nil)))
 
-            HStack(spacing: 16) {
-                Button(action: triggerRestore) {
-                    Text("Restore Purchases")
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.55))
+            if let ctaSupportingText {
+                Text(ctaSupportingText)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.62))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if hasExistingSubscriptionAccess {
+                HStack(spacing: 16) {
+                    Button(action: openPrivacy) {
+                        Text("Privacy")
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
+
+                    Button(action: openTerms) {
+                        Text("Terms")
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
                 }
+            } else {
+                HStack(spacing: 16) {
+                    Button(action: triggerRestore) {
+                        Text("Restore Purchases")
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
 
-                Button(action: openPrivacy) {
-                    Text("Privacy")
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.55))
-                }
+                    Button(action: openPrivacy) {
+                        Text("Privacy")
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
 
-                Button(action: openTerms) {
-                    Text("Terms")
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.55))
+                    Button(action: openTerms) {
+                        Text("Terms")
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
                 }
             }
         }
@@ -547,17 +834,38 @@ struct PayWallView: View {
     }
 
     private var ctaTitle: String {
+        if hasExistingSubscriptionAccess { return "Continue to Macra" }
+        if let trialDays = selectedTrialDays { return "Try \(trialLengthText(for: trialDays)) free" }
+        if isRenewalFlow { return "Renew Macra Pro" }
         guard let plan = selectedPlan else { return "Continue" }
         switch plan.periodKind {
-        case .year: return "Unlock yearly plan"
-        case .month: return "Unlock Macra Pro"
-        default: return "Continue"
+        case .year: return "Unlock my yearly plan"
+        case .month: return "Unlock my monthly plan"
+        default: return "Unlock my plan"
         }
+    }
+
+    private var ctaSupportingText: String? {
+        guard !hasExistingSubscriptionAccess, let plan = selectedPlan else { return nil }
+        if let trialDays = selectedTrialDays {
+            return "Free for \(trialLengthText(for: trialDays)), then \(plan.priceLabel). Cancel anytime."
+        }
+
+        return "\(plan.priceLabel). Cancel anytime in Apple Subscriptions."
+    }
+
+    private func trialLengthText(for days: Int) -> String {
+        days == 1 ? "1 day" : "\(days) days"
     }
 
     // MARK: - Actions
 
     private func triggerPurchase() {
+        if hasExistingSubscriptionAccess {
+            triggerExistingAccessContinue()
+            return
+        }
+
         if let coordinator = onboardingCoordinator {
             coordinator.purchaseAndContinue()
             return
@@ -566,42 +874,59 @@ struct PayWallView: View {
         purchaseStandalone(plan)
     }
 
+    private func triggerExistingAccessContinue() {
+        if let coordinator = onboardingCoordinator {
+            coordinator.continueWithExistingSubscriptionAccess()
+            return
+        }
+        finishStandalonePaywall()
+    }
+
     private func purchaseStandalone(_ plan: SubscriptionPlanOption) {
-        if isDemoMode {
+        if shouldUseDemoPlans {
             viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
                 message: "Demo purchase tapped: \(plan.displayTitle)",
                 backgroundColor: .secondaryCharcoal,
                 textColor: .secondaryWhite
             ))
+            finishStandalonePaywall()
             return
         }
 
         isStandalonePurchasing = true
         standalonePurchaseError = nil
-        MacraAnalyticsService.shared.trackSubscriptionPurchaseAttempted(
-            plan: plan,
-            source: paywallAnalyticsSource
-        )
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackSubscriptionPurchaseAttempted(
+                plan: plan,
+                source: paywallAnalyticsSource
+            )
+        }
 
         offeringViewModel.purchase(plan) { result in
             isStandalonePurchasing = false
             switch result {
             case .success:
-                MacraAnalyticsService.shared.trackSubscriptionStart(plan: plan, source: paywallAnalyticsSource)
+                if shouldTrackPaywallAnalytics {
+                    MacraAnalyticsService.shared.trackSubscriptionStart(plan: plan, source: paywallAnalyticsSource)
+                }
                 finishStandalonePaywall()
             case .failure(let error):
                 if PurchaseService.sharedInstance.isPurchaseCanceledError(error) {
-                    MacraAnalyticsService.shared.trackSubscriptionPurchaseCancelled(
-                        plan: plan,
-                        source: paywallAnalyticsSource
-                    )
+                    if shouldTrackPaywallAnalytics {
+                        MacraAnalyticsService.shared.trackSubscriptionPurchaseCancelled(
+                            plan: plan,
+                            source: paywallAnalyticsSource
+                        )
+                    }
                     standalonePurchaseError = nil
                 } else {
-                    MacraAnalyticsService.shared.trackSubscriptionPurchaseFailed(
-                        plan: plan,
-                        source: paywallAnalyticsSource,
-                        error: error
-                    )
+                    if shouldTrackPaywallAnalytics {
+                        MacraAnalyticsService.shared.trackSubscriptionPurchaseFailed(
+                            plan: plan,
+                            source: paywallAnalyticsSource,
+                            error: error
+                        )
+                    }
                     standalonePurchaseError = (error as NSError).localizedDescription
                     print("There was an error while purchasing \(error)")
                 }
@@ -618,29 +943,36 @@ struct PayWallView: View {
     }
 
     private func restoreStandalone() {
-        if isDemoMode {
+        if shouldUseDemoPlans {
             viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
                 message: "Demo restore tapped",
                 backgroundColor: .secondaryCharcoal,
                 textColor: .secondaryWhite
             ))
+            finishStandalonePaywall()
             return
         }
 
-        MacraAnalyticsService.shared.trackSubscriptionRestoreAttempted(source: paywallAnalyticsSource)
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackSubscriptionRestoreAttempted(source: paywallAnalyticsSource)
+        }
 
         PurchaseService.sharedInstance.restoreSubscriptionStatus { result in
             DispatchQueue.main.async {
                 switch result {
                 case .success(let restored):
                     if restored {
-                        MacraAnalyticsService.shared.trackSubscriptionRestoreSucceeded(source: paywallAnalyticsSource)
+                        if shouldTrackPaywallAnalytics {
+                            MacraAnalyticsService.shared.trackSubscriptionRestoreSucceeded(source: paywallAnalyticsSource)
+                        }
                         finishStandalonePaywall()
                     } else {
-                        MacraAnalyticsService.shared.trackSubscriptionRestoreFailed(
-                            source: paywallAnalyticsSource,
-                            reason: "no_active_subscription"
-                        )
+                        if shouldTrackPaywallAnalytics {
+                            MacraAnalyticsService.shared.trackSubscriptionRestoreFailed(
+                                source: paywallAnalyticsSource,
+                                reason: "no_active_subscription"
+                            )
+                        }
                         viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
                             message: "No active subscription found for this Apple ID.",
                             backgroundColor: .secondaryCharcoal,
@@ -648,11 +980,13 @@ struct PayWallView: View {
                         ))
                     }
                 case .failure(let error):
-                    MacraAnalyticsService.shared.trackSubscriptionRestoreFailed(
-                        source: paywallAnalyticsSource,
-                        reason: "restore_error",
-                        error: error
-                    )
+                    if shouldTrackPaywallAnalytics {
+                        MacraAnalyticsService.shared.trackSubscriptionRestoreFailed(
+                            source: paywallAnalyticsSource,
+                            reason: "restore_error",
+                            error: error
+                        )
+                    }
                     print("There was an error while restoring purchases \(error)")
                     viewModel.appCoordinator.showToast(viewModel: ToastViewModel(
                         message: "We could not restore purchases. Please try again.",
@@ -667,7 +1001,7 @@ struct PayWallView: View {
     private func openPrivacy() {
         if let coordinator = onboardingCoordinator {
             coordinator.appCoordinator.showPrivacyScreenModal()
-        } else if !isDemoMode {
+        } else if !isDemoMode || usesLivePurchasesInDemo {
             viewModel.appCoordinator.showPrivacyScreenModal()
         }
     }
@@ -675,28 +1009,8 @@ struct PayWallView: View {
     private func openTerms() {
         if let coordinator = onboardingCoordinator {
             coordinator.appCoordinator.modalScreen = .terms
-        } else if !isDemoMode {
+        } else if !isDemoMode || usesLivePurchasesInDemo {
             viewModel.appCoordinator.modalScreen = .terms
-        }
-    }
-
-    private func closePaywall() {
-        if !isDemoMode {
-            MacraAnalyticsService.shared.trackPaywallDismissed(
-                source: paywallAnalyticsSource,
-                selectedPlan: selectedPlan
-            )
-        }
-
-        if let onDismiss {
-            onDismiss()
-            return
-        }
-
-        if isDemoMode {
-            dismiss()
-        } else {
-            viewModel.appCoordinator.closeModals()
         }
     }
 
@@ -712,8 +1026,13 @@ struct PayWallView: View {
 
     @MainActor
     private func loadPlansAndTrackPaywallView() async {
-        if isDemoMode {
+        if shouldUseDemoPlans {
             didTrackPaywallView = true
+            return
+        }
+
+        if hasExistingSubscriptionAccess {
+            trackExistingAccessViewIfReady()
             return
         }
 
@@ -728,7 +1047,11 @@ struct PayWallView: View {
 
     @MainActor
     private func trackPaywallViewedIfReady() {
-        guard !isDemoMode, !didTrackPaywallView else { return }
+        guard shouldTrackPaywallAnalytics, !didTrackPaywallView else { return }
+        guard !hasExistingSubscriptionAccess else {
+            trackExistingAccessViewIfReady()
+            return
+        }
         guard !availablePlans.isEmpty else { return }
 
         didTrackPaywallView = true
@@ -737,6 +1060,13 @@ struct PayWallView: View {
             selectedPlan: selectedPlan,
             availablePlans: availablePlans
         )
+    }
+
+    @MainActor
+    private func trackExistingAccessViewIfReady() {
+        guard shouldTrackPaywallAnalytics, !didTrackExistingAccessView else { return }
+        didTrackExistingAccessView = true
+        MacraAnalyticsService.shared.trackExistingSubscriptionAccessViewed(source: paywallAnalyticsSource)
     }
 
     // MARK: - Plan list helpers
@@ -763,7 +1093,7 @@ struct PayWallView: View {
                 localizedPriceString: "$39.99",
                 price: Decimal(39.99),
                 periodKind: .year,
-                trialDays: nil,
+                trialDays: 3,
                 product: nil
             )),
             .local(LocalSubscriptionPlanViewModel(
@@ -772,7 +1102,7 @@ struct PayWallView: View {
                 localizedPriceString: "$4.99",
                 price: Decimal(4.99),
                 periodKind: .month,
-                trialDays: nil,
+                trialDays: 3,
                 product: nil
             ))
         ]
@@ -1033,10 +1363,10 @@ struct MacraReviewPaywallScreenshotView: View {
     @ObservedObject private var offering = OfferingViewModel.sharedInstance
 
     private let featureChips = [
-        "AI meal scan",
-        "Macro tracking",
-        "Nutrition insights",
-        "Meal planning"
+        "3-day trial",
+        "Meal scan",
+        "Menu choices",
+        "Buddies"
     ]
 
     private var annualPrice: String? {
@@ -1059,12 +1389,12 @@ struct MacraReviewPaywallScreenshotView: View {
                             .tracking(1.6)
                             .foregroundColor(.primaryGreen)
 
-                        Text("Unlock deeper\nnutrition clarity.")
-                            .font(.system(size: 44, weight: .bold, design: .rounded))
+                        Text("Build the body you want without giving up the food you love.")
+                            .font(.system(size: 38, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        Text("Track macros, scan meals, build smarter habits, and keep your plan moving every day.")
+                        Text("Scan meals, make smarter menu choices, ask Nora what fits, and share eating habits with friends.")
                             .font(.system(size: 16, weight: .regular))
                             .foregroundColor(.white.opacity(0.72))
                             .fixedSize(horizontal: false, vertical: true)
@@ -1078,10 +1408,10 @@ struct MacraReviewPaywallScreenshotView: View {
                             tint: .primaryGreen,
                             badge: "Most Popular",
                             title: "Annual",
-                            subtitle: "A full year of Macra Plus",
+                            subtitle: "Try 3 days free",
                             price: annualPrice,
                             cadence: "per year",
-                            supportingLine: "Best value for everyday tracking"
+                            supportingLine: "Best value for everyday progress"
                         )
 
                         MacraReviewPlanCard(
@@ -1089,7 +1419,7 @@ struct MacraReviewPaywallScreenshotView: View {
                             tint: .primaryBlue,
                             badge: "Flexible",
                             title: "Monthly",
-                            subtitle: "Unlock your scan and Nora plan today",
+                            subtitle: "Try 3 days free",
                             price: monthlyPrice,
                             cadence: "per month",
                             supportingLine: "Start anytime, cancel anytime"
@@ -1107,7 +1437,7 @@ struct MacraReviewPaywallScreenshotView: View {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundColor(.white)
 
-                                Text("Meal logging, AI meal analysis, macro targets, planning, and premium nutrition insights.")
+                                Text("Photo scans, label checks, menu decisions, Nora coaching, Buddies, share cards, and Fit With Pulse Pro.")
                                     .font(.system(size: 13, weight: .regular))
                                     .foregroundColor(.white.opacity(0.68))
                                     .fixedSize(horizontal: false, vertical: true)

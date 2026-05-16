@@ -763,8 +763,11 @@ struct BiggestStruggleStepView: View {
 
 struct GeneratingPlanStepView: View {
     @ObservedObject var coordinator: MacraOnboardingCoordinator
+    @ObservedObject private var noraVoice = MacraNoraVoiceService.shared
     @State private var progress: Double = 0
     @State private var messageIndex: Int = 0
+    @State private var isAnimationFinished = false
+    @State private var didScheduleAdvance = false
 
     private let messages = [
         "Analyzing your profile...",
@@ -774,6 +777,7 @@ struct GeneratingPlanStepView: View {
     ]
 
     private let totalDuration: Double = 4.0
+    private let narrationKey = "macra_onboarding_generating_plan"
 
     var body: some View {
         ZStack {
@@ -811,12 +815,25 @@ struct GeneratingPlanStepView: View {
             .padding(.horizontal, 20)
         }
         .onAppear { runAnimation() }
+        .onChange(of: noraVoice.lastCompletedNarrationKey) { completedKey in
+            guard completedKey == narrationKey else { return }
+            scheduleAdvanceWhenReady()
+        }
+        .onChange(of: noraVoice.isEnabled) { isEnabled in
+            guard !isEnabled else { return }
+            scheduleAdvanceWhenReady()
+        }
     }
 
     private func runAnimation() {
+        guard !isAnimationFinished, !didScheduleAdvance else { return }
+        progress = 0
+        messageIndex = 0
+
         let stepCount = messages.count
         for i in 1..<stepCount {
             DispatchQueue.main.asyncAfter(deadline: .now() + totalDuration * Double(i) / Double(stepCount)) {
+                guard coordinator.currentStep == .generatingPlan else { return }
                 withAnimation { messageIndex = i }
             }
         }
@@ -826,6 +843,25 @@ struct GeneratingPlanStepView: View {
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + totalDuration) {
+            guard coordinator.currentStep == .generatingPlan else { return }
+            isAnimationFinished = true
+            scheduleAdvanceWhenReady()
+        }
+    }
+
+    private func scheduleAdvanceWhenReady() {
+        guard isAnimationFinished, !didScheduleAdvance else { return }
+        guard coordinator.currentStep == .generatingPlan else { return }
+
+        if noraVoice.isEnabled,
+           noraVoice.lastCompletedNarrationKey != narrationKey,
+           (noraVoice.activeNarrationKey == narrationKey || noraVoice.isNarrating) {
+            return
+        }
+
+        didScheduleAdvance = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            guard coordinator.currentStep == .generatingPlan else { return }
             coordinator.advance()
         }
     }
@@ -945,8 +981,7 @@ struct PlanReadyStepView: View {
             VStack(spacing: 0) {
                 PaywallTopBar(
                     canGoBack: coordinator.canGoBack,
-                    onBack: coordinator.back,
-                    onClose: coordinator.dismissPaywall
+                    onBack: coordinator.back
                 )
 
                 ScrollView(showsIndicators: false) {
@@ -1026,7 +1061,7 @@ struct PlanReadyStepView: View {
                     ForEach(Array(plan.meals.enumerated()), id: \.offset) { index, meal in
                         mealCard(index: index, meal: meal)
                     }
-                    if let notes = plan.notes, !notes.isEmpty {
+                    if let notes = displayablePlanNotes(from: plan.notes) {
                         Text(notes)
                             .font(.system(size: 13))
                             .foregroundColor(.white.opacity(0.7))
@@ -1066,6 +1101,23 @@ struct PlanReadyStepView: View {
                 .padding(.vertical, 8)
             }
         }
+    }
+
+    private func displayablePlanNotes(from notes: String?) -> String? {
+        guard let notes = notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty else {
+            return nil
+        }
+
+        let lowercased = notes.lowercased()
+        let looksInternal = lowercased.contains("demo") ||
+            lowercased.contains("meal-plan service") ||
+            lowercased.contains("ad-friendly")
+
+        guard !looksInternal else {
+            return nil
+        }
+
+        return notes
     }
 
     @ViewBuilder
@@ -1246,9 +1298,9 @@ struct FeaturesStepView: View {
         ("list.bullet.rectangle", "Meal planning that moves into your journal"),
         ("sparkles", "Daily nutrition coaching"),
         // Cross-product entitlement: one Macra subscription unlocks
-        // Fit With Pulse Pro (live rounds, AI workouts, club coaching).
+        // Fit With Pulse Pro (live challenges, AI workouts, club coaching).
         // Same flag flips both ways — see Pulse's WorkoutReadyView copy.
-        ("dumbbell", "Includes Fit With Pulse Pro — AI workouts, live rounds, clubs")
+        ("dumbbell", "Includes Fit With Pulse Pro — AI workouts, live challenges, clubs")
     ]
 
     var body: some View {
@@ -1258,8 +1310,7 @@ struct FeaturesStepView: View {
             VStack(spacing: 0) {
                 PaywallTopBar(
                     canGoBack: coordinator.canGoBack,
-                    onBack: coordinator.back,
-                    onClose: coordinator.dismissPaywall
+                    onBack: coordinator.back
                 )
 
                 ScrollView(showsIndicators: false) {
@@ -1332,66 +1383,14 @@ struct FeaturesStepView: View {
 
 struct CommitTrialStepView: View {
     @ObservedObject var coordinator: MacraOnboardingCoordinator
-    @State private var betaTapCount = 0
 
     var body: some View {
-        ZStack {
-            PayWallView(
-                viewModel: PayWallViewModel(appCoordinator: coordinator.appCoordinator),
-                isDemoMode: coordinator.isDemoMode,
-                onboardingCoordinator: coordinator
-            )
-
-            VStack(spacing: 0) {
-                Color.clear
-                    .frame(height: 80)
-                    .allowsHitTesting(false)
-                Color.clear
-                    .frame(height: 220)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        print("[BetaUnlock] header catcher tapped")
-                        addToBetaGroup()
-                    }
-                Spacer()
-                    .allowsHitTesting(false)
-            }
-        }
-        .onAppear {
-            print("[BetaUnlock] CommitTrialStepView appeared — tap the top 260pt area 5x quickly to unlock beta")
-        }
-    }
-
-    private func addToBetaGroup() {
-        betaTapCount += 1
-        print("[BetaUnlock] addToBetaGroup invoked — count=\(betaTapCount)/5")
-
-        guard betaTapCount == 5 else { return }
-        betaTapCount = 0
-        print("[BetaUnlock] 5 taps reached — activating beta bypass")
-        performBetaUnlock()
-    }
-
-    private func performBetaUnlock() {
-        coordinator.appCoordinator.showToast(viewModel: ToastViewModel(
-            message: "Welcome to the Macra beta.",
-            backgroundColor: .secondaryCharcoal,
-            textColor: .secondaryWhite
-        ))
-
-        guard let user = UserService.sharedInstance.user else {
-            print("[BetaUnlock] no cached user in UserService — dismissing paywall without Firestore write")
-            coordinator.dismissPaywall()
-            return
-        }
-
-        UserService.sharedInstance.grantLocalMacraBetaAccess()
-        print("[BetaUnlock] Local Macra beta access enabled for \(user.email) without mutating shared subscription fields")
-
-        PurchaseService.sharedInstance.checkSubscriptionStatus(forceRefresh: true) { result in
-            print("[BetaUnlock] PurchaseService.checkSubscriptionStatus result: \(result)")
-        }
-        coordinator.dismissPaywall()
-        print("[BetaUnlock] coordinator.dismissPaywall() called")
+        PayWallView(
+            viewModel: PayWallViewModel(appCoordinator: coordinator.appCoordinator),
+            isDemoMode: coordinator.isDemoMode,
+            usesLivePurchasesInDemo: coordinator.usesLivePurchasesInDemo,
+            onboardingCoordinator: coordinator,
+            existingSubscriptionAccessOverride: coordinator.existingSubscriptionAccessOverride
+        )
     }
 }

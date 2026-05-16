@@ -298,28 +298,16 @@ final class AppCoordinator: ObservableObject {
     }
 
     /// Returns true when there is evidence the user already completed Macra
-    /// onboarding in a prior session — shared-doc Macra subscription, beta
-    /// access, saved questionnaire profile, or RevenueCat entitlement.
-    private func detectPriorMacraOnboarding(user: User?, completion: @escaping (Bool) -> Void) {
-        if user?.subscriptionType.grantsMacraAccess == true ||
-           serviceManager.userService.isBetaUser {
-            completion(true)
-            return
-        }
-
+    /// onboarding in a prior session. Subscription access alone is not enough:
+    /// cross-app subscribers still need the Macra plan flow before entering.
+    private func detectPriorMacraOnboarding(user _: User?, completion: @escaping (Bool) -> Void) {
         serviceManager.userService.hasSavedMacraProfile { hasSavedProfile in
             if hasSavedProfile {
                 completion(true)
                 return
             }
 
-            PurchaseService.sharedInstance.checkSubscriptionStatus(forceRefresh: true) { result in
-                if case .success(true) = result {
-                    completion(true)
-                } else {
-                    completion(false)
-                }
-            }
+            completion(false)
         }
     }
 

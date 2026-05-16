@@ -32,7 +32,14 @@ private enum AppsFlyerAnalyticsEvent {
     static let restoreAttempted = "macra_subscription_restore_attempted"
     static let restoreSucceeded = "macra_subscription_restore_succeeded"
     static let restoreFailed = "macra_subscription_restore_failed"
+    static let existingAccessViewed = "macra_subscription_existing_access_viewed"
+    static let existingAccessContinued = "macra_subscription_existing_access_continued"
+    static let paywallViewed = "macra_paywall_viewed_standalone"
     static let paywallDismissed = "macra_paywall_dismissed"
+    static let onboardingStarted = "macra_onboarding_started"
+    static let onboardingProfileCompleted = "macra_onboarding_profile_completed"
+    static let onboardingPaywallReached = "macra_onboarding_paywall_reached"
+    static let onboardingCompleted = "macra_onboarding_completed"
     static let onboardingStepViewed = "macra_onboarding_step_viewed"
     static let onboardingStepCompleted = "macra_onboarding_step_completed"
     static let onboardingStepBack = "macra_onboarding_step_back"
@@ -138,12 +145,14 @@ final class MacraAnalyticsService {
         )
     }
 
-    func trackRegistrationCompleted(source: String) {
-        guard !trackedRegistrationSources.contains(source) else { return }
-        trackedRegistrationSources.insert(source)
+    func trackAccountRegistrationCompleted(method: String, source: String = "account_registration") {
+        let key = "\(source):\(method)"
+        guard !trackedRegistrationSources.contains(key) else { return }
+        trackedRegistrationSources.insert(key)
 
         var properties = baseProperties(source: source)
-        properties[AppsFlyerAnalyticsParam.registrationMethod] = "macra_onboarding"
+        properties["registration_method"] = method
+        properties[AppsFlyerAnalyticsParam.registrationMethod] = method
 
         trackAppsFlyerEvent(
             name: AppsFlyerAnalyticsEvent.completeRegistration,
@@ -169,17 +178,34 @@ final class MacraAnalyticsService {
         properties["available_plan_count"] = availablePlans.count
         properties["plans_loaded"] = !availablePlans.isEmpty
 
-        if source == "onboarding" || source == "onboarding_paywall" {
-            trackRegistrationCompleted(source: source)
-        }
-
         var appsFlyerProperties = properties
         appsFlyerProperties[AppsFlyerAnalyticsParam.contentType] = "subscription_paywall"
         appsFlyerProperties[AppsFlyerAnalyticsParam.contentId] = selectedPlan?.analyticsProductId ?? "macra_subscription_paywall"
         appsFlyerProperties[AppsFlyerAnalyticsParam.description] = "Macra Pro paywall"
+
+        if source == "onboarding" || source == "onboarding_paywall" {
+            trackCustomLifecycleEvent(
+                appsFlyerName: AppsFlyerAnalyticsEvent.onboardingPaywallReached,
+                tikTokEventName: "MacraOnboardingPaywallReached",
+                eventId: makeEventId(prefix: "onboarding_paywall_reached", source: source, plan: selectedPlan),
+                properties: appsFlyerProperties,
+                includeRevenue: false
+            )
+        }
+
+        guard source == "standalone_paywall" else { return }
+
         trackAppsFlyerEvent(
             name: AppsFlyerAnalyticsEvent.contentView,
             eventId: eventId,
+            properties: appsFlyerProperties,
+            includeRevenue: false
+        )
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallViewed,
+            tikTokEventName: "MacraPaywallViewed",
+            eventId: makeEventId(prefix: "macra_paywall_viewed_standalone", source: source, plan: selectedPlan),
             properties: appsFlyerProperties,
             includeRevenue: false
         )
@@ -422,6 +448,116 @@ final class MacraAnalyticsService {
         )
     }
 
+    func trackExistingSubscriptionAccessViewed(source: String) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: nil,
+            funnelStep: "existing_access_viewed"
+        )
+        properties["access_source"] = "existing_subscription"
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.existingAccessViewed,
+            tikTokEventName: "ExistingSubscriptionAccessViewed",
+            eventId: makeEventId(prefix: "existing_access_viewed", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackExistingSubscriptionAccessContinued(source: String) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: nil,
+            funnelStep: "existing_access_continued"
+        )
+        properties["access_source"] = "existing_subscription"
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.existingAccessContinued,
+            tikTokEventName: "ExistingSubscriptionAccessContinued",
+            eventId: makeEventId(prefix: "existing_access_continued", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackOnboardingStarted(
+        source: String,
+        startingStepId: String,
+        stepCount: Int,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = baseProperties(source: source)
+        properties["funnel"] = "onboarding"
+        properties["funnel_step"] = "started"
+        properties["starting_step_id"] = startingStepId
+        properties["step_count"] = stepCount
+        for (key, value) in metadata {
+            properties[key] = value
+        }
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.onboardingStarted,
+            tikTokEventName: "MacraOnboardingStarted",
+            eventId: makeEventId(prefix: "onboarding_started", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackOnboardingProfileCompleted(
+        source: String,
+        startingStepId: String,
+        stepCount: Int,
+        completionAction: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = baseProperties(source: source)
+        properties["funnel"] = "onboarding"
+        properties["funnel_step"] = "profile_completed"
+        properties["starting_step_id"] = startingStepId
+        properties["step_count"] = stepCount
+        properties["completion_action"] = completionAction
+        for (key, value) in metadata {
+            properties[key] = value
+        }
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.onboardingProfileCompleted,
+            tikTokEventName: "MacraOnboardingProfileCompleted",
+            eventId: makeEventId(prefix: "onboarding_profile_completed", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackOnboardingCompleted(
+        source: String,
+        startingStepId: String,
+        stepCount: Int,
+        completionAction: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = baseProperties(source: source)
+        properties["funnel"] = "onboarding"
+        properties["funnel_step"] = "completed"
+        properties["starting_step_id"] = startingStepId
+        properties["step_count"] = stepCount
+        properties["completion_action"] = completionAction
+        for (key, value) in metadata {
+            properties[key] = value
+        }
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.onboardingCompleted,
+            tikTokEventName: "MacraOnboardingCompleted",
+            eventId: makeEventId(prefix: "onboarding_completed", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
     func trackOnboardingStepViewed(
         stepId: String,
         stepName: String,
@@ -446,7 +582,7 @@ final class MacraAnalyticsService {
         properties["trigger"] = trigger
 
         trackCustomLifecycleEvent(
-            appsFlyerName: AppsFlyerAnalyticsEvent.onboardingStepViewed,
+            appsFlyerName: stepEventName(prefix: AppsFlyerAnalyticsEvent.onboardingStepViewed, stepId: stepId),
             tikTokEventName: "MacraOnboardingStepViewed",
             eventId: makeEventId(prefix: "onboarding_step_viewed_\(stepId)", source: source, plan: nil),
             properties: properties,
@@ -478,7 +614,7 @@ final class MacraAnalyticsService {
         properties["destination_step_id"] = destinationStepId ?? "none"
 
         trackCustomLifecycleEvent(
-            appsFlyerName: AppsFlyerAnalyticsEvent.onboardingStepCompleted,
+            appsFlyerName: stepEventName(prefix: AppsFlyerAnalyticsEvent.onboardingStepCompleted, stepId: stepId),
             tikTokEventName: "MacraOnboardingStepCompleted",
             eventId: makeEventId(prefix: "onboarding_step_completed_\(stepId)", source: source, plan: nil),
             properties: properties,
@@ -508,7 +644,7 @@ final class MacraAnalyticsService {
         properties["destination_step_id"] = destinationStepId ?? "none"
 
         trackCustomLifecycleEvent(
-            appsFlyerName: AppsFlyerAnalyticsEvent.onboardingStepBack,
+            appsFlyerName: stepEventName(prefix: AppsFlyerAnalyticsEvent.onboardingStepBack, stepId: stepId),
             tikTokEventName: "MacraOnboardingStepBack",
             eventId: makeEventId(prefix: "onboarding_step_back_\(stepId)", source: source, plan: nil),
             properties: properties,
@@ -538,7 +674,7 @@ final class MacraAnalyticsService {
         properties["exit_action"] = exitAction
 
         trackCustomLifecycleEvent(
-            appsFlyerName: AppsFlyerAnalyticsEvent.onboardingExited,
+            appsFlyerName: stepEventName(prefix: AppsFlyerAnalyticsEvent.onboardingExited, stepId: stepId),
             tikTokEventName: "MacraOnboardingExited",
             eventId: makeEventId(prefix: "onboarding_exited_\(stepId)", source: source, plan: nil),
             properties: properties,
@@ -892,6 +1028,15 @@ final class MacraAnalyticsService {
         let subject = userId ?? "anonymous"
         let product = plan?.analyticsProductId ?? "none"
         return "macra_\(prefix)_\(source)_\(subject)_\(product)_\(UUID().uuidString)"
+    }
+
+    private func stepEventName(prefix: String, stepId: String) -> String {
+        let safeStepId = stepId
+            .lowercased()
+            .map { character -> Character in
+                character.isLetter || character.isNumber || character == "_" ? character : "_"
+            }
+        return "\(prefix)_\(String(safeStepId))"
     }
 
     private func analyticsValue(for plan: SubscriptionPlanOption) -> Double {

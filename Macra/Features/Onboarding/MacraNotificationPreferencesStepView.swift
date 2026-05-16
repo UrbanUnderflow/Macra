@@ -14,34 +14,36 @@ struct NotificationPreferencesStepView: View {
 
     var body: some View {
         OnboardingScaffold(
-            title: "Want Nora to keep you on track?",
-            subtitle: "Your plan is unlocked. Pick the reminders you want, or leave everything off.",
+            title: "Choose how Nora holds you to this.",
+            subtitle: "This is your first commitment before unlocking Macra: decide when you want the plan to pull you back on track.",
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
-            ctaTitle: "Finish",
+            ctaTitle: "Continue to unlock",
             isLoading: isRequesting,
             onBack: coordinator.back,
             onForward: confirmAndAdvance
         ) {
             VStack(spacing: 12) {
+                commitmentCard
+
                 toggleCard(
-                    title: "Remind me for every meal",
-                    subtitle: "A nudge for Meal 1, 2, 3, and 4 so you never forget to log.",
+                    title: "I will log every meal",
+                    subtitle: "Nora can nudge Meal 1, 2, 3, and 4 so the plan stays visible.",
                     icon: "fork.knife",
                     isOn: $preferences.mealReminders
                 )
 
                 toggleCard(
-                    title: "Morning: remember to log food",
-                    subtitle: "An 8 AM nudge to start the day on the right foot.",
+                    title: "I will start the day on track",
+                    subtitle: "An 8 AM nudge to make the first food decision intentional.",
                     icon: "sunrise.fill",
                     isOn: $preferences.morningLogReminder
                 )
 
                 toggleCard(
-                    title: "End of day: check in on eating",
-                    subtitle: "An 8 PM reflection with Nora on how today went.",
+                    title: "I will check in before the day ends",
+                    subtitle: "An 8 PM reflection with Nora so one day can teach the next.",
                     icon: "moon.stars.fill",
                     isOn: $preferences.endOfDayCheckin
                 )
@@ -55,6 +57,39 @@ struct NotificationPreferencesStepView: View {
         .onChange(of: preferences) { newValue in
             coordinator.answers.notificationPreferences = newValue
         }
+    }
+
+    private var commitmentCard: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(.black)
+                .frame(width: 40, height: 40)
+                .background(accent)
+                .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("I am doing this.")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+
+                Text("Pick one or more moments where Future You wants Nora to step in before old habits do.")
+                    .font(.system(size: 13))
+                    .foregroundColor(.white.opacity(0.66))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(accent.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(accent.opacity(0.32), lineWidth: 1)
+        )
     }
 
     private func toggleCard(title: String, subtitle: String, icon: String, isOn: Binding<Bool>) -> some View {
@@ -103,7 +138,7 @@ struct NotificationPreferencesStepView: View {
             Image(systemName: "bell.slash")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(Color.white.opacity(0.5))
-            Text("Leave everything off if you'd rather not be notified. You can enable later in Settings.")
+            Text("You can leave reminders off and enable them later in Settings.")
                 .font(.system(size: 12))
                 .foregroundColor(Color.white.opacity(0.55))
                 .fixedSize(horizontal: false, vertical: true)
@@ -116,7 +151,7 @@ struct NotificationPreferencesStepView: View {
         coordinator.answers.notificationPreferences = preferences
 
         guard preferences.hasAnyEnabled, !coordinator.isDemoMode else {
-            coordinator.persistNotificationPreferencesAndNotifyWelcome()
+            coordinator.persistNotificationPreferences()
             coordinator.finishNotificationPreferencesAndAdvance()
             return
         }
@@ -125,7 +160,7 @@ struct NotificationPreferencesStepView: View {
         Task {
             _ = await NotificationService.sharedInstance.requestAuthorization()
             await MainActor.run {
-                coordinator.persistNotificationPreferencesAndNotifyWelcome()
+                coordinator.persistNotificationPreferences()
                 isRequesting = false
                 coordinator.finishNotificationPreferencesAndAdvance()
             }

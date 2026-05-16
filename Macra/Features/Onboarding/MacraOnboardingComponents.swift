@@ -1,5 +1,51 @@
 import SwiftUI
 
+struct NoraVoiceToggleButton: View {
+    let isEnabled: Bool
+    let voiceLevel: Double
+    let action: () -> Void
+
+    private var clampedVoiceLevel: Double {
+        max(0, min(1, voiceLevel))
+    }
+
+    var body: some View {
+        let level = isEnabled ? clampedVoiceLevel : 0
+        let isSpeaking = level > 0.04
+
+        Button(action: action) {
+            ZStack {
+                if isSpeaking {
+                    Circle()
+                        .strokeBorder(Color.primaryGreen.opacity(0.28 + (level * 0.46)), lineWidth: 2)
+                        .scaleEffect(1 + (level * 0.34))
+                }
+
+                Circle()
+                    .fill(Color.black.opacity(0.28 + (level * 0.10)))
+
+                Image(systemName: isEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(isEnabled ? Color.primaryGreen : Color.white.opacity(0.68))
+                    .scaleEffect(1 + (level * 0.18))
+            }
+            .frame(width: 40, height: 40)
+            .clipShape(Circle())
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        isEnabled ? Color.primaryGreen.opacity(0.35 + (level * 0.35)) : Color.white.opacity(0.10),
+                        lineWidth: 1
+                    )
+            )
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .animation(.easeOut(duration: 0.08), value: voiceLevel)
+        .accessibilityLabel(isEnabled ? "Turn Nora voice off" : "Turn Nora voice on")
+    }
+}
+
 struct OnboardingScaffold<Content: View>: View {
     let title: String
     let subtitle: String?
@@ -64,6 +110,8 @@ struct OnboardingScaffold<Content: View>: View {
                         }
                     }
                     .frame(height: 6)
+
+                    Color.clear.frame(width: 40, height: 40)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
@@ -150,7 +198,7 @@ struct OnboardingChoiceCard<Value: Hashable>: View {
 struct PaywallTopBar: View {
     let canGoBack: Bool
     let onBack: () -> Void
-    let onClose: () -> Void
+    let onClose: (() -> Void)? = nil
 
     var body: some View {
         HStack {
@@ -167,13 +215,17 @@ struct PaywallTopBar: View {
                 Color.clear.frame(width: 40, height: 40)
             }
             Spacer()
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.75))
-                    .frame(width: 40, height: 40)
-                    .background(Color.white.opacity(0.06))
-                    .clipShape(Circle())
+            if let onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.75))
+                        .frame(width: 40, height: 40)
+                        .background(Color.white.opacity(0.06))
+                        .clipShape(Circle())
+                }
+            } else {
+                Color.clear.frame(width: 40, height: 40)
             }
         }
         .padding(.horizontal, 20)
