@@ -781,9 +781,9 @@ struct PayWallView: View {
                 title: isPurchasing ? "Processing..." : ctaTitle,
                 accent: Color.primaryGreen,
                 isLoading: isPurchasing,
-                action: hasExistingSubscriptionAccess ? triggerExistingAccessContinue : triggerPurchase
+                disablesWhileLoading: false,
+                action: handlePrimaryButtonPressed
             )
-            .disabled(isPurchasing || (!hasExistingSubscriptionAccess && ((availablePlans.isEmpty && isLoadingPackages) || selectedPlan == nil)))
 
             if let ctaSupportingText {
                 Text(ctaSupportingText)
@@ -837,6 +837,8 @@ struct PayWallView: View {
         if hasExistingSubscriptionAccess { return "Continue to Macra" }
         if let trialDays = selectedTrialDays { return "Try \(trialLengthText(for: trialDays)) free" }
         if isRenewalFlow { return "Renew Macra Pro" }
+        if selectedPlan == nil, isLoadingPackages { return "Loading plans..." }
+        if selectedPlan == nil { return "Retry loading plans" }
         guard let plan = selectedPlan else { return "Continue" }
         switch plan.periodKind {
         case .year: return "Unlock my yearly plan"
@@ -860,6 +862,21 @@ struct PayWallView: View {
 
     // MARK: - Actions
 
+    private func handlePrimaryButtonPressed() {
+        trackPaywallPrimaryButtonPressedIfNeeded()
+
+        guard !isPurchasing else {
+            trackPaywallCTABlockedIfNeeded(reason: "purchase_already_processing")
+            return
+        }
+
+        if hasExistingSubscriptionAccess {
+            triggerExistingAccessContinue()
+        } else {
+            triggerPurchase()
+        }
+    }
+
     private func triggerPurchase() {
         if hasExistingSubscriptionAccess {
             triggerExistingAccessContinue()
@@ -870,7 +887,11 @@ struct PayWallView: View {
             coordinator.purchaseAndContinue()
             return
         }
-        guard let plan = selectedPlan else { return }
+        guard let plan = selectedPlan else {
+            standalonePurchaseError = "Plans are still loading. Please try again in a moment."
+            trackPaywallCTABlockedIfNeeded(reason: currentCTABlockReason)
+            return
+        }
         purchaseStandalone(plan)
     }
 
@@ -1067,6 +1088,39 @@ struct PayWallView: View {
         guard shouldTrackPaywallAnalytics, !didTrackExistingAccessView else { return }
         didTrackExistingAccessView = true
         MacraAnalyticsService.shared.trackExistingSubscriptionAccessViewed(source: paywallAnalyticsSource)
+    }
+
+    private func trackPaywallPrimaryButtonPressedIfNeeded() {
+        guard shouldTrackPaywallAnalytics else { return }
+        MacraAnalyticsService.shared.trackPaywallPrimaryButtonPressed(
+            source: paywallAnalyticsSource,
+            selectedPlan: selectedPlan,
+            ctaTitle: ctaTitle,
+            availablePlanCount: availablePlans.count,
+            isLoadingPackages: isLoadingPackages,
+            packageLoadError: packageLoadError,
+            isPurchasing: isPurchasing,
+            hasExistingSubscriptionAccess: hasExistingSubscriptionAccess
+        )
+    }
+
+    private func trackPaywallCTABlockedIfNeeded(reason: String) {
+        guard shouldTrackPaywallAnalytics else { return }
+        MacraAnalyticsService.shared.trackPaywallCTABlocked(
+            source: paywallAnalyticsSource,
+            selectedPlan: selectedPlan,
+            reason: reason,
+            ctaTitle: ctaTitle,
+            availablePlanCount: availablePlans.count,
+            isLoadingPackages: isLoadingPackages,
+            packageLoadError: packageLoadError
+        )
+    }
+
+    private var currentCTABlockReason: String {
+        if isLoadingPackages { return "plans_loading" }
+        if packageLoadError != nil { return "package_load_error" }
+        return "selected_plan_missing"
     }
 
     // MARK: - Plan list helpers

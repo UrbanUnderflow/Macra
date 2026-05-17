@@ -35,6 +35,8 @@ private enum AppsFlyerAnalyticsEvent {
     static let existingAccessViewed = "macra_subscription_existing_access_viewed"
     static let existingAccessContinued = "macra_subscription_existing_access_continued"
     static let paywallViewed = "macra_paywall_viewed_standalone"
+    static let paywallPrimaryButtonPressed = "macra_paywall_primary_button_pressed"
+    static let paywallCTABlocked = "macra_paywall_cta_blocked"
     static let paywallDismissed = "macra_paywall_dismissed"
     static let onboardingStarted = "macra_onboarding_started"
     static let onboardingProfileCompleted = "macra_onboarding_profile_completed"
@@ -287,6 +289,74 @@ final class MacraAnalyticsService {
             appsFlyerName: AppsFlyerAnalyticsEvent.initiatedCheckout,
             tikTokEventName: "InitiateCheckout",
             eventId: makeEventId(prefix: "purchase_attempted", source: source, plan: plan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackPaywallPrimaryButtonPressed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        ctaTitle: String,
+        availablePlanCount: Int,
+        isLoadingPackages: Bool,
+        packageLoadError: String?,
+        isPurchasing: Bool,
+        hasExistingSubscriptionAccess: Bool
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "paywall_primary_button_pressed"
+        )
+        properties["button_name"] = "paywall_primary_cta"
+        properties["cta_title"] = ctaTitle
+        properties["available_plan_count"] = availablePlanCount
+        properties["selected_plan_available"] = selectedPlan != nil
+        properties["is_loading_packages"] = isLoadingPackages
+        properties["is_purchasing"] = isPurchasing
+        properties["has_existing_subscription_access"] = hasExistingSubscriptionAccess
+        if let packageLoadError {
+            properties["package_load_error"] = truncated(packageLoadError)
+        }
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallPrimaryButtonPressed,
+            tikTokEventName: "PaywallPrimaryButtonPressed",
+            eventId: makeEventId(prefix: "paywall_primary_button_pressed", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackPaywallCTABlocked(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        reason: String,
+        ctaTitle: String,
+        availablePlanCount: Int,
+        isLoadingPackages: Bool,
+        packageLoadError: String?
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "paywall_cta_blocked"
+        )
+        properties["cta_title"] = ctaTitle
+        properties["blocked_reason"] = reason
+        properties["failure_reason"] = reason
+        properties["available_plan_count"] = availablePlanCount
+        properties["selected_plan_available"] = selectedPlan != nil
+        properties["is_loading_packages"] = isLoadingPackages
+        if let packageLoadError {
+            properties["package_load_error"] = truncated(packageLoadError)
+        }
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallCTABlocked,
+            tikTokEventName: "PaywallCTABlocked",
+            eventId: makeEventId(prefix: "paywall_cta_blocked", source: source, plan: selectedPlan),
             properties: properties,
             includeRevenue: false
         )

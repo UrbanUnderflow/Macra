@@ -1422,7 +1422,22 @@ struct MacraPrimaryButton: View {
     let title: String
     let accent: Color
     let isLoading: Bool
+    let disablesWhileLoading: Bool
     let action: () -> Void
+
+    init(
+        title: String,
+        accent: Color,
+        isLoading: Bool,
+        disablesWhileLoading: Bool = true,
+        action: @escaping () -> Void
+    ) {
+        self.title = title
+        self.accent = accent
+        self.isLoading = isLoading
+        self.disablesWhileLoading = disablesWhileLoading
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
@@ -1452,7 +1467,7 @@ struct MacraPrimaryButton: View {
             .shadow(color: accent.opacity(0.32), radius: 18, x: 0, y: 10)
         }
         .buttonStyle(.plain)
-        .disabled(isLoading)
+        .disabled(disablesWhileLoading && isLoading)
         .opacity(isLoading ? 0.9 : 1)
     }
 }

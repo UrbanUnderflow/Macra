@@ -609,6 +609,32 @@ final class MacraOnboardingCoordinator: ObservableObject {
         MacraAnalyticsService.shared.trackSubscriptionPurchaseAttempted(plan: plan, source: paywallAnalyticsSource)
     }
 
+    private func trackPaywallCTABlocked(reason: String) {
+        guard !isDemoMode else { return }
+        let offering = PurchaseService.sharedInstance.offering
+        MacraAnalyticsService.shared.trackPaywallCTABlocked(
+            source: paywallAnalyticsSource,
+            selectedPlan: selectedPlan,
+            reason: reason,
+            ctaTitle: paywallCTATitle,
+            availablePlanCount: offering.planOptions.count,
+            isLoadingPackages: offering.isLoadingPackages,
+            packageLoadError: offering.packageLoadError
+        )
+    }
+
+    private var paywallCTATitle: String {
+        guard let plan = selectedPlan else { return "Continue" }
+        if let trialDays = plan.trialDays, trialDays > 0 {
+            return trialDays == 1 ? "Try 1 day free" : "Try \(trialDays) days free"
+        }
+        switch plan.periodKind {
+        case .year: return "Unlock my yearly plan"
+        case .month: return "Unlock my monthly plan"
+        default: return "Unlock my plan"
+        }
+    }
+
     private func trackSubscriptionPurchaseCancelled(plan: SubscriptionPlanOption) {
         guard !isDemoMode else { return }
         MacraAnalyticsService.shared.trackSubscriptionPurchaseCancelled(plan: plan, source: paywallAnalyticsSource)
@@ -1188,14 +1214,17 @@ final class MacraOnboardingCoordinator: ObservableObject {
         let offering = PurchaseService.sharedInstance.offering
         guard !offering.isLoadingPackages else {
             purchaseError = "Plans are still loading. Please try again in a moment."
+            trackPaywallCTABlocked(reason: "plans_loading")
             return
         }
         guard offering.packageLoadError == nil else {
             purchaseError = offering.packageLoadError
+            trackPaywallCTABlocked(reason: "package_load_error")
             return
         }
         guard let plan = selectedPlan else {
             purchaseError = "Plans are still loading. Please try again in a moment."
+            trackPaywallCTABlocked(reason: "selected_plan_missing")
             return
         }
 
