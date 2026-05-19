@@ -1,4 +1,14 @@
+import FirebaseAuth
+import FirebaseCore
+#if canImport(FirebaseRemoteConfig)
+import FirebaseRemoteConfig
+#endif
+import SafariServices
 import SwiftUI
+
+extension Notification.Name {
+    static let macraPaywallPurchaseCancelled = Notification.Name("MacraPaywallPurchaseCancelled")
+}
 
 class PayWallViewModel: ObservableObject {
     @Published var appCoordinator: AppCoordinator
@@ -8,19 +18,165 @@ class PayWallViewModel: ObservableObject {
     }
 }
 
+private struct WebCheckoutSheet: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct SafariCheckoutView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> SFSafariViewController {
+        let controller = SFSafariViewController(url: url)
+        controller.dismissButtonStyle = .close
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
+}
+
+enum MacraPaywallDefaultPlanSelection: String {
+    case annual
+    case monthly
+
+    var prefersMonthlyFirst: Bool {
+        self == .monthly
+    }
+
+    var analyticsVariantName: String {
+        switch self {
+        case .annual: return "annual_default_v1"
+        case .monthly: return "monthly_default_v1"
+        }
+    }
+
+    var defaultReason: String {
+        switch self {
+        case .annual: return "remote_config_annual_default"
+        case .monthly: return "remote_config_monthly_default"
+        }
+    }
+
+    static func normalized(_ rawValue: String?) -> Self {
+        guard let value = rawValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+              !value.isEmpty else {
+            return .annual
+        }
+        return Self(rawValue: value) ?? .annual
+    }
+}
+
+enum MacraPaywallExperimentService {
+    static let defaultPlanParameterKey = "macra_paywall_default_plan"
+
+    static func cachedDefaultPlanSelection() -> MacraPaywallDefaultPlanSelection {
+        #if canImport(FirebaseRemoteConfig)
+        guard FirebaseApp.app() != nil else { return .annual }
+        return MacraPaywallDefaultPlanSelection.normalized(
+            RemoteConfig.remoteConfig()
+                .configValue(forKey: defaultPlanParameterKey)
+                .stringValue
+        )
+        #else
+        return .annual
+        #endif
+    }
+
+    static func fetchAndActivateDefaultPlanSelection() async -> MacraPaywallDefaultPlanSelection {
+        #if canImport(FirebaseRemoteConfig)
+        guard FirebaseApp.app() != nil else { return .annual }
+
+        let remoteConfig = RemoteConfig.remoteConfig()
+        remoteConfig.setDefaults([
+            defaultPlanParameterKey: MacraPaywallDefaultPlanSelection.annual.rawValue as NSString
+        ])
+
+        #if DEBUG
+        let settings = RemoteConfigSettings()
+        settings.minimumFetchInterval = 0
+        settings.fetchTimeout = 3
+        remoteConfig.configSettings = settings
+        #endif
+
+        return await withCheckedContinuation { continuation in
+            remoteConfig.fetchAndActivate { _, error in
+                if let error {
+                    print("[Macra][PaywallExperiment] Remote Config fetch failed: \(error.localizedDescription)")
+                }
+
+                continuation.resume(returning: MacraPaywallDefaultPlanSelection.normalized(
+                    remoteConfig.configValue(forKey: defaultPlanParameterKey).stringValue
+                ))
+            }
+        }
+        #else
+        return .annual
+        #endif
+    }
+
+    static func prefetch() {
+        Task {
+            _ = await fetchAndActivateDefaultPlanSelection()
+        }
+    }
+}
+
+private enum PaywallCancelFeedbackReason: String, CaseIterable, Identifiable {
+    case priceTooHigh = "price_too_high"
+    case notReady = "not_ready"
+    case needMoreProof = "need_more_proof"
+    case appleSheetConfusing = "apple_sheet_confusing"
+    case wrongPlan = "wrong_plan"
+    case somethingDidNotWork = "something_did_not_work"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .priceTooHigh: return "Price felt too high"
+        case .notReady: return "I'm not ready yet"
+        case .needMoreProof: return "I need more proof first"
+        case .appleSheetConfusing: return "Apple's sheet was confusing"
+        case .wrongPlan: return "I wanted a different plan"
+        case .somethingDidNotWork: return "Something did not work"
+        }
+    }
+}
+
 struct PayWallView: View {
     @ObservedObject private var offeringViewModel = PurchaseService.sharedInstance.offering
     @ObservedObject var viewModel: PayWallViewModel
+    private static let webCheckoutAnnualPriceID = "price_1PDq3LRobSf56MUOng0UxhCC"
+    @State private var paywallDefaultPlanSelection: MacraPaywallDefaultPlanSelection
     @State private var didTrackPaywallView = false
     @State private var didTrackExistingAccessView = false
+    @State private var didTrackPaywallValuePreviewView = false
+    @State private var didTrackPricingDisclosureView = false
+    @State private var didTrackWebCheckoutFallbackPresented = false
+    @State private var didTrackPaywallDismissed = false
+    @State private var paywallAppearedAt: Date?
     @State private var standaloneSelectedPlanID: String?
     @State private var standalonePurchaseError: String?
     @State private var isStandalonePurchasing = false
+    @State private var webCheckoutSheet: WebCheckoutSheet?
+    @State private var isWebCheckoutCompleting = false
+    @State private var isPreparingWebCheckout = false
+    @State private var isVerifyingSubscriptionAccess = false
+    @State private var showSubscriptionSuccess = false
+    @State private var didScheduleSubscriptionSuccessAdvance = false
+    @State private var showCancelFeedbackDialog = false
+    @State private var cancelFeedbackTrigger = "unknown"
+    @State private var didAskCancelFeedback = false
+    @State private var didSubmitCancelFeedback = false
     private let isDemoMode: Bool
     private let usesLivePurchasesInDemo: Bool
     private let onboardingCoordinator: MacraOnboardingCoordinator?
     private let onDismiss: (() -> Void)?
     private let existingSubscriptionAccessOverride: Bool?
+    private let defaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection?
+    private let presentsCancelFeedbackOnAppear: Bool
 
     init(
         viewModel: PayWallViewModel,
@@ -28,14 +184,19 @@ struct PayWallView: View {
         usesLivePurchasesInDemo: Bool = false,
         onboardingCoordinator: MacraOnboardingCoordinator? = nil,
         onDismiss: (() -> Void)? = nil,
-        existingSubscriptionAccessOverride: Bool? = nil
+        existingSubscriptionAccessOverride: Bool? = nil,
+        defaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection? = nil,
+        presentsCancelFeedbackOnAppear: Bool = false
     ) {
         self._viewModel = ObservedObject(wrappedValue: viewModel)
+        self._paywallDefaultPlanSelection = State(initialValue: defaultPlanSelectionOverride ?? MacraPaywallExperimentService.cachedDefaultPlanSelection())
         self.isDemoMode = isDemoMode
         self.usesLivePurchasesInDemo = usesLivePurchasesInDemo
         self.onboardingCoordinator = onboardingCoordinator
         self.onDismiss = onDismiss
         self.existingSubscriptionAccessOverride = existingSubscriptionAccessOverride
+        self.defaultPlanSelectionOverride = defaultPlanSelectionOverride
+        self.presentsCancelFeedbackOnAppear = presentsCancelFeedbackOnAppear
     }
 
     private var shouldUseDemoPlans: Bool {
@@ -58,7 +219,10 @@ struct PayWallView: View {
     }
 
     private var displayedPlans: [SubscriptionPlanOption] {
-        Self.paywallPlans(from: availablePlans)
+        Self.paywallPlans(
+            from: availablePlans,
+            preferMonthlyFirst: shouldPreferLowFrictionPlanDefault
+        )
     }
 
     private var selectedPlan: SubscriptionPlanOption? {
@@ -67,18 +231,63 @@ struct PayWallView: View {
                displayedPlans.contains(where: { $0.id == current.id }) {
                 return current
             }
-            return displayedPlans.first ?? coordinator.selectedPlan
+            return preferredDefaultVisiblePlan ?? coordinator.selectedPlan
         }
 
         if let id = standaloneSelectedPlanID,
            let match = displayedPlans.first(where: { $0.id == id }) {
             return match
         }
+        return preferredDefaultVisiblePlan
+    }
+
+    private var shouldPreferLowFrictionPlanDefault: Bool {
+        paywallDefaultPlanSelection.prefersMonthlyFirst
+    }
+
+    private var preferredDefaultVisiblePlan: SubscriptionPlanOption? {
+        if shouldPreferLowFrictionPlanDefault,
+           let monthly = displayedPlans.first(where: { $0.periodKind == .month }) {
+            return monthly
+        }
         return displayedPlans.first
     }
 
+    private var paywallDefaultReason: String {
+        if preferredDefaultVisiblePlan?.periodKind == .month ||
+            preferredDefaultVisiblePlan?.periodKind == .year {
+            return paywallDefaultPlanSelection.defaultReason
+        }
+        return "first_available_plan"
+    }
+
+    private var paywallFunnelMetadata: [String: Any] {
+        var metadata = onboardingCoordinator?.paywallFunnelAnalyticsMetadata ?? [:]
+        metadata["paywall_variant"] = paywallDefaultPlanSelection.analyticsVariantName
+        metadata["paywall_ab_parameter"] = MacraPaywallExperimentService.defaultPlanParameterKey
+        metadata["paywall_default_selection"] = paywallDefaultPlanSelection.rawValue
+        metadata["paywall_default_reason"] = paywallDefaultReason
+        metadata["paywall_default_plan_id"] = preferredDefaultVisiblePlan?.id ?? "none"
+        metadata["paywall_default_plan_period"] = preferredDefaultVisiblePlan.map { periodAnalyticsName($0.periodKind) } ?? "none"
+        metadata["displayed_plan_order"] = displayedPlans.map { periodAnalyticsName($0.periodKind) }.joined(separator: ",")
+        metadata["selected_plan_period"] = selectedPlan.map { periodAnalyticsName($0.periodKind) } ?? "none"
+        metadata["selected_plan_id"] = selectedPlan?.id ?? "none"
+        metadata["has_price_expectation_card"] = !shouldUseWebCheckoutFallback
+        metadata["uses_web_checkout_fallback"] = shouldUseWebCheckoutFallback
+        metadata["available_plan_count_at_paywall"] = availablePlans.count
+        metadata["visible_plan_count_at_paywall"] = displayedPlans.count
+        metadata["is_renewal_flow"] = isRenewalFlow
+        if let paywallAppearedAt {
+            metadata["paywall_elapsed_seconds"] = Int(Date().timeIntervalSince(paywallAppearedAt))
+        }
+        return metadata
+    }
+
     private var isPurchasing: Bool {
-        onboardingCoordinator?.isPurchasing ?? isStandalonePurchasing
+        (onboardingCoordinator?.isPurchasing ?? isStandalonePurchasing) ||
+        isWebCheckoutCompleting ||
+        isPreparingWebCheckout ||
+        isVerifyingSubscriptionAccess
     }
 
     private var purchaseError: String? {
@@ -91,6 +300,42 @@ struct PayWallView: View {
 
     private var packageLoadError: String? {
         shouldUseDemoPlans ? nil : offeringViewModel.packageLoadError
+    }
+
+    private var shouldUseWebCheckoutFallback: Bool {
+        !hasExistingSubscriptionAccess &&
+        !shouldUseDemoPlans &&
+        !isLoadingPackages &&
+        displayedPlans.isEmpty
+    }
+
+    private var webCheckoutFallbackReason: String {
+        if let packageLoadError, !packageLoadError.isEmpty {
+            return "plans_load_failed"
+        }
+        if availablePlans.isEmpty {
+            return "plans_unavailable"
+        }
+        return "no_supported_plans"
+    }
+
+    private var primaryCTAAnalyticsDecision: String {
+        if isPurchasing {
+            return "purchase_already_processing"
+        }
+        if hasExistingSubscriptionAccess {
+            return "existing_access_continue"
+        }
+        if shouldUseWebCheckoutFallback {
+            return "web_checkout_fallback"
+        }
+        if isLoadingPackages {
+            return "plans_loading"
+        }
+        if selectedPlan == nil {
+            return "no_plan_selected"
+        }
+        return "native_purchase"
     }
 
     private var paywallAnalyticsSource: String {
@@ -133,6 +378,10 @@ struct PayWallView: View {
 
                         revealOrPersonalizedSection
 
+                        if !hasExistingSubscriptionAccess {
+                            firstWeekValueCard
+                        }
+
                         if hasExistingSubscriptionAccess {
                             existingAccessCard
                         } else {
@@ -148,9 +397,17 @@ struct PayWallView: View {
 
                             unlockHighlightsCard
 
-                            tierPickerSection
+                            if !shouldUseWebCheckoutFallback {
+                                purchaseExpectationCard
+                            }
 
-                            priceDisclosureCard
+                            if !shouldUseWebCheckoutFallback {
+                                tierPickerSection
+                            }
+
+                            if !shouldUseWebCheckoutFallback {
+                                priceDisclosureCard
+                            }
                         }
 
                         if let purchaseError, !purchaseError.isEmpty {
@@ -170,9 +427,13 @@ struct PayWallView: View {
         }
         .preferredColorScheme(.dark)
         .task {
+            await refreshPaywallExperimentSelection()
             await loadPlansAndTrackPaywallView()
         }
         .onAppear {
+            if paywallAppearedAt == nil {
+                paywallAppearedAt = Date()
+            }
             if let coordinator = onboardingCoordinator {
                 if !coordinator.isDemoMode {
                     coordinator.loadPlanMacros()
@@ -180,15 +441,71 @@ struct PayWallView: View {
                 coordinator.ensureOfferingsLoaded()
             }
             ensureVisiblePlanSelected()
+            if presentsCancelFeedbackOnAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    presentCancelFeedbackDialog(trigger: "screen_demo")
+                }
+            }
+        }
+        .onDisappear {
+            trackPaywallDismissedIfNeeded(reason: showSubscriptionSuccess ? "subscription_success" : "view_disappeared")
         }
         .onChange(of: availablePlans.map(\.id).joined(separator: ",")) { _ in
             ensureVisiblePlanSelected()
             guard shouldTrackPaywallAnalytics else { return }
             trackPaywallViewedIfReady()
+            trackWebCheckoutFallbackPresentedIfReady()
+        }
+        .onChange(of: shouldUseWebCheckoutFallback) { _ in
+            trackWebCheckoutFallbackPresentedIfReady()
+        }
+        .onChange(of: packageLoadError ?? "") { _ in
+            trackWebCheckoutFallbackPresentedIfReady()
         }
         .onChange(of: existingSubscriptionAccessOverride) { _ in
             Task { await loadPlansAndTrackPaywallView() }
         }
+        .onChange(of: onboardingCoordinator?.purchaseCancellationFeedbackRequestID) { requestID in
+            guard requestID != nil else { return }
+            presentCancelFeedbackDialog(trigger: "storekit_cancelled")
+        }
+        .sheet(item: $webCheckoutSheet) { sheet in
+            SafariCheckoutView(url: sheet.url)
+                .ignoresSafeArea()
+        }
+        .confirmationDialog(
+            "What stopped you from starting today?",
+            isPresented: $showCancelFeedbackDialog,
+            titleVisibility: .visible
+        ) {
+            ForEach(PaywallCancelFeedbackReason.allCases) { reason in
+                Button(reason.title) {
+                    submitCancelFeedback(reason)
+                }
+            }
+
+            Button("Not now", role: .cancel) {
+                dismissCancelFeedback(reason: "not_now")
+            }
+        } message: {
+            Text("One tap helps us fix the trial flow.")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: MacraDeepLinkService.subscriptionReturnNotification)) { notification in
+            handleSubscriptionReturn(notification)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .macraPaywallPurchaseCancelled)) { notification in
+            guard let coordinator = onboardingCoordinator,
+                  let notificationCoordinator = notification.object as? MacraOnboardingCoordinator,
+                  notificationCoordinator === coordinator else { return }
+            presentCancelFeedbackDialog(trigger: "storekit_cancelled")
+        }
+        .overlay {
+            if showSubscriptionSuccess {
+                subscriptionSuccessOverlay
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: showSubscriptionSuccess)
     }
 
     // MARK: - Top bar
@@ -240,7 +557,7 @@ struct PayWallView: View {
 
     private var headerTitle: String {
         if hasExistingSubscriptionAccess { return "Your Macra plan is ready." }
-        if isRenewalFlow { return "Renew Macra Pro." }
+        if isRenewalFlow { return "Unlock your Macra Plan" }
         return "Build the body you want without giving up the food you love."
     }
 
@@ -257,9 +574,15 @@ struct PayWallView: View {
     private var revealOrPersonalizedSection: some View {
         if showsPersonalizedPlan, let macros = onboardingCoordinator?.planMacros {
             planSummaryCard(macros: macros)
+                .onAppear {
+                    trackPaywallValuePreviewViewedIfNeeded(previewType: "personalized_plan")
+                }
         }
         if !hasExistingSubscriptionAccess {
             PayWallRevealMoment()
+                .onAppear {
+                    trackPaywallValuePreviewViewedIfNeeded(previewType: showsPersonalizedPlan ? "photo_scan_after_personalized_plan" : "photo_scan_teaser")
+                }
         }
     }
 
@@ -342,6 +665,48 @@ struct PayWallView: View {
     }
 
     // MARK: - Conversion proof
+
+    private var firstWeekValueCard: some View {
+        conversionCard(
+            eyebrow: "YOUR FIRST 7 DAYS",
+            title: firstWeekValueTitle,
+            body: firstWeekValueBody,
+            accent: Color.primaryGreen
+        ) {
+            unlockHighlightRow(
+                icon: "calendar",
+                title: "Start with today's target",
+                body: "Your calories and macros are already translated into a daily lane.",
+                accent: Color.primaryGreen
+            )
+            unlockHighlightRow(
+                icon: "camera.viewfinder",
+                title: "Scan before you guess",
+                body: "Use photo and label scans when a meal is unclear, then let the plan adjust.",
+                accent: Color.primaryBlue
+            )
+            unlockHighlightRow(
+                icon: "sparkles",
+                title: "Ask Nora for the next move",
+                body: "When cravings, restaurants, or portions get messy, Nora gives the next decision.",
+                accent: Color.secondaryPink
+            )
+        }
+    }
+
+    private var firstWeekValueTitle: String {
+        if let struggle = onboardingCoordinator?.answers.biggestStruggle {
+            return "\(struggle.coachingFocusTitle), starting today."
+        }
+        return "Your plan has a first move, not just a price."
+    }
+
+    private var firstWeekValueBody: String {
+        if let struggle = onboardingCoordinator?.answers.biggestStruggle {
+            return struggle.coachingFocusBody
+        }
+        return "Macra unlocks the scanner, Nora, targets, meal planning, and the Fit With Pulse workouts that keep the plan usable after onboarding."
+    }
 
     private var outcomeProofCard: some View {
         conversionCard(
@@ -632,7 +997,9 @@ struct PayWallView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 8)
             } else if displayedPlans.isEmpty {
-                planStatusCard(message: packageLoadError ?? "No subscription plans are available right now.")
+                planStatusCard(
+                    message: packageLoadError ?? "No subscription plans are available right now."
+                )
             } else {
                 ForEach(Array(displayedPlans.enumerated()), id: \.element.id) { index, plan in
                     TierCard(
@@ -650,23 +1017,11 @@ struct PayWallView: View {
     }
 
     private func planStatusCard(message: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(message)
                 .font(.system(size: 14))
                 .foregroundColor(.white.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                if let coordinator = onboardingCoordinator {
-                    coordinator.ensureOfferingsLoaded(force: true)
-                } else {
-                    Task { await offeringViewModel.start() }
-                }
-            } label: {
-                Text("Retry loading plans")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(Color.primaryGreen)
-            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -698,20 +1053,21 @@ struct PayWallView: View {
         if userInitiated, !isDemoMode {
             MacraAnalyticsService.shared.trackSubscriptionPlanSelected(
                 plan: plan,
-                source: paywallAnalyticsSource
+                source: paywallAnalyticsSource,
+                metadata: paywallFunnelMetadata
             )
         }
     }
 
     private func ensureVisiblePlanSelected() {
-        guard let firstVisiblePlan = displayedPlans.first else { return }
+        guard let defaultVisiblePlan = preferredDefaultVisiblePlan else { return }
 
         if let coordinator = onboardingCoordinator {
             if let current = coordinator.selectedPlan,
                displayedPlans.contains(where: { $0.id == current.id }) {
                 return
             }
-            coordinator.selectPlan(firstVisiblePlan)
+            coordinator.selectPlan(defaultVisiblePlan)
             return
         }
 
@@ -719,10 +1075,76 @@ struct PayWallView: View {
            displayedPlans.contains(where: { $0.id == id }) {
             return
         }
-        standaloneSelectedPlanID = firstVisiblePlan.id
+        standaloneSelectedPlanID = defaultVisiblePlan.id
     }
 
     // MARK: - Price disclosure
+
+    private var purchaseExpectationCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Color.primaryGreen)
+                    .padding(.top, 2)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Before Apple asks")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text(purchaseExpectationBody)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(spacing: 8) {
+                purchaseExpectationRow(
+                    label: "Trial",
+                    value: selectedTrialDays.map { "\(trialLengthText(for: $0)) free" } ?? "Not included"
+                )
+                purchaseExpectationRow(
+                    label: "Renews",
+                    value: selectedPlan.map { "\($0.priceLabel) \(renewalCadenceText(for: $0))" } ?? "Plan loading"
+                )
+                purchaseExpectationRow(
+                    label: "Cancel",
+                    value: "Anytime in Apple Subscriptions"
+                )
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.05)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Color.primaryGreen.opacity(0.18), lineWidth: 1)
+        )
+        .onAppear {
+            trackPricingDisclosureViewedIfNeeded()
+        }
+    }
+
+    private var purchaseExpectationBody: String {
+        if let trialDays = selectedTrialDays {
+            return "The next screen is Apple's subscription sheet. Your \(trialLengthText(for: trialDays)) trial starts free, then renews at the selected plan price unless you cancel."
+        }
+        return "The next screen is Apple's subscription sheet. It confirms the selected plan price before your subscription starts."
+    }
+
+    private func purchaseExpectationRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.55))
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.white.opacity(0.9))
+                .multilineTextAlignment(.trailing)
+        }
+    }
 
     private var priceDisclosureCard: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -766,11 +1188,25 @@ struct PayWallView: View {
     }
 
     private var priceDisclosureText: String {
+        if shouldUseWebCheckoutFallback {
+            return "Web checkout uses Stripe. Your subscription auto-renews until canceled and access is applied to this Macra account."
+        }
+
         if let trialDays = selectedTrialDays {
             return "Your \(trialLengthText(for: trialDays)) trial is free. After the trial, your selected plan auto-renews until canceled. Cancel anytime in Settings > [your name] > Subscriptions."
         }
 
         return "Auto-renews at the price shown until canceled. Cancel anytime in Settings > [your name] > Subscriptions."
+    }
+
+    private func renewalCadenceText(for plan: SubscriptionPlanOption) -> String {
+        switch plan.periodKind {
+        case .year: return "yearly"
+        case .month: return "monthly"
+        case .week: return "weekly"
+        case .day: return "daily"
+        case .unknown: return ""
+        }
     }
 
     // MARK: - Bottom CTA + footer
@@ -833,12 +1269,56 @@ struct PayWallView: View {
         .padding(.bottom, 20)
     }
 
+    private var subscriptionSuccessOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
+
+            VStack(spacing: 18) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 48, weight: .bold))
+                    .foregroundColor(Color.primaryGreen)
+
+                VStack(spacing: 8) {
+                    Text("You're subscribed")
+                        .font(.system(size: 30, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+
+                    Text("Macra is unlocked. Your plan, scanner, and Nora are ready.")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white.opacity(0.72))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                MacraPrimaryButton(
+                    title: "Continue to Macra",
+                    accent: Color.primaryGreen,
+                    isLoading: false,
+                    action: finishSubscriptionSuccessFlow
+                )
+                .padding(.top, 6)
+            }
+            .padding(24)
+            .background(
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(Color.secondaryCharcoal.opacity(0.96))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 24)
+                    .strokeBorder(Color.primaryGreen.opacity(0.35), lineWidth: 1)
+            )
+            .padding(.horizontal, 24)
+        }
+    }
+
     private var ctaTitle: String {
         if hasExistingSubscriptionAccess { return "Continue to Macra" }
+        if shouldUseWebCheckoutFallback { return "Unlock Macra" }
+        if isRenewalFlow { return "Unlock Macra Pro" }
         if let trialDays = selectedTrialDays { return "Try \(trialLengthText(for: trialDays)) free" }
-        if isRenewalFlow { return "Renew Macra Pro" }
         if selectedPlan == nil, isLoadingPackages { return "Loading plans..." }
-        if selectedPlan == nil { return "Retry loading plans" }
+        if selectedPlan == nil { return "Unlock Macra" }
         guard let plan = selectedPlan else { return "Continue" }
         switch plan.periodKind {
         case .year: return "Unlock my yearly plan"
@@ -848,6 +1328,9 @@ struct PayWallView: View {
     }
 
     private var ctaSupportingText: String? {
+        if shouldUseWebCheckoutFallback {
+            return "Subscribe securely through Stripe, then return to Macra automatically."
+        }
         guard !hasExistingSubscriptionAccess, let plan = selectedPlan else { return nil }
         if let trialDays = selectedTrialDays {
             return "Free for \(trialLengthText(for: trialDays)), then \(plan.priceLabel). Cancel anytime."
@@ -872,27 +1355,264 @@ struct PayWallView: View {
 
         if hasExistingSubscriptionAccess {
             triggerExistingAccessContinue()
+        } else if shouldUseWebCheckoutFallback {
+            triggerWebCheckoutFallback()
         } else {
             triggerPurchase()
         }
     }
 
+    private func triggerWebCheckoutFallback() {
+        trackWebCheckoutFallbackPressedIfNeeded()
+        standalonePurchaseError = nil
+        onboardingCoordinator?.purchaseError = nil
+        isPreparingWebCheckout = true
+
+        Task {
+            do {
+                guard let checkoutURL = try await webCheckoutURLForCurrentUser() else {
+                    await failWebCheckoutPreparation(
+                        message: "We could not open web checkout because this account is not signed in.",
+                        reason: "missing_checkout_url"
+                    )
+                    return
+                }
+
+                await MainActor.run {
+                    isPreparingWebCheckout = false
+                    if shouldTrackPaywallAnalytics {
+                        MacraAnalyticsService.shared.trackSubscriptionWebCheckoutStarted(
+                            source: paywallAnalyticsSource,
+                            reason: webCheckoutFallbackReason,
+                            checkoutURL: checkoutURL,
+                            metadata: paywallFunnelMetadata
+                        )
+                    }
+                    webCheckoutSheet = WebCheckoutSheet(url: checkoutURL)
+                }
+            } catch {
+                await failWebCheckoutPreparation(
+                    message: "We could not start secure web checkout. Please try again.",
+                    reason: "firebase_token_unavailable"
+                )
+            }
+        }
+    }
+
+    @MainActor
+    private func failWebCheckoutPreparation(message: String, reason: String) {
+        isPreparingWebCheckout = false
+        standalonePurchaseError = message
+        onboardingCoordinator?.purchaseError = message
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackSubscriptionWebCheckoutFailed(
+                source: paywallAnalyticsSource,
+                reason: reason,
+                metadata: paywallFunnelMetadata
+            )
+        }
+    }
+
+    private func webCheckoutURLForCurrentUser() async throws -> URL? {
+        guard let firebaseUser = Auth.auth().currentUser else { return nil }
+        let appUser = UserService.sharedInstance.user
+        let userId = firebaseUser.uid
+        guard !userId.isEmpty else { return nil }
+        let firebaseIdToken = try await firebaseUser.getIDToken()
+
+        let trimmedBase = ConfigManager.shared
+            .getWebsiteBaseURL()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        // Hit the server redirect directly so web auth UI never paints before Stripe checkout.
+        guard var components = URLComponents(string: "\(trimmedBase)/.netlify/functions/create-athlete-checkout-session") else { return nil }
+
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "type", value: "subscribe"),
+            URLQueryItem(name: "plan", value: "yearly"),
+            URLQueryItem(name: "priceId", value: Self.webCheckoutAnnualPriceID),
+            URLQueryItem(name: "source", value: "macra_ios_paywall"),
+            URLQueryItem(name: "userId", value: userId),
+            URLQueryItem(name: "firebaseIdToken", value: firebaseIdToken),
+            URLQueryItem(name: "appReturnUrl", value: "macra://subscription/success"),
+            URLQueryItem(name: "appCancelUrl", value: "macra://subscription/cancelled")
+        ]
+
+        if let email = appUser?.email ?? firebaseUser.email, !email.isEmpty {
+            queryItems.append(URLQueryItem(name: "email", value: email))
+        }
+
+        components.queryItems = queryItems
+        return components.url
+    }
+
+    private func handleSubscriptionReturn(_ notification: Notification) {
+        guard let userInfo = notification.userInfo as? [String: String] else { return }
+        let status = (userInfo["status"] ?? "unknown").lowercased()
+        let sessionId = userInfo["session_id"]
+        webCheckoutSheet = nil
+
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackSubscriptionWebCheckoutReturned(
+                source: paywallAnalyticsSource,
+                status: status,
+                sessionId: sessionId,
+                metadata: paywallFunnelMetadata
+            )
+        }
+
+        switch status {
+        case "success", "succeeded", "verified", "complete", "completed":
+            if let onboardingCoordinator {
+                onboardingCoordinator.completeWebSubscriptionAndContinue()
+            } else {
+                completeStandaloneWebCheckoutReturn()
+            }
+        case "cancel", "cancelled", "canceled":
+            standalonePurchaseError = nil
+            onboardingCoordinator?.purchaseError = nil
+            if shouldTrackPaywallAnalytics {
+                MacraAnalyticsService.shared.trackSubscriptionWebCheckoutFailed(
+                    source: paywallAnalyticsSource,
+                    reason: "web_checkout_cancelled",
+                    metadata: paywallFunnelMetadata
+                )
+            }
+            presentCancelFeedbackDialog(trigger: "web_checkout_cancelled")
+        default:
+            let message = "Web checkout did not finish. Please try again."
+            standalonePurchaseError = message
+            onboardingCoordinator?.purchaseError = message
+            if shouldTrackPaywallAnalytics {
+                MacraAnalyticsService.shared.trackSubscriptionWebCheckoutFailed(
+                    source: paywallAnalyticsSource,
+                    reason: "web_checkout_return_\(status)",
+                    metadata: paywallFunnelMetadata
+                )
+            }
+        }
+    }
+
+    private func completeStandaloneWebCheckoutReturn() {
+        verifyStandaloneSubscriptionAccessAndShowSuccess(plan: selectedPlan, context: "web_checkout_return")
+    }
+
+    private func verifyStandaloneSubscriptionAccessAndShowSuccess(plan: SubscriptionPlanOption?, context: String) {
+        isVerifyingSubscriptionAccess = true
+        isWebCheckoutCompleting = true
+        standalonePurchaseError = "Finishing unlock..."
+
+        UserService.sharedInstance.getUser { refreshedUser, userError in
+            PurchaseService.sharedInstance.checkSubscriptionStatus(forceRefresh: true) { result in
+                DispatchQueue.main.async {
+                    isVerifyingSubscriptionAccess = false
+                    isWebCheckoutCompleting = false
+
+                    let refreshedHasAccess =
+                        refreshedUser?.subscriptionType.grantsMacraAccess == true ||
+                        UserService.sharedInstance.user?.subscriptionType.grantsMacraAccess == true ||
+                        UserService.sharedInstance.isBetaUser
+
+                    let purchaseServiceHasAccess: Bool
+                    if case .success(true) = result {
+                        purchaseServiceHasAccess = true
+                    } else {
+                        purchaseServiceHasAccess = false
+                    }
+
+                    if refreshedHasAccess || purchaseServiceHasAccess {
+                        standalonePurchaseError = nil
+                        if shouldTrackPaywallAnalytics {
+                            MacraAnalyticsService.shared.trackSubscriptionAccessVerified(
+                                plan: plan,
+                                source: paywallAnalyticsSource,
+                                context: context,
+                                metadata: paywallFunnelMetadata
+                            )
+                        }
+                        showSubscriptionSuccessAndEnterDashboard()
+                        return
+                    }
+
+                    if let userError {
+                        if shouldTrackPaywallAnalytics {
+                            MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
+                                plan: plan,
+                                source: paywallAnalyticsSource,
+                                context: context,
+                                reason: "user_refresh_error",
+                                error: userError,
+                                metadata: paywallFunnelMetadata
+                            )
+                        }
+                        standalonePurchaseError = userError.localizedDescription
+                        return
+                    }
+
+                    switch result {
+                    case .success(false):
+                        if shouldTrackPaywallAnalytics {
+                            MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
+                                plan: plan,
+                                source: paywallAnalyticsSource,
+                                context: context,
+                                reason: "\(context)_access_not_active",
+                                metadata: paywallFunnelMetadata
+                            )
+                        }
+                        standalonePurchaseError = "Your subscription was created, but access is still syncing. Close and reopen Macra or tap Restore Purchases in a moment."
+                    case .failure(let error):
+                        if shouldTrackPaywallAnalytics {
+                            MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
+                                plan: plan,
+                                source: paywallAnalyticsSource,
+                                context: context,
+                                reason: "\(context)_verification_error",
+                                error: error,
+                                metadata: paywallFunnelMetadata
+                            )
+                        }
+                        standalonePurchaseError = error.localizedDescription
+                    case .success(true):
+                        break
+                    }
+                }
+            }
+        }
+    }
+
     private func triggerPurchase() {
-        if hasExistingSubscriptionAccess {
-            triggerExistingAccessContinue()
+        if let coordinator = onboardingCoordinator {
+            coordinator.purchaseAndContinue(paywallMetadata: paywallFunnelMetadata)
             return
         }
 
-        if let coordinator = onboardingCoordinator {
-            coordinator.purchaseAndContinue()
-            return
+        let decision = MacraPurchaseFlowResolver.decision(for: MacraPurchaseFlowInput(
+            isPurchasing: isPurchasing,
+            isDemoMode: isDemoMode,
+            usesLivePurchasesInDemo: usesLivePurchasesInDemo,
+            hasExistingSubscriptionAccess: hasExistingSubscriptionAccess,
+            isLoadingPackages: isLoadingPackages,
+            packageLoadError: packageLoadError,
+            selectedPlan: selectedPlan
+        ))
+
+        switch decision {
+        case .ignoreAlreadyPurchasing:
+            trackPaywallCTABlockedIfNeeded(reason: "purchase_already_processing")
+        case .continueDemoAccess:
+            if let plan = selectedPlan {
+                purchaseStandalone(plan)
+            } else {
+                finishStandalonePaywall()
+            }
+        case .continueExistingAccess:
+            triggerExistingAccessContinue()
+        case .blocked(let reason, let message):
+            standalonePurchaseError = message
+            trackPaywallCTABlockedIfNeeded(reason: reason.rawValue)
+        case .purchase(let plan):
+            purchaseStandalone(plan)
         }
-        guard let plan = selectedPlan else {
-            standalonePurchaseError = "Plans are still loading. Please try again in a moment."
-            trackPaywallCTABlockedIfNeeded(reason: currentCTABlockReason)
-            return
-        }
-        purchaseStandalone(plan)
     }
 
     private func triggerExistingAccessContinue() {
@@ -919,7 +1639,8 @@ struct PayWallView: View {
         if shouldTrackPaywallAnalytics {
             MacraAnalyticsService.shared.trackSubscriptionPurchaseAttempted(
                 plan: plan,
-                source: paywallAnalyticsSource
+                source: paywallAnalyticsSource,
+                metadata: paywallFunnelMetadata
             )
         }
 
@@ -928,24 +1649,32 @@ struct PayWallView: View {
             switch result {
             case .success:
                 if shouldTrackPaywallAnalytics {
-                    MacraAnalyticsService.shared.trackSubscriptionStart(plan: plan, source: paywallAnalyticsSource)
+                    MacraAnalyticsService.shared.trackSubscriptionStart(
+                        plan: plan,
+                        source: paywallAnalyticsSource,
+                        metadata: paywallFunnelMetadata
+                    )
                 }
-                finishStandalonePaywall()
+                verifyStandaloneSubscriptionAccessAndShowSuccess(plan: plan, context: "storekit_purchase")
             case .failure(let error):
                 if PurchaseService.sharedInstance.isPurchaseCanceledError(error) {
                     if shouldTrackPaywallAnalytics {
                         MacraAnalyticsService.shared.trackSubscriptionPurchaseCancelled(
                             plan: plan,
-                            source: paywallAnalyticsSource
+                            source: paywallAnalyticsSource,
+                            error: error,
+                            metadata: paywallFunnelMetadata
                         )
                     }
                     standalonePurchaseError = nil
+                    presentCancelFeedbackDialog(trigger: "storekit_cancelled")
                 } else {
                     if shouldTrackPaywallAnalytics {
                         MacraAnalyticsService.shared.trackSubscriptionPurchaseFailed(
                             plan: plan,
                             source: paywallAnalyticsSource,
-                            error: error
+                            error: error,
+                            metadata: paywallFunnelMetadata
                         )
                     }
                     standalonePurchaseError = (error as NSError).localizedDescription
@@ -986,7 +1715,7 @@ struct PayWallView: View {
                         if shouldTrackPaywallAnalytics {
                             MacraAnalyticsService.shared.trackSubscriptionRestoreSucceeded(source: paywallAnalyticsSource)
                         }
-                        finishStandalonePaywall()
+                        verifyStandaloneSubscriptionAccessAndShowSuccess(plan: selectedPlan, context: "restore_purchases")
                     } else {
                         if shouldTrackPaywallAnalytics {
                             MacraAnalyticsService.shared.trackSubscriptionRestoreFailed(
@@ -1036,6 +1765,7 @@ struct PayWallView: View {
     }
 
     private func finishStandalonePaywall() {
+        viewModel.appCoordinator.showNutritionTab(.journal)
         if let onDismiss {
             onDismiss()
         } else {
@@ -1043,7 +1773,44 @@ struct PayWallView: View {
         }
     }
 
+    private func showSubscriptionSuccessAndEnterDashboard() {
+        standalonePurchaseError = nil
+        onboardingCoordinator?.purchaseError = nil
+        showSubscriptionSuccess = true
+
+        guard !didScheduleSubscriptionSuccessAdvance else { return }
+        didScheduleSubscriptionSuccessAdvance = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            guard showSubscriptionSuccess else { return }
+            finishSubscriptionSuccessFlow()
+        }
+    }
+
+    private func finishSubscriptionSuccessFlow() {
+        showSubscriptionSuccess = false
+        didScheduleSubscriptionSuccessAdvance = false
+        finishStandalonePaywall()
+    }
+
     // MARK: - Tracking / loading
+
+    @MainActor
+    private func refreshPaywallExperimentSelection() async {
+        guard !shouldUseDemoPlans else { return }
+        if let defaultPlanSelectionOverride {
+            guard paywallDefaultPlanSelection != defaultPlanSelectionOverride else { return }
+            paywallDefaultPlanSelection = defaultPlanSelectionOverride
+            ensureVisiblePlanSelected()
+            return
+        }
+
+        let selection = await MacraPaywallExperimentService.fetchAndActivateDefaultPlanSelection()
+        guard paywallDefaultPlanSelection != selection else { return }
+
+        paywallDefaultPlanSelection = selection
+        ensureVisiblePlanSelected()
+    }
 
     @MainActor
     private func loadPlansAndTrackPaywallView() async {
@@ -1060,10 +1827,12 @@ struct PayWallView: View {
         if onboardingCoordinator == nil,
            offeringViewModel.planOptions.isEmpty,
            !offeringViewModel.isLoadingPackages {
-            await offeringViewModel.start()
+            await offeringViewModel.start(source: paywallAnalyticsSource)
         }
 
+        ensureVisiblePlanSelected()
         trackPaywallViewedIfReady()
+        trackWebCheckoutFallbackPresentedIfReady()
     }
 
     @MainActor
@@ -1079,7 +1848,8 @@ struct PayWallView: View {
         MacraAnalyticsService.shared.trackPaywallViewed(
             source: paywallAnalyticsSource,
             selectedPlan: selectedPlan,
-            availablePlans: availablePlans
+            availablePlans: availablePlans,
+            metadata: paywallFunnelMetadata
         )
     }
 
@@ -1100,7 +1870,70 @@ struct PayWallView: View {
             isLoadingPackages: isLoadingPackages,
             packageLoadError: packageLoadError,
             isPurchasing: isPurchasing,
-            hasExistingSubscriptionAccess: hasExistingSubscriptionAccess
+            hasExistingSubscriptionAccess: hasExistingSubscriptionAccess,
+            ctaDecision: primaryCTAAnalyticsDecision,
+            usesWebCheckoutFallback: shouldUseWebCheckoutFallback,
+            fallbackReason: shouldUseWebCheckoutFallback ? webCheckoutFallbackReason : nil,
+            metadata: paywallFunnelMetadata
+        )
+    }
+
+    private func trackPaywallValuePreviewViewedIfNeeded(previewType: String) {
+        guard shouldTrackPaywallAnalytics, !didTrackPaywallValuePreviewView else { return }
+        guard !hasExistingSubscriptionAccess else { return }
+
+        didTrackPaywallValuePreviewView = true
+        MacraAnalyticsService.shared.trackPaywallValuePreviewViewed(
+            source: paywallAnalyticsSource,
+            selectedPlan: selectedPlan,
+            availablePlans: availablePlans,
+            previewType: previewType,
+            metadata: paywallFunnelMetadata
+        )
+    }
+
+    private func trackPricingDisclosureViewedIfNeeded() {
+        guard shouldTrackPaywallAnalytics, !didTrackPricingDisclosureView else { return }
+        guard !hasExistingSubscriptionAccess else { return }
+
+        didTrackPricingDisclosureView = true
+        MacraAnalyticsService.shared.trackPaywallPricingDisclosureViewed(
+            source: paywallAnalyticsSource,
+            selectedPlan: selectedPlan,
+            availablePlans: availablePlans,
+            disclosureText: purchaseExpectationBody,
+            metadata: paywallFunnelMetadata
+        )
+    }
+
+    @MainActor
+    private func trackWebCheckoutFallbackPresentedIfReady() {
+        guard shouldTrackPaywallAnalytics,
+              !didTrackWebCheckoutFallbackPresented,
+              shouldUseWebCheckoutFallback else { return }
+
+        didTrackWebCheckoutFallbackPresented = true
+        MacraAnalyticsService.shared.trackSubscriptionWebCheckoutFallbackPresented(
+            source: paywallAnalyticsSource,
+            reason: webCheckoutFallbackReason,
+            ctaTitle: ctaTitle,
+            availablePlanCount: availablePlans.count,
+            isLoadingPackages: isLoadingPackages,
+            packageLoadError: packageLoadError,
+            metadata: paywallFunnelMetadata
+        )
+    }
+
+    private func trackWebCheckoutFallbackPressedIfNeeded() {
+        guard shouldTrackPaywallAnalytics else { return }
+        MacraAnalyticsService.shared.trackSubscriptionWebCheckoutFallbackPressed(
+            source: paywallAnalyticsSource,
+            reason: webCheckoutFallbackReason,
+            ctaTitle: ctaTitle,
+            availablePlanCount: availablePlans.count,
+            isLoadingPackages: isLoadingPackages,
+            packageLoadError: packageLoadError,
+            metadata: paywallFunnelMetadata
         )
     }
 
@@ -1113,22 +1946,104 @@ struct PayWallView: View {
             ctaTitle: ctaTitle,
             availablePlanCount: availablePlans.count,
             isLoadingPackages: isLoadingPackages,
-            packageLoadError: packageLoadError
+            packageLoadError: packageLoadError,
+            metadata: paywallFunnelMetadata
         )
     }
 
-    private var currentCTABlockReason: String {
-        if isLoadingPackages { return "plans_loading" }
-        if packageLoadError != nil { return "package_load_error" }
-        return "selected_plan_missing"
+    private func trackPaywallDismissedIfNeeded(reason: String) {
+        guard shouldTrackPaywallAnalytics, !didTrackPaywallDismissed else { return }
+        didTrackPaywallDismissed = true
+
+        var metadata = paywallFunnelMetadata
+        metadata["paywall_dismiss_reason"] = reason
+
+        MacraAnalyticsService.shared.trackPaywallDismissed(
+            source: paywallAnalyticsSource,
+            selectedPlan: selectedPlan,
+            metadata: metadata
+        )
+    }
+
+    private func presentCancelFeedbackDialog(trigger: String) {
+        guard !didAskCancelFeedback else { return }
+        cancelFeedbackTrigger = trigger
+        didAskCancelFeedback = true
+        didSubmitCancelFeedback = false
+        showCancelFeedbackDialog = true
+
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackPaywallCancelFeedbackPresented(
+                source: paywallAnalyticsSource,
+                selectedPlan: selectedPlan,
+                trigger: trigger,
+                metadata: paywallFunnelMetadata
+            )
+        }
+    }
+
+    private func submitCancelFeedback(_ reason: PaywallCancelFeedbackReason) {
+        didSubmitCancelFeedback = true
+        showCancelFeedbackDialog = false
+
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackPaywallCancelFeedbackSubmitted(
+                source: paywallAnalyticsSource,
+                selectedPlan: selectedPlan,
+                trigger: cancelFeedbackTrigger,
+                reason: reason.rawValue,
+                reasonLabel: reason.title,
+                metadata: paywallFunnelMetadata
+            )
+        }
+
+        activeAppCoordinator?.showToast(viewModel: ToastViewModel(
+            message: "Thanks. That helps us improve Macra.",
+            backgroundColor: .secondaryCharcoal,
+            textColor: .secondaryWhite
+        ))
+    }
+
+    private func dismissCancelFeedback(reason: String) {
+        showCancelFeedbackDialog = false
+        guard didAskCancelFeedback, !didSubmitCancelFeedback else { return }
+
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackPaywallCancelFeedbackDismissed(
+                source: paywallAnalyticsSource,
+                selectedPlan: selectedPlan,
+                trigger: cancelFeedbackTrigger,
+                reason: reason,
+                metadata: paywallFunnelMetadata
+            )
+        }
+    }
+
+    private var activeAppCoordinator: AppCoordinator? {
+        onboardingCoordinator?.appCoordinator ?? viewModel.appCoordinator
     }
 
     // MARK: - Plan list helpers
 
-    private static func paywallPlans(from plans: [SubscriptionPlanOption]) -> [SubscriptionPlanOption] {
+    private func periodAnalyticsName(_ period: SubscriptionPlanPeriodKind) -> String {
+        switch period {
+        case .day: return "day"
+        case .week: return "week"
+        case .month: return "month"
+        case .year: return "year"
+        case .unknown: return "unknown"
+        }
+    }
+
+    private static func paywallPlans(
+        from plans: [SubscriptionPlanOption],
+        preferMonthlyFirst: Bool
+    ) -> [SubscriptionPlanOption] {
         let annual = plans.first(where: { $0.periodKind == .year })
         let monthly = plans.first(where: { $0.periodKind == .month })
-        let primaryPlans = [annual, monthly].compactMap { $0 }
+        let primaryPlans = preferMonthlyFirst
+            ? [monthly, annual].compactMap { $0 }
+            : [annual, monthly].compactMap { $0 }
 
         if !primaryPlans.isEmpty {
             return primaryPlans
@@ -1514,7 +2429,7 @@ struct MacraReviewPaywallScreenshotView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             guard offering.planOptions.isEmpty, !offering.isLoadingPackages else { return }
-            Task { await offering.start() }
+            Task { await offering.start(source: "subscription_review") }
         }
     }
 }

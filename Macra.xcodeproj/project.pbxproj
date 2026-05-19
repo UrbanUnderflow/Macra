@@ -34,6 +34,7 @@
 		21E8FB6D2A9EDC0800671B49 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 21E8FB6C2A9EDC0800671B49 /* FirebaseStorage */; };
 		21E8FB702A9EDC1800671B49 /* OpenAISwift in Frameworks */ = {isa = PBXBuildFile; productRef = 21E8FB6F2A9EDC1800671B49 /* OpenAISwift */; };
 		21E8FB732A9EDC2400671B49 /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = 21E8FB722A9EDC2400671B49 /* Lottie */; };
+		C7A1BC102FB3200000000001 /* FirebaseRemoteConfig in Frameworks */ = {isa = PBXBuildFile; productRef = C7A1BC112FB3200000000001 /* FirebaseRemoteConfig */; };
 		21E8FBD32A9EE0D100671B49 /* FoodJournalFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB752A9EE0D100671B49 /* FoodJournalFeedback.swift */; };
 		21E8FBD42A9EE0D100671B49 /* EntryAssessment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB762A9EE0D100671B49 /* EntryAssessment.swift */; };
 		21E8FBD52A9EE0D100671B49 /* RegistrationModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB782A9EE0D100671B49 /* RegistrationModal.swift */; };
@@ -349,6 +350,7 @@
 				21E8FB6D2A9EDC0800671B49 /* FirebaseStorage in Frameworks */,
 				21E8FB692A9EDC0800671B49 /* FirebaseFirestore in Frameworks */,
 				C7F9A0102F8B100100000001 /* FirebaseMessaging in Frameworks */,
+				C7A1BC102FB3200000000001 /* FirebaseRemoteConfig in Frameworks */,
 				21E8FB602A9EDB8000671B49 /* RevenueCat in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -823,6 +825,7 @@
 				21E8FB6A2A9EDC0800671B49 /* FirebasePerformance */,
 				21E8FB6C2A9EDC0800671B49 /* FirebaseStorage */,
 				C7F9A0112F8B100100000001 /* FirebaseMessaging */,
+				C7A1BC112FB3200000000001 /* FirebaseRemoteConfig */,
 				21E8FB6F2A9EDC1800671B49 /* OpenAISwift */,
 				21E8FB722A9EDC2400671B49 /* Lottie */,
 				C7E5E8E12FAA624500E057FB /* AppsFlyerLib-Strict */,
@@ -1287,7 +1290,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Macra/Macra.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+					CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_ASSET_PATHS = "\"Macra/Preview Content\"";
 				DEVELOPMENT_TEAM = ZG887P86D5;
 				ENABLE_PREVIEWS = YES;
@@ -1309,7 +1312,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.08;
+					MARKETING_VERSION = 1.10;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1329,7 +1332,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Macra/Macra.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+					CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_ASSET_PATHS = "\"Macra/Preview Content\"";
 				DEVELOPMENT_TEAM = ZG887P86D5;
 				ENABLE_PREVIEWS = YES;
@@ -1351,7 +1354,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.08;
+					MARKETING_VERSION = 1.10;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1592,6 +1595,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 21E8FB612A9EDC0800671B49 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseMessaging;
+		};
+		C7A1BC112FB3200000000001 /* FirebaseRemoteConfig */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 21E8FB612A9EDC0800671B49 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseRemoteConfig;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -99,9 +99,10 @@ struct MacraApp: App {
     
     init() {
         FirebaseService.configureFirebaseAppIfNeeded()
+        MacraPaywallExperimentService.prefetch()
         _serviceManager = StateObject(wrappedValue: ServiceManager())
 
-        Purchases.configure(withAPIKey: "appl_dkVuiAvCaUxSvgfcDhIRLdMdEZh")
+        Purchases.configure(withAPIKey: "appl_deKHiupBtyyZDtXuMcXhlwoVdXt")
         Purchases.logLevel = .info
 //        Purchases.logLevel = .verbose //set to info for production
         Purchases.shared.delegate = PurchaseService.sharedInstance

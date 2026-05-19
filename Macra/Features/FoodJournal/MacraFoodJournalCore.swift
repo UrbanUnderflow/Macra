@@ -1501,6 +1501,9 @@ enum MacraFoodJournalSheet: Identifiable, Hashable {
 }
 
 final class MacraFoodJournalViewModel: ObservableObject {
+    private static let mealHistoryLookbackDays = 30
+    private static let mealHistoryLookbackDuration = TimeInterval(mealHistoryLookbackDays * 24 * 60 * 60)
+
     @Published var selectedDate: Date
     @Published var selectedSurface: MacraFoodJournalSurface = .day
     @Published var activeSheet: MacraFoodJournalSheet?
@@ -1611,11 +1614,11 @@ final class MacraFoodJournalViewModel: ObservableObject {
     }
 
     var photoHistory: [MacraFoodJournalMeal] {
-        uniqueMeals(store.photoHistory(limit: 24) + mealHistory.filter(\.hasPhoto))
+        uniqueMeals(mealsInHistoryWindow(store.photoHistory(limit: 24) + mealHistory.filter(\.hasPhoto)))
     }
 
     var allMealHistory: [MacraFoodJournalMeal] {
-        uniqueMeals(mealHistory + store.photoHistory(limit: 50) + mealsForSelectedDay)
+        uniqueMeals(mealsInHistoryWindow(mealHistory + store.photoHistory(limit: 50) + mealsForSelectedDay))
     }
 
     func selectToday() {
@@ -1966,7 +1969,7 @@ final class MacraFoodJournalViewModel: ObservableObject {
         isLoadingHistory = true
         historyError = nil
 
-        MealService.sharedInstance.getRecentMeals(userId: UserService.sharedInstance.user?.id, limit: 60) { [weak self] result in
+        MealService.sharedInstance.getMealsLoggedSince(mealHistoryCutoffDate, userId: UserService.sharedInstance.user?.id) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isLoadingHistory = false
@@ -2273,6 +2276,15 @@ final class MacraFoodJournalViewModel: ObservableObject {
                 let inserted = seen.insert(meal.historyIdentityKey)
                 return inserted.inserted
             }
+    }
+
+    private var mealHistoryCutoffDate: Date {
+        Date().addingTimeInterval(-Self.mealHistoryLookbackDuration)
+    }
+
+    private func mealsInHistoryWindow(_ meals: [MacraFoodJournalMeal]) -> [MacraFoodJournalMeal] {
+        let cutoffDate = mealHistoryCutoffDate
+        return meals.filter { $0.createdAt >= cutoffDate }
     }
 
     private func uniqueLabelScans(_ scans: [MacraScannedLabel]) -> [MacraScannedLabel] {

@@ -195,8 +195,10 @@ final class MacraOnboardingCoordinator: ObservableObject {
     @Published var mealPlanError: String?
     @Published var fwpHandoffState: FWPHandoffState = .checking
     @Published var existingSubscriptionAccessOverride: Bool?
+    @Published var purchaseCancellationFeedbackRequestID: UUID?
     /// True when the user accepted FWP macros — skip biometric steps + use FWP macros verbatim.
     private(set) var usingFWPMacros: Bool = false
+    private var currentPurchasePaywallMetadata: [String: Any] = [:]
     private var trackedPaywallViewSources: Set<String> = []
 
     /// Coach-assigned meal plan (Pulse 1-on-1) detected for this user.
@@ -447,7 +449,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
             return
         }
         Task {
-            await offering.start()
+            await offering.start(source: paywallAnalyticsSource)
             if self.currentStep == .commitTrial {
                 self.trackPaywallViewedIfNeeded()
             }
@@ -466,7 +468,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
         MacraAnalyticsService.shared.trackPaywallViewed(
             source: resolvedSource,
             selectedPlan: selectedPlan,
-            availablePlans: offering.planOptions
+            availablePlans: offering.planOptions,
+            metadata: paywallFunnelAnalyticsMetadata
         )
     }
 
@@ -599,14 +602,77 @@ final class MacraOnboardingCoordinator: ObservableObject {
         ]
     }
 
+    var paywallFunnelAnalyticsMetadata: [String: Any] {
+        var metadata = onboardingAnalyticsMetadata
+        let age = onboardingAgeYears
+        metadata["paywall_context"] = startingStep == .commitTrial ? "subscription_required" : "new_user_onboarding"
+        metadata["age_years"] = age ?? -1
+        metadata["age_segment"] = onboardingAgeSegment
+        metadata["is_minor"] = (age ?? 18) < 18
+        metadata["has_birthdate"] = answers.birthdate != nil
+        metadata["sex"] = answers.sex?.rawValue ?? "unknown"
+        metadata["goal_direction"] = answers.goalDirection?.rawValue ?? "unknown"
+        metadata["pace"] = answers.pace?.rawValue ?? "unknown"
+        metadata["activity_level"] = answers.activityLevel?.rawValue ?? "unknown"
+        metadata["dietary_preference"] = answers.dietaryPreference?.rawValue ?? "unknown"
+        metadata["biggest_struggle"] = answers.biggestStruggle?.rawValue ?? "unknown"
+        metadata["has_personalized_plan_preview"] = planMacros != nil
+        metadata["has_suggested_meal_plan"] = suggestedMealPlan != nil
+        if let selectedPlan {
+            metadata["selected_plan_period_at_decision"] = periodAnalyticsName(selectedPlan.periodKind)
+            metadata["selected_plan_id_at_decision"] = selectedPlan.id
+        } else {
+            metadata["selected_plan_period_at_decision"] = "none"
+            metadata["selected_plan_id_at_decision"] = "none"
+        }
+        return metadata
+    }
+
+    private var activePaywallFunnelAnalyticsMetadata: [String: Any] {
+        var metadata = paywallFunnelAnalyticsMetadata
+        currentPurchasePaywallMetadata.forEach { metadata[$0.key] = $0.value }
+        return metadata
+    }
+
+    private var onboardingAgeYears: Int? {
+        guard let birthdate = answers.birthdate else { return nil }
+        return Calendar.current.dateComponents([.year], from: birthdate, to: Date()).year
+    }
+
+    private var onboardingAgeSegment: String {
+        guard let age = onboardingAgeYears else { return "unknown" }
+        if age < 13 { return "under_13" }
+        if age < 18 { return "minor_13_17" }
+        if age < 25 { return "young_adult_18_24" }
+        return "adult_25_plus"
+    }
+
+    private func periodAnalyticsName(_ period: SubscriptionPlanPeriodKind) -> String {
+        switch period {
+        case .day: return "day"
+        case .week: return "week"
+        case .month: return "month"
+        case .year: return "year"
+        case .unknown: return "unknown"
+        }
+    }
+
     private func trackSubscriptionStart(plan: SubscriptionPlanOption) {
         guard !isDemoMode else { return }
-        MacraAnalyticsService.shared.trackSubscriptionStart(plan: plan, source: paywallAnalyticsSource)
+        MacraAnalyticsService.shared.trackSubscriptionStart(
+            plan: plan,
+            source: paywallAnalyticsSource,
+            metadata: activePaywallFunnelAnalyticsMetadata
+        )
     }
 
     private func trackSubscriptionPurchaseAttempted(plan: SubscriptionPlanOption) {
         guard !isDemoMode else { return }
-        MacraAnalyticsService.shared.trackSubscriptionPurchaseAttempted(plan: plan, source: paywallAnalyticsSource)
+        MacraAnalyticsService.shared.trackSubscriptionPurchaseAttempted(
+            plan: plan,
+            source: paywallAnalyticsSource,
+            metadata: activePaywallFunnelAnalyticsMetadata
+        )
     }
 
     private func trackPaywallCTABlocked(reason: String) {
@@ -619,7 +685,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
             ctaTitle: paywallCTATitle,
             availablePlanCount: offering.planOptions.count,
             isLoadingPackages: offering.isLoadingPackages,
-            packageLoadError: offering.packageLoadError
+            packageLoadError: offering.packageLoadError,
+            metadata: activePaywallFunnelAnalyticsMetadata
         )
     }
 
@@ -635,9 +702,14 @@ final class MacraOnboardingCoordinator: ObservableObject {
         }
     }
 
-    private func trackSubscriptionPurchaseCancelled(plan: SubscriptionPlanOption) {
+    private func trackSubscriptionPurchaseCancelled(plan: SubscriptionPlanOption, error: Error? = nil) {
         guard !isDemoMode else { return }
-        MacraAnalyticsService.shared.trackSubscriptionPurchaseCancelled(plan: plan, source: paywallAnalyticsSource)
+        MacraAnalyticsService.shared.trackSubscriptionPurchaseCancelled(
+            plan: plan,
+            source: paywallAnalyticsSource,
+            error: error,
+            metadata: activePaywallFunnelAnalyticsMetadata
+        )
     }
 
     private func trackSubscriptionPurchaseFailed(plan: SubscriptionPlanOption, error: Error, reason: String? = nil) {
@@ -646,7 +718,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
             plan: plan,
             source: paywallAnalyticsSource,
             error: error,
-            reason: reason
+            reason: reason,
+            metadata: activePaywallFunnelAnalyticsMetadata
         )
     }
 
@@ -685,14 +758,16 @@ final class MacraOnboardingCoordinator: ObservableObject {
             MacraAnalyticsService.shared.trackSubscriptionAccessVerified(
                 plan: plan,
                 source: paywallAnalyticsSource,
-                context: context
+                context: context,
+                metadata: paywallFunnelAnalyticsMetadata
             )
         case .success(false):
             MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
                 plan: plan,
                 source: paywallAnalyticsSource,
                 context: context,
-                reason: inactiveReason
+                reason: inactiveReason,
+                metadata: paywallFunnelAnalyticsMetadata
             )
         case .failure(let error):
             MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
@@ -700,7 +775,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
                 source: paywallAnalyticsSource,
                 context: context,
                 reason: "verification_error",
-                error: error
+                error: error,
+                metadata: paywallFunnelAnalyticsMetadata
             )
         }
     }
@@ -1197,58 +1273,60 @@ final class MacraOnboardingCoordinator: ObservableObject {
         }
     }
 
-    func purchaseAndContinue() {
-        guard !isPurchasing else { return }
+    func purchaseAndContinue(paywallMetadata: [String: Any] = [:]) {
+        currentPurchasePaywallMetadata = paywallMetadata
+        let offering = PurchaseService.sharedInstance.offering
+        let decision = MacraPurchaseFlowResolver.decision(for: MacraPurchaseFlowInput(
+            isPurchasing: isPurchasing,
+            isDemoMode: isDemoMode,
+            usesLivePurchasesInDemo: usesLivePurchasesInDemo,
+            hasExistingSubscriptionAccess: hasExistingSubscriptionAccess,
+            isLoadingPackages: offering.isLoadingPackages,
+            packageLoadError: offering.packageLoadError,
+            selectedPlan: selectedPlan
+        ))
 
-        if isDemoMode && !usesLivePurchasesInDemo {
+        switch decision {
+        case .ignoreAlreadyPurchasing:
+            return
+        case .continueDemoAccess:
             purchaseError = nil
             continueAfterVerifiedAccess()
             return
-        }
-
-        if hasExistingSubscriptionAccess {
+        case .continueExistingAccess:
             continueWithExistingSubscriptionAccess()
             return
-        }
-
-        let offering = PurchaseService.sharedInstance.offering
-        guard !offering.isLoadingPackages else {
-            purchaseError = "Plans are still loading. Please try again in a moment."
-            trackPaywallCTABlocked(reason: "plans_loading")
+        case .blocked(let reason, let message):
+            purchaseError = message
+            trackPaywallCTABlocked(reason: reason.rawValue)
             return
-        }
-        guard offering.packageLoadError == nil else {
-            purchaseError = offering.packageLoadError
-            trackPaywallCTABlocked(reason: "package_load_error")
-            return
-        }
-        guard let plan = selectedPlan else {
-            purchaseError = "Plans are still loading. Please try again in a moment."
-            trackPaywallCTABlocked(reason: "selected_plan_missing")
-            return
-        }
+        case .purchase(let plan):
+            isPurchasing = true
+            purchaseError = nil
+            trackSubscriptionPurchaseAttempted(plan: plan)
 
-        isPurchasing = true
-        purchaseError = nil
-        trackSubscriptionPurchaseAttempted(plan: plan)
-
-        PurchaseService.sharedInstance.offering.purchase(plan) { [weak self] result in
-            DispatchQueue.main.async {
-                self?.isPurchasing = false
-                switch result {
-                case .success:
-                    self?.trackSubscriptionStart(plan: plan)
-                    self?.verifySubscriptionAndContinue(plan: plan)
-                case .failure(let error):
-                    if PurchaseService.sharedInstance.isPurchaseCanceledError(error) {
-                        self?.trackSubscriptionPurchaseCancelled(plan: plan)
-                        self?.purchaseError = nil
-                    } else if PurchaseService.sharedInstance.isAlreadySubscribedError(error) {
-                        self?.trackSubscriptionPurchaseAlreadyActive(plan: plan, error: error)
-                        self?.syncExistingSubscriptionAndContinue()
-                    } else {
-                        self?.trackSubscriptionPurchaseFailed(plan: plan, error: error)
-                        self?.purchaseError = error.localizedDescription
+            offering.purchase(plan) { [weak self] result in
+                DispatchQueue.main.async {
+                    self?.isPurchasing = false
+                    switch result {
+                    case .success:
+                        self?.trackSubscriptionStart(plan: plan)
+                        self?.verifySubscriptionAndContinue(plan: plan)
+                    case .failure(let error):
+                        if PurchaseService.sharedInstance.isPurchaseCanceledError(error) {
+                            self?.trackSubscriptionPurchaseCancelled(plan: plan, error: error)
+                            self?.purchaseError = nil
+                            self?.purchaseCancellationFeedbackRequestID = UUID()
+                            if let self {
+                                NotificationCenter.default.post(name: .macraPaywallPurchaseCancelled, object: self)
+                            }
+                        } else if PurchaseService.sharedInstance.isAlreadySubscribedError(error) {
+                            self?.trackSubscriptionPurchaseAlreadyActive(plan: plan, error: error)
+                            self?.syncExistingSubscriptionAndContinue()
+                        } else {
+                            self?.trackSubscriptionPurchaseFailed(plan: plan, error: error)
+                            self?.purchaseError = error.localizedDescription
+                        }
                     }
                 }
             }
@@ -1275,7 +1353,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
             MacraAnalyticsService.shared.trackSubscriptionAccessVerified(
                 plan: nil,
                 source: paywallAnalyticsSource,
-                context: "existing_subscription_access"
+                context: "existing_subscription_access",
+                metadata: paywallFunnelAnalyticsMetadata
             )
         }
         continueAfterVerifiedAccess()
@@ -1304,6 +1383,82 @@ final class MacraOnboardingCoordinator: ObservableObject {
                     result,
                     inactiveMessage: "No active subscription found to restore."
                 )
+            }
+        }
+    }
+
+    func completeWebSubscriptionAndContinue() {
+        guard !isPurchasing else { return }
+
+        isPurchasing = true
+        purchaseError = "Finishing unlock..."
+
+        UserService.sharedInstance.getUser { [weak self] refreshedUser, userError in
+            PurchaseService.sharedInstance.checkSubscriptionStatus(forceRefresh: true) { result in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.isPurchasing = false
+
+                    let refreshedHasAccess =
+                        refreshedUser?.subscriptionType.grantsMacraAccess == true ||
+                        UserService.sharedInstance.user?.subscriptionType.grantsMacraAccess == true ||
+                        UserService.sharedInstance.isBetaUser
+                    let purchaseServiceHasAccess: Bool
+                    if case .success(true) = result {
+                        purchaseServiceHasAccess = true
+                    } else {
+                        purchaseServiceHasAccess = false
+                    }
+
+                    if refreshedHasAccess || purchaseServiceHasAccess {
+                        self.purchaseError = nil
+                        MacraAnalyticsService.shared.trackSubscriptionAccessVerified(
+                            plan: self.selectedPlan,
+                            source: self.paywallAnalyticsSource,
+                            context: "web_checkout_return",
+                            metadata: self.paywallFunnelAnalyticsMetadata
+                        )
+                        self.continueAfterVerifiedAccess()
+                        return
+                    }
+
+                    if let userError {
+                        MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
+                            plan: self.selectedPlan,
+                            source: self.paywallAnalyticsSource,
+                            context: "web_checkout_return",
+                            reason: "user_refresh_error",
+                            error: userError,
+                            metadata: self.paywallFunnelAnalyticsMetadata
+                        )
+                        self.purchaseError = userError.localizedDescription
+                        return
+                    }
+
+                    switch result {
+                    case .success(false):
+                        MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
+                            plan: self.selectedPlan,
+                            source: self.paywallAnalyticsSource,
+                            context: "web_checkout_return",
+                            reason: "web_checkout_access_not_active",
+                            metadata: self.paywallFunnelAnalyticsMetadata
+                        )
+                        self.purchaseError = "Your web subscription was created, but access is still syncing. Close and reopen Macra or tap Restore Purchases in a moment."
+                    case .failure(let error):
+                        MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
+                            plan: self.selectedPlan,
+                            source: self.paywallAnalyticsSource,
+                            context: "web_checkout_return",
+                            reason: "web_checkout_verification_error",
+                            error: error,
+                            metadata: self.paywallFunnelAnalyticsMetadata
+                        )
+                        self.purchaseError = error.localizedDescription
+                    case .success(true):
+                        break
+                    }
+                }
             }
         }
     }

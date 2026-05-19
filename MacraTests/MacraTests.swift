@@ -744,6 +744,147 @@ final class MacraTests: XCTestCase {
         XCTAssertNil(BuddyURLParser.token(from: "https://macra.onelink.me/iwHk/5kdshl1e"))
     }
 
+    func testPurchaseFlowDecisionPurchasesSelectedPlanWhenReady() {
+        let plan = Self.testSubscriptionPlan(id: "rc_annual")
+
+        let decision = MacraPurchaseFlowResolver.decision(for: MacraPurchaseFlowInput(
+            isPurchasing: false,
+            isDemoMode: false,
+            usesLivePurchasesInDemo: false,
+            hasExistingSubscriptionAccess: false,
+            isLoadingPackages: false,
+            packageLoadError: nil,
+            selectedPlan: plan
+        ))
+
+        guard case .purchase(let resolvedPlan) = decision else {
+            XCTFail("Expected purchase decision when a selected plan is ready.")
+            return
+        }
+
+        XCTAssertEqual(resolvedPlan.id, "rc_annual")
+    }
+
+    func testPurchaseFlowDecisionBlocksWhilePlansAreLoading() {
+        let decision = MacraPurchaseFlowResolver.decision(for: MacraPurchaseFlowInput(
+            isPurchasing: false,
+            isDemoMode: false,
+            usesLivePurchasesInDemo: false,
+            hasExistingSubscriptionAccess: false,
+            isLoadingPackages: true,
+            packageLoadError: nil,
+            selectedPlan: nil
+        ))
+
+        Self.assertBlocked(decision, reason: .plansLoading)
+    }
+
+    func testPurchaseFlowDecisionBlocksPackageLoadErrorsBeforeAttemptingPurchase() {
+        let decision = MacraPurchaseFlowResolver.decision(for: MacraPurchaseFlowInput(
+            isPurchasing: false,
+            isDemoMode: false,
+            usesLivePurchasesInDemo: false,
+            hasExistingSubscriptionAccess: false,
+            isLoadingPackages: false,
+            packageLoadError: "RevenueCat returned no supported packages.",
+            selectedPlan: Self.testSubscriptionPlan(id: "rc_annual")
+        ))
+
+        Self.assertBlocked(decision, reason: .packageLoadError)
+    }
+
+    func testPurchaseFlowDecisionBlocksMissingSelectedPlan() {
+        let decision = MacraPurchaseFlowResolver.decision(for: MacraPurchaseFlowInput(
+            isPurchasing: false,
+            isDemoMode: false,
+            usesLivePurchasesInDemo: false,
+            hasExistingSubscriptionAccess: false,
+            isLoadingPackages: false,
+            packageLoadError: nil,
+            selectedPlan: nil
+        ))
+
+        Self.assertBlocked(decision, reason: .selectedPlanMissing)
+    }
+
+    func testPurchaseFlowDecisionContinuesExistingSubscriberWithoutPurchase() {
+        let decision = MacraPurchaseFlowResolver.decision(for: MacraPurchaseFlowInput(
+            isPurchasing: false,
+            isDemoMode: false,
+            usesLivePurchasesInDemo: false,
+            hasExistingSubscriptionAccess: true,
+            isLoadingPackages: true,
+            packageLoadError: "Packages are broken but subscriber already has access.",
+            selectedPlan: nil
+        ))
+
+        guard case .continueExistingAccess = decision else {
+            XCTFail("Expected existing subscribers to bypass purchase.")
+            return
+        }
+    }
+
+    func testPurchaseFlowDecisionBypassesLivePurchaseInScreenDemoMode() {
+        let decision = MacraPurchaseFlowResolver.decision(for: MacraPurchaseFlowInput(
+            isPurchasing: false,
+            isDemoMode: true,
+            usesLivePurchasesInDemo: false,
+            hasExistingSubscriptionAccess: false,
+            isLoadingPackages: false,
+            packageLoadError: nil,
+            selectedPlan: nil
+        ))
+
+        guard case .continueDemoAccess = decision else {
+            XCTFail("Expected screen demo mode to bypass live purchase.")
+            return
+        }
+    }
+
+    func testPurchaseFlowDecisionIgnoresRepeatedTapWhileAlreadyPurchasing() {
+        let decision = MacraPurchaseFlowResolver.decision(for: MacraPurchaseFlowInput(
+            isPurchasing: true,
+            isDemoMode: false,
+            usesLivePurchasesInDemo: false,
+            hasExistingSubscriptionAccess: false,
+            isLoadingPackages: false,
+            packageLoadError: nil,
+            selectedPlan: Self.testSubscriptionPlan(id: "rc_annual")
+        ))
+
+        guard case .ignoreAlreadyPurchasing = decision else {
+            XCTFail("Expected repeat taps during purchase to be ignored.")
+            return
+        }
+    }
+
+    private static func testSubscriptionPlan(id: String) -> SubscriptionPlanOption {
+        .local(LocalSubscriptionPlanViewModel(
+            id: id,
+            displayTitle: "Annual",
+            localizedPriceString: "$39.99",
+            price: Decimal(39.99),
+            periodKind: .year,
+            trialDays: 3,
+            product: nil
+        ))
+    }
+
+    private static func assertBlocked(
+        _ decision: MacraPurchaseFlowDecision,
+        reason expectedReason: MacraPurchaseFlowBlockReason,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard case .blocked(let reason, let message) = decision else {
+            XCTFail("Expected blocked decision.", file: file, line: line)
+            return
+        }
+
+        XCTAssertEqual(reason, expectedReason, file: file, line: line)
+        XCTAssertFalse(message.isEmpty, file: file, line: line)
+    }
+
     private static func noraAnalysisJSON() -> String {
         """
         {

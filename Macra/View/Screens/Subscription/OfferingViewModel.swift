@@ -7,6 +7,66 @@ enum PurchaseResult {
     case failure(Error)
 }
 
+enum MacraPurchaseFlowBlockReason: String, Equatable {
+    case plansLoading = "plans_loading"
+    case packageLoadError = "package_load_error"
+    case selectedPlanMissing = "selected_plan_missing"
+}
+
+struct MacraPurchaseFlowInput {
+    let isPurchasing: Bool
+    let isDemoMode: Bool
+    let usesLivePurchasesInDemo: Bool
+    let hasExistingSubscriptionAccess: Bool
+    let isLoadingPackages: Bool
+    let packageLoadError: String?
+    let selectedPlan: SubscriptionPlanOption?
+}
+
+enum MacraPurchaseFlowDecision {
+    case ignoreAlreadyPurchasing
+    case continueDemoAccess
+    case continueExistingAccess
+    case blocked(reason: MacraPurchaseFlowBlockReason, message: String)
+    case purchase(SubscriptionPlanOption)
+}
+
+struct MacraPurchaseFlowResolver {
+    static func decision(for input: MacraPurchaseFlowInput) -> MacraPurchaseFlowDecision {
+        if input.isPurchasing {
+            return .ignoreAlreadyPurchasing
+        }
+
+        if input.isDemoMode && !input.usesLivePurchasesInDemo {
+            return .continueDemoAccess
+        }
+
+        if input.hasExistingSubscriptionAccess {
+            return .continueExistingAccess
+        }
+
+        if input.isLoadingPackages {
+            return .blocked(
+                reason: .plansLoading,
+                message: "Plans are still loading. Please try again in a moment."
+            )
+        }
+
+        if let packageLoadError = input.packageLoadError, !packageLoadError.isEmpty {
+            return .blocked(reason: .packageLoadError, message: packageLoadError)
+        }
+
+        guard let selectedPlan = input.selectedPlan else {
+            return .blocked(
+                reason: .selectedPlanMissing,
+                message: "Plans are still loading. Please try again in a moment."
+            )
+        }
+
+        return .purchase(selectedPlan)
+    }
+}
+
 enum SubscriptionPlanPeriodKind: Int {
     case year = 1
     case month = 2
@@ -140,10 +200,20 @@ final class OfferingViewModel: ObservableObject, OfferingViewModelProtocol {
     }
 
     func start() async {
+        await start(source: "subscription_offering")
+    }
+
+    func start(source: String) async {
         guard !isLoadingPackages else { return }
 
         isLoadingPackages = true
         packageLoadError = nil
+        packageViewModel = []
+        monthlyPackage = nil
+        yearlyPackage = nil
+        localPlanViewModel = []
+        MacraAnalyticsService.shared.trackSubscriptionPlansLoadStarted(source: source)
+        logPlanLoad("Starting RevenueCat offerings fetch. source=\(source)")
 
         defer {
             isLoadingPackages = false
@@ -151,21 +221,48 @@ final class OfferingViewModel: ObservableObject, OfferingViewModelProtocol {
 
         do {
             let offerings = try await Purchases.shared.offerings()
+            let currentOfferingIdentifier = offerings.current?.identifier
             let availablePackages = offerings.current?.availablePackages ?? []
             let packages = availablePackages.filter(packageIsSupported)
-            localPlanViewModel = []
+            let packageIdentifiers = availablePackages.map(\.identifier)
+            let productIdentifiers = availablePackages.map(\.storeProduct.productIdentifier)
+            logPlanLoad(
+                """
+                RevenueCat offerings fetched. source=\(source) current=\(currentOfferingIdentifier ?? "none") \
+                available=\(availablePackages.count) supported=\(packages.count) \
+                packageIDs=\(packageIdentifiers.joined(separator: ", ")) \
+                productIDs=\(productIdentifiers.joined(separator: ", "))
+                """
+            )
 
             if availablePackages.isEmpty {
-                packageLoadError = "No subscription plans came back from RevenueCat. Check the default offering."
+                let reason = offerings.current == nil ? "no_current_offering" : "current_offering_empty"
+                packageLoadError = "Unable to load subscription plans. Please try again."
+                MacraAnalyticsService.shared.trackSubscriptionPlansLoadFailed(
+                    source: source,
+                    reason: reason,
+                    currentOfferingIdentifier: currentOfferingIdentifier,
+                    availablePackageCount: availablePackages.count,
+                    supportedPackageCount: packages.count,
+                    packageIdentifiers: packageIdentifiers,
+                    productIdentifiers: productIdentifiers
+                )
+                return
             } else if packages.isEmpty {
                 let returnedIDs = availablePackages
                     .map { "\($0.identifier) / \($0.storeProduct.productIdentifier)" }
                     .joined(separator: ", ")
-                packageLoadError = "RevenueCat returned plans, but none matched rc_monthly or rc_annual. Returned: \(returnedIDs)"
-            }
-
-            guard !packages.isEmpty else {
-                await loadStoreKitFallbackPlans()
+                packageLoadError = "Unable to load subscription plans. Please try again."
+                MacraAnalyticsService.shared.trackSubscriptionPlansLoadFailed(
+                    source: source,
+                    reason: "unsupported_revenuecat_packages",
+                    currentOfferingIdentifier: currentOfferingIdentifier,
+                    availablePackageCount: availablePackages.count,
+                    supportedPackageCount: packages.count,
+                    packageIdentifiers: packageIdentifiers,
+                    productIdentifiers: productIdentifiers
+                )
+                logPlanLoad("RevenueCat returned packages, but none match Macra's supported IDs. Returned: \(returnedIDs)")
                 return
             }
 
@@ -173,9 +270,28 @@ final class OfferingViewModel: ObservableObject, OfferingViewModelProtocol {
             // find monthly and yearly packages
             monthlyPackage = packageViewModel.first(where: { $0.package.storeProduct.subscriptionPeriod?.unit == .month })
             yearlyPackage = packageViewModel.first(where: { $0.package.storeProduct.subscriptionPeriod?.unit == .year })
+            packageLoadError = nil
+            MacraAnalyticsService.shared.trackSubscriptionPlansLoaded(
+                source: source,
+                currentOfferingIdentifier: currentOfferingIdentifier,
+                availablePackageCount: availablePackages.count,
+                supportedPackageCount: packages.count,
+                packageIdentifiers: packageIdentifiers,
+                productIdentifiers: productIdentifiers
+            )
         } catch {
-            await loadStoreKitFallbackPlans()
-            print("Unable to Fetch Offerings \(error)")
+            packageLoadError = "Unable to load subscription plans. Please try again."
+            MacraAnalyticsService.shared.trackSubscriptionPlansLoadFailed(
+                source: source,
+                reason: "revenuecat_offerings_error",
+                currentOfferingIdentifier: nil,
+                availablePackageCount: 0,
+                supportedPackageCount: 0,
+                packageIdentifiers: [],
+                productIdentifiers: [],
+                error: error
+            )
+            logPlanLoad("Unable to fetch RevenueCat offerings. source=\(source) error=\(error)")
         }
     }
 
@@ -192,30 +308,8 @@ final class OfferingViewModel: ObservableObject, OfferingViewModelProtocol {
             MacraRevenueCatProducts.supportedSubscriptionIdentifiers.contains(productIdentifier)
     }
 
-    private func loadStoreKitFallbackPlans() async {
-#if DEBUG
-        let productIDs = Array(MacraRevenueCatProducts.supportedSubscriptionIdentifiers)
-
-        do {
-            let products = try await Product.products(for: productIDs)
-            let productPlans = products.map(LocalSubscriptionPlanViewModel.init(product:))
-
-            if productPlans.isEmpty {
-                localPlanViewModel = []
-                packageLoadError = "StoreKit did not return subscription products. Check the App Store product IDs or the local StoreKit configuration."
-                return
-            }
-
-            localPlanViewModel = productPlans
-            packageLoadError = nil
-        } catch {
-            localPlanViewModel = []
-            packageLoadError = "Unable to load subscription plans from StoreKit. Please try again."
-            print("Unable to Fetch StoreKit fallback products \(error)")
-        }
-#else
-        packageLoadError = "Unable to load subscription plans. Please try again."
-#endif
+    private func logPlanLoad(_ message: String) {
+        print("[Macra][Subscriptions][Plans] \(message)")
     }
     
     func purchase(_ viewmodel: PackageViewModel, completion: @escaping (PurchaseResult) -> Void) {

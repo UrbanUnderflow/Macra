@@ -240,7 +240,7 @@ final class AppCoordinator: ObservableObject {
         serviceManager.showTabBar = true
 
         Task { [weak self] in
-            await PurchaseService.sharedInstance.offering.start()
+            await PurchaseService.sharedInstance.offering.start(source: "app_login_bootstrap")
             self?.routeAuthenticatedUser()
         }
     }

@@ -36,8 +36,21 @@ private enum AppsFlyerAnalyticsEvent {
     static let existingAccessContinued = "macra_subscription_existing_access_continued"
     static let paywallViewed = "macra_paywall_viewed_standalone"
     static let paywallPrimaryButtonPressed = "macra_paywall_primary_button_pressed"
+    static let paywallValuePreviewViewed = "macra_paywall_value_preview_viewed"
+    static let paywallPricingDisclosureViewed = "macra_paywall_pricing_disclosure_viewed"
     static let paywallCTABlocked = "macra_paywall_cta_blocked"
+    static let paywallCancelFeedbackPresented = "macra_paywall_cancel_feedback_presented"
+    static let paywallCancelFeedbackSubmitted = "macra_paywall_cancel_feedback_submitted"
+    static let paywallCancelFeedbackDismissed = "macra_paywall_cancel_feedback_dismissed"
     static let paywallDismissed = "macra_paywall_dismissed"
+    static let plansLoadStarted = "macra_subscription_plans_load_started"
+    static let plansLoaded = "macra_subscription_plans_loaded"
+    static let plansLoadFailed = "macra_subscription_plans_load_failed"
+    static let webCheckoutFallbackPresented = "macra_subscription_web_checkout_fallback_presented"
+    static let webCheckoutFallbackPressed = "macra_subscription_web_checkout_fallback_pressed"
+    static let webCheckoutStarted = "macra_subscription_web_checkout_started"
+    static let webCheckoutReturned = "macra_subscription_web_checkout_returned"
+    static let webCheckoutFailed = "macra_subscription_web_checkout_failed"
     static let onboardingStarted = "macra_onboarding_started"
     static let onboardingProfileCompleted = "macra_onboarding_profile_completed"
     static let onboardingPaywallReached = "macra_onboarding_paywall_reached"
@@ -167,7 +180,8 @@ final class MacraAnalyticsService {
     func trackPaywallViewed(
         source: String,
         selectedPlan: SubscriptionPlanOption?,
-        availablePlans: [SubscriptionPlanOption]
+        availablePlans: [SubscriptionPlanOption],
+        metadata: [String: Any] = [:]
     ) {
         let value = selectedPlan.map { analyticsValue(for: $0) } ?? 0
         let eventId = makeEventId(prefix: "paywall_viewed", source: source, plan: selectedPlan)
@@ -179,6 +193,7 @@ final class MacraAnalyticsService {
         properties["available_plan_ids"] = availablePlans.map(\.analyticsProductId).joined(separator: ",")
         properties["available_plan_count"] = availablePlans.count
         properties["plans_loaded"] = !availablePlans.isEmpty
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         var appsFlyerProperties = properties
         appsFlyerProperties[AppsFlyerAnalyticsParam.contentType] = "subscription_paywall"
@@ -249,15 +264,75 @@ final class MacraAnalyticsService {
         #endif
     }
 
-    func trackSubscriptionStart(plan: SubscriptionPlanOption, source: String) {
+    func trackSubscriptionStart(
+        plan: SubscriptionPlanOption,
+        source: String,
+        metadata: [String: Any] = [:]
+    ) {
         if let trialDays = plan.trialDays, trialDays > 0 {
-            trackTrialStarted(plan: plan, trialDays: trialDays, source: source)
+            trackTrialStarted(plan: plan, trialDays: trialDays, source: source, metadata: metadata)
         } else {
-            trackPurchase(plan: plan, source: source)
+            trackPurchase(plan: plan, source: source, metadata: metadata)
         }
     }
 
-    func trackSubscriptionPlanSelected(plan: SubscriptionPlanOption, source: String) {
+    func trackPaywallValuePreviewViewed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        availablePlans: [SubscriptionPlanOption],
+        previewType: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "paywall_value_preview_viewed"
+        )
+        properties["preview_type"] = previewType
+        properties["available_plan_count"] = availablePlans.count
+        properties["available_plan_ids"] = availablePlans.map(\.analyticsProductId).joined(separator: ",")
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallValuePreviewViewed,
+            tikTokEventName: "PaywallValuePreviewViewed",
+            eventId: makeEventId(prefix: "paywall_value_preview_viewed", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackPaywallPricingDisclosureViewed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        availablePlans: [SubscriptionPlanOption],
+        disclosureText: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "paywall_pricing_disclosure_viewed"
+        )
+        properties["available_plan_count"] = availablePlans.count
+        properties["available_plan_ids"] = availablePlans.map(\.analyticsProductId).joined(separator: ",")
+        properties["disclosure_text"] = truncated(disclosureText, maxLength: 500)
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallPricingDisclosureViewed,
+            tikTokEventName: "PaywallPricingDisclosureViewed",
+            eventId: makeEventId(prefix: "paywall_pricing_disclosure_viewed", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackSubscriptionPlanSelected(
+        plan: SubscriptionPlanOption,
+        source: String,
+        metadata: [String: Any] = [:]
+    ) {
         var properties = subscriptionLifecycleProperties(
             source: source,
             plan: plan,
@@ -265,6 +340,7 @@ final class MacraAnalyticsService {
         )
 
         properties["selection_source"] = "paywall_plan_card"
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackCustomLifecycleEvent(
             appsFlyerName: AppsFlyerAnalyticsEvent.planSelected,
@@ -275,7 +351,11 @@ final class MacraAnalyticsService {
         )
     }
 
-    func trackSubscriptionPurchaseAttempted(plan: SubscriptionPlanOption, source: String) {
+    func trackSubscriptionPurchaseAttempted(
+        plan: SubscriptionPlanOption,
+        source: String,
+        metadata: [String: Any] = [:]
+    ) {
         var properties = subscriptionLifecycleProperties(
             source: source,
             plan: plan,
@@ -284,6 +364,7 @@ final class MacraAnalyticsService {
         properties[AppsFlyerAnalyticsParam.contentId] = plan.analyticsProductId
         properties[AppsFlyerAnalyticsParam.contentType] = "subscription"
         properties[AppsFlyerAnalyticsParam.description] = "Macra Pro purchase attempted"
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackCustomLifecycleEvent(
             appsFlyerName: AppsFlyerAnalyticsEvent.initiatedCheckout,
@@ -302,7 +383,11 @@ final class MacraAnalyticsService {
         isLoadingPackages: Bool,
         packageLoadError: String?,
         isPurchasing: Bool,
-        hasExistingSubscriptionAccess: Bool
+        hasExistingSubscriptionAccess: Bool,
+        ctaDecision: String,
+        usesWebCheckoutFallback: Bool,
+        fallbackReason: String?,
+        metadata: [String: Any] = [:]
     ) {
         var properties = subscriptionLifecycleProperties(
             source: source,
@@ -316,9 +401,18 @@ final class MacraAnalyticsService {
         properties["is_loading_packages"] = isLoadingPackages
         properties["is_purchasing"] = isPurchasing
         properties["has_existing_subscription_access"] = hasExistingSubscriptionAccess
+        properties["cta_decision"] = ctaDecision
+        properties["uses_web_checkout_fallback"] = usesWebCheckoutFallback
+        if usesWebCheckoutFallback {
+            properties["checkout_provider"] = "stripe"
+            properties["checkout_plan_period"] = "annual"
+            properties["content_id"] = "stripe_web_checkout"
+            properties["fallback_reason"] = fallbackReason ?? "unknown"
+        }
         if let packageLoadError {
             properties["package_load_error"] = truncated(packageLoadError)
         }
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackCustomLifecycleEvent(
             appsFlyerName: AppsFlyerAnalyticsEvent.paywallPrimaryButtonPressed,
@@ -336,7 +430,8 @@ final class MacraAnalyticsService {
         ctaTitle: String,
         availablePlanCount: Int,
         isLoadingPackages: Bool,
-        packageLoadError: String?
+        packageLoadError: String?,
+        metadata: [String: Any] = [:]
     ) {
         var properties = subscriptionLifecycleProperties(
             source: source,
@@ -352,6 +447,7 @@ final class MacraAnalyticsService {
         if let packageLoadError {
             properties["package_load_error"] = truncated(packageLoadError)
         }
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackCustomLifecycleEvent(
             appsFlyerName: AppsFlyerAnalyticsEvent.paywallCTABlocked,
@@ -362,12 +458,244 @@ final class MacraAnalyticsService {
         )
     }
 
-    func trackSubscriptionPurchaseCancelled(plan: SubscriptionPlanOption, source: String) {
+    func trackSubscriptionPlansLoadStarted(source: String) {
         let properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: nil,
+            funnelStep: "plans_load_started"
+        )
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.plansLoadStarted,
+            tikTokEventName: "SubscriptionPlansLoadStarted",
+            eventId: makeEventId(prefix: "plans_load_started", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackSubscriptionPlansLoaded(
+        source: String,
+        currentOfferingIdentifier: String?,
+        availablePackageCount: Int,
+        supportedPackageCount: Int,
+        packageIdentifiers: [String],
+        productIdentifiers: [String]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: nil,
+            funnelStep: "plans_loaded"
+        )
+        properties["revenuecat_current_offering_id"] = currentOfferingIdentifier ?? "none"
+        properties["available_package_count"] = availablePackageCount
+        properties["supported_package_count"] = supportedPackageCount
+        properties["revenuecat_package_ids"] = truncated(packageIdentifiers.joined(separator: ", "), maxLength: 500)
+        properties["revenuecat_product_ids"] = truncated(productIdentifiers.joined(separator: ", "), maxLength: 500)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.plansLoaded,
+            tikTokEventName: "SubscriptionPlansLoaded",
+            eventId: makeEventId(prefix: "plans_loaded", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackSubscriptionPlansLoadFailed(
+        source: String,
+        reason: String,
+        currentOfferingIdentifier: String?,
+        availablePackageCount: Int,
+        supportedPackageCount: Int,
+        packageIdentifiers: [String],
+        productIdentifiers: [String],
+        error: Error? = nil
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: nil,
+            funnelStep: "plans_load_failed"
+        )
+        properties["failure_reason"] = reason
+        properties["revenuecat_current_offering_id"] = currentOfferingIdentifier ?? "none"
+        properties["available_package_count"] = availablePackageCount
+        properties["supported_package_count"] = supportedPackageCount
+        properties["revenuecat_package_ids"] = truncated(packageIdentifiers.joined(separator: ", "), maxLength: 500)
+        properties["revenuecat_product_ids"] = truncated(productIdentifiers.joined(separator: ", "), maxLength: 500)
+
+        if let error {
+            properties.merge(errorAnalyticsProperties(error, reason: reason)) { _, new in new }
+        }
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.plansLoadFailed,
+            tikTokEventName: "SubscriptionPlansLoadFailed",
+            eventId: makeEventId(prefix: "plans_load_failed", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackSubscriptionWebCheckoutFallbackPresented(
+        source: String,
+        reason: String,
+        ctaTitle: String,
+        availablePlanCount: Int,
+        isLoadingPackages: Bool,
+        packageLoadError: String?,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = webCheckoutFallbackProperties(
+            source: source,
+            reason: reason,
+            funnelStep: "web_checkout_fallback_presented",
+            ctaTitle: ctaTitle,
+            availablePlanCount: availablePlanCount,
+            isLoadingPackages: isLoadingPackages,
+            packageLoadError: packageLoadError,
+            metadata: metadata
+        )
+
+        properties["fallback_visible"] = true
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.webCheckoutFallbackPresented,
+            tikTokEventName: "SubscriptionWebCheckoutFallbackPresented",
+            eventId: makeEventId(prefix: "web_checkout_fallback_presented", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackSubscriptionWebCheckoutFallbackPressed(
+        source: String,
+        reason: String,
+        ctaTitle: String,
+        availablePlanCount: Int,
+        isLoadingPackages: Bool,
+        packageLoadError: String?,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = webCheckoutFallbackProperties(
+            source: source,
+            reason: reason,
+            funnelStep: "web_checkout_fallback_pressed",
+            ctaTitle: ctaTitle,
+            availablePlanCount: availablePlanCount,
+            isLoadingPackages: isLoadingPackages,
+            packageLoadError: packageLoadError,
+            metadata: metadata
+        )
+
+        properties["button_name"] = "paywall_primary_cta"
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.webCheckoutFallbackPressed,
+            tikTokEventName: "SubscriptionWebCheckoutFallbackPressed",
+            eventId: makeEventId(prefix: "web_checkout_fallback_pressed", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackSubscriptionWebCheckoutStarted(
+        source: String,
+        reason: String,
+        checkoutURL: URL,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: nil,
+            funnelStep: "web_checkout_started"
+        )
+        properties["fallback_reason"] = reason
+        properties["checkout_provider"] = "stripe"
+        properties["checkout_plan_period"] = "annual"
+        properties["checkout_host"] = checkoutURL.host ?? "unknown"
+        properties["checkout_path"] = checkoutURL.path
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.webCheckoutStarted,
+            tikTokEventName: "SubscriptionWebCheckoutStarted",
+            eventId: makeEventId(prefix: "web_checkout_started", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackSubscriptionWebCheckoutReturned(
+        source: String,
+        status: String,
+        sessionId: String?,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: nil,
+            funnelStep: "web_checkout_returned"
+        )
+        properties["return_status"] = status
+        properties["stripe_session_id"] = sessionId ?? "none"
+        properties["checkout_provider"] = "stripe"
+        properties["checkout_plan_period"] = "annual"
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.webCheckoutReturned,
+            tikTokEventName: "SubscriptionWebCheckoutReturned",
+            eventId: makeEventId(prefix: "web_checkout_returned_\(status)", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackSubscriptionWebCheckoutFailed(
+        source: String,
+        reason: String,
+        error: Error? = nil,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: nil,
+            funnelStep: "web_checkout_failed"
+        )
+        properties["failure_reason"] = reason
+        properties["checkout_provider"] = "stripe"
+        properties["checkout_plan_period"] = "annual"
+        if let error {
+            properties.merge(errorAnalyticsProperties(error, reason: reason)) { _, new in new }
+        }
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.webCheckoutFailed,
+            tikTokEventName: "SubscriptionWebCheckoutFailed",
+            eventId: makeEventId(prefix: "web_checkout_failed", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackSubscriptionPurchaseCancelled(
+        plan: SubscriptionPlanOption,
+        source: String,
+        error: Error? = nil,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
             source: source,
             plan: plan,
             funnelStep: "purchase_cancelled"
         )
+        properties["cancel_classification"] = error == nil ? "user_cancelled_no_error_payload" : "user_cancelled_error_payload"
+        if let error {
+            properties.merge(errorAnalyticsProperties(error, reason: "storekit_user_cancelled")) { _, new in new }
+        }
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackCustomLifecycleEvent(
             appsFlyerName: AppsFlyerAnalyticsEvent.purchaseCancelled,
@@ -378,11 +706,90 @@ final class MacraAnalyticsService {
         )
     }
 
+    func trackPaywallCancelFeedbackPresented(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        trigger: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "cancel_feedback_presented"
+        )
+        properties["cancel_feedback_trigger"] = trigger
+        properties["feedback_surface"] = "confirmation_dialog"
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallCancelFeedbackPresented,
+            tikTokEventName: "PaywallCancelFeedbackPresented",
+            eventId: makeEventId(prefix: "cancel_feedback_presented", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackPaywallCancelFeedbackSubmitted(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        trigger: String,
+        reason: String,
+        reasonLabel: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "cancel_feedback_submitted"
+        )
+        properties["cancel_feedback_trigger"] = trigger
+        properties["cancel_feedback_reason"] = reason
+        properties["cancel_feedback_reason_label"] = reasonLabel
+        properties["feedback_surface"] = "confirmation_dialog"
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallCancelFeedbackSubmitted,
+            tikTokEventName: "PaywallCancelFeedbackSubmitted",
+            eventId: makeEventId(prefix: "cancel_feedback_submitted", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackPaywallCancelFeedbackDismissed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        trigger: String,
+        reason: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "cancel_feedback_dismissed"
+        )
+        properties["cancel_feedback_trigger"] = trigger
+        properties["cancel_feedback_dismiss_reason"] = reason
+        properties["feedback_surface"] = "confirmation_dialog"
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallCancelFeedbackDismissed,
+            tikTokEventName: "PaywallCancelFeedbackDismissed",
+            eventId: makeEventId(prefix: "cancel_feedback_dismissed", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
     func trackSubscriptionPurchaseFailed(
         plan: SubscriptionPlanOption,
         source: String,
         error: Error,
-        reason: String? = nil
+        reason: String? = nil,
+        metadata: [String: Any] = [:]
     ) {
         var properties = subscriptionLifecycleProperties(
             source: source,
@@ -390,6 +797,7 @@ final class MacraAnalyticsService {
             funnelStep: "purchase_failed"
         )
         properties.merge(errorAnalyticsProperties(error, reason: reason)) { _, new in new }
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackCustomLifecycleEvent(
             appsFlyerName: AppsFlyerAnalyticsEvent.purchaseFailed,
@@ -403,7 +811,8 @@ final class MacraAnalyticsService {
     func trackSubscriptionAccessVerified(
         plan: SubscriptionPlanOption?,
         source: String,
-        context: String
+        context: String,
+        metadata: [String: Any] = [:]
     ) {
         var properties = subscriptionLifecycleProperties(
             source: source,
@@ -411,6 +820,7 @@ final class MacraAnalyticsService {
             funnelStep: "access_verified"
         )
         properties["verification_context"] = context
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackCustomLifecycleEvent(
             appsFlyerName: AppsFlyerAnalyticsEvent.accessVerified,
@@ -426,7 +836,8 @@ final class MacraAnalyticsService {
         source: String,
         context: String,
         reason: String,
-        error: Error? = nil
+        error: Error? = nil,
+        metadata: [String: Any] = [:]
     ) {
         var properties = subscriptionLifecycleProperties(
             source: source,
@@ -438,6 +849,7 @@ final class MacraAnalyticsService {
         if let error {
             properties.merge(errorAnalyticsProperties(error, reason: reason)) { _, new in new }
         }
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackCustomLifecycleEvent(
             appsFlyerName: AppsFlyerAnalyticsEvent.accessVerificationFailed,
@@ -502,12 +914,17 @@ final class MacraAnalyticsService {
         )
     }
 
-    func trackPaywallDismissed(source: String, selectedPlan: SubscriptionPlanOption?) {
-        let properties = subscriptionLifecycleProperties(
+    func trackPaywallDismissed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
             source: source,
             plan: selectedPlan,
             funnelStep: "paywall_dismissed"
         )
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackCustomLifecycleEvent(
             appsFlyerName: AppsFlyerAnalyticsEvent.paywallDismissed,
@@ -787,12 +1204,18 @@ final class MacraAnalyticsService {
         #endif
     }
 
-    private func trackTrialStarted(plan: SubscriptionPlanOption, trialDays: Int, source: String) {
+    private func trackTrialStarted(
+        plan: SubscriptionPlanOption,
+        trialDays: Int,
+        source: String,
+        metadata: [String: Any]
+    ) {
         var properties = baseProperties(source: source)
         properties.merge(plan.analyticsProperties) { _, new in new }
         properties["trial_days"] = trialDays
         properties[AppsFlyerAnalyticsParam.contentId] = plan.analyticsProductId
         properties[AppsFlyerAnalyticsParam.contentType] = "subscription"
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         trackBaseEvent(
             name: .startTrial,
@@ -802,16 +1225,17 @@ final class MacraAnalyticsService {
         )
     }
 
-    private func trackPurchase(plan: SubscriptionPlanOption, source: String) {
+    private func trackPurchase(plan: SubscriptionPlanOption, source: String, metadata: [String: Any]) {
         let value = analyticsValue(for: plan)
         let purchaseEventId = makeEventId(prefix: "purchase", source: source, plan: plan)
-        let appsFlyerProperties = baseProperties(source: source)
+        var appsFlyerProperties = baseProperties(source: source)
             .merging(plan.analyticsProperties, uniquingKeysWith: { _, new in new })
             .merging([
                 AppsFlyerAnalyticsParam.contentId: plan.analyticsProductId,
                 AppsFlyerAnalyticsParam.contentType: "subscription",
                 AppsFlyerAnalyticsParam.description: "Macra Pro subscription"
             ], uniquingKeysWith: { _, new in new })
+        mergeAnalyticsMetadata(metadata, into: &appsFlyerProperties)
 
         trackAppsFlyerEvent(
             name: AppsFlyerAnalyticsEvent.subscribe,
@@ -851,7 +1275,7 @@ final class MacraAnalyticsService {
         content.contentName = plan.displayTitle
         event.setContents([content])
 
-        for (key, value) in baseProperties(source: source).merging(plan.analyticsProperties, uniquingKeysWith: { _, new in new }) {
+        for (key, value) in appsFlyerProperties {
             event.addProperty(withKey: key, value: value)
         }
 
@@ -1007,7 +1431,8 @@ final class MacraAnalyticsService {
             "platform": platform,
             "source": source,
             "app_version": appVersion,
-            "build_number": buildNumber
+            "build_number": buildNumber,
+            "build_configuration": buildConfiguration
         ]
 
         if FirebaseApp.app() != nil,
@@ -1018,6 +1443,20 @@ final class MacraAnalyticsService {
         }
 
         return properties
+    }
+
+    private func mergeAnalyticsMetadata(_ metadata: [String: Any], into properties: inout [String: Any]) {
+        for (key, value) in metadata {
+            properties[key] = value
+        }
+    }
+
+    private var buildConfiguration: String {
+        #if DEBUG
+        return "debug"
+        #else
+        return "release"
+        #endif
     }
 
     private func subscriptionLifecycleProperties(
@@ -1039,6 +1478,40 @@ final class MacraAnalyticsService {
             properties["plan_period"] = "none"
             properties[AppsFlyerAnalyticsParam.contentType] = "subscription"
         }
+
+        return properties
+    }
+
+    private func webCheckoutFallbackProperties(
+        source: String,
+        reason: String,
+        funnelStep: String,
+        ctaTitle: String,
+        availablePlanCount: Int,
+        isLoadingPackages: Bool,
+        packageLoadError: String?,
+        metadata: [String: Any]
+    ) -> [String: Any] {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: nil,
+            funnelStep: funnelStep
+        )
+        properties["fallback_reason"] = reason
+        properties["checkout_provider"] = "stripe"
+        properties["checkout_plan_period"] = "annual"
+        properties["checkout_surface"] = "safari_view_controller"
+        properties["checkout_entry_point"] = "paywall_primary_cta"
+        properties["content_id"] = "stripe_web_checkout"
+        properties["cta_title"] = ctaTitle
+        properties["available_plan_count"] = availablePlanCount
+        properties["selected_plan_available"] = false
+        properties["is_loading_packages"] = isLoadingPackages
+
+        if let packageLoadError {
+            properties["package_load_error"] = truncated(packageLoadError)
+        }
+        mergeAnalyticsMetadata(metadata, into: &properties)
 
         return properties
     }

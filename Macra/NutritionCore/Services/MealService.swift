@@ -228,6 +228,29 @@ final class MealService {
             }
     }
 
+    func getMealsLoggedSince(_ startDate: Date, userId: String? = nil, completion: @escaping (Result<[Meal], Error>) -> Void) {
+        guard let resolvedUserId = NutritionCoreConfiguration.resolvedUserId(userId) else {
+            completion(.failure(NutritionCoreError.missingUserId))
+            return
+        }
+
+        db.collection(NutritionCoreConfiguration.usersCollection)
+            .document(resolvedUserId)
+            .collection(NutritionCoreConfiguration.mealLogsCollection)
+            .whereField("createdAt", isGreaterThanOrEqualTo: startDate.timeIntervalSince1970)
+            .whereField("createdAt", isLessThanOrEqualTo: Date().timeIntervalSince1970)
+            .order(by: "createdAt", descending: true)
+            .getDocuments { snapshot, error in
+                if let error {
+                    completion(.failure(error))
+                    return
+                }
+
+                let meals = snapshot?.documents.map { Meal(id: $0.documentID, dictionary: $0.data()) } ?? []
+                completion(.success(meals.sorted { $0.createdAt > $1.createdAt }))
+            }
+    }
+
     func updateMeal(_ meal: Meal, for date: Date? = nil, userId: String? = nil, completion: @escaping (Result<Meal, Error>) -> Void) {
         updateMeal(meal, from: meal.createdAt, to: date ?? meal.createdAt, userId: userId, completion: completion)
     }

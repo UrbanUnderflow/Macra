@@ -16,6 +16,7 @@ import AppsFlyerLib
 /// lights up automatically once the package is on the target.
 final class MacraDeepLinkService: NSObject {
     static let sharedInstance = MacraDeepLinkService()
+    static let subscriptionReturnNotification = Notification.Name("MacraSubscriptionReturnNotification")
 
     /// Pending invite token captured at cold start before the UI has
     /// mounted. The Buddies-button SwiftUI view subscribes to
@@ -104,6 +105,7 @@ final class MacraDeepLinkService: NSObject {
         #if canImport(AppsFlyerLib)
         AppsFlyerLib.shared().continue(userActivity, restorationHandler: nil)
         #endif
+        if resolveSubscriptionReturn(from: url) { return true }
         return resolveBuddyToken(from: url)
     }
 
@@ -117,7 +119,49 @@ final class MacraDeepLinkService: NSObject {
         #if canImport(AppsFlyerLib)
         AppsFlyerLib.shared().handleOpen(url, options: options)
         #endif
+        if resolveSubscriptionReturn(from: url) { return true }
         return resolveBuddyToken(from: url)
+    }
+
+    @discardableResult
+    private func resolveSubscriptionReturn(from url: URL) -> Bool {
+        let scheme = url.scheme?.lowercased()
+        let host = url.host?.lowercased()
+        let path = url.path.lowercased()
+
+        let isCustomSchemeReturn = scheme == "macra" && host == "subscription"
+        let isUniversalReturn = host == "fitwithpulse.ai" && path.hasPrefix("/macra/subscription")
+        guard isCustomSchemeReturn || isUniversalReturn else { return false }
+
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let queryValue: (String) -> String? = { name in
+            query.first(where: { $0.name == name })?.value
+        }
+        let pathStatus = path
+            .split(separator: "/")
+            .map(String.init)
+            .last
+        let status = queryValue("status") ?? pathStatus ?? "unknown"
+        var userInfo: [String: String] = [
+            "status": status,
+            "url": url.absoluteString
+        ]
+        if let sessionId = queryValue("session_id") ?? queryValue("sessionId") {
+            userInfo["session_id"] = sessionId
+        }
+        if let userId = queryValue("userId") {
+            userInfo["user_id"] = userId
+        }
+
+        print("[Macra][DeepLink.subscription] status=\(status) url=\(url.absoluteString)")
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Self.subscriptionReturnNotification,
+                object: nil,
+                userInfo: userInfo
+            )
+        }
+        return true
     }
 
     /// Pulled out so the hot path stays terse and AppsFlyer's resolved

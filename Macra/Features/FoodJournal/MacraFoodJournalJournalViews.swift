@@ -868,7 +868,7 @@ struct MacraFoodJournalFromHistoryView: View {
         } else if viewModel.allMealHistory.isEmpty {
             MacraFoodJournalEmptyState(
                 title: "No meal history yet",
-                message: "Meals you log from Home will appear here so you can quickly eat them again."
+                message: "Meals you log in the last 30 days will appear here so you can quickly eat them again."
             )
         } else if filteredMealHistory.isEmpty {
             MacraFoodJournalEmptyState(

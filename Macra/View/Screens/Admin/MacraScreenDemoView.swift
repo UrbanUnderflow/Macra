@@ -68,13 +68,15 @@ struct MacraScreenDemoView: View {
                 .overlay(alignment: .topTrailing) {
                     screenDemoPaywallControls
                 }
-            case .paywall:
+            case .paywall, .paywallAnnualDefault, .paywallMonthlyVariant, .paywallCancelFeedback:
                 PayWallView(
                     viewModel: PayWallViewModel(appCoordinator: appCoordinator),
                     isDemoMode: true,
                     usesLivePurchasesInDemo: true,
                     onDismiss: { activeDemo = nil },
-                    existingSubscriptionAccessOverride: paywallDemoAudience.hasExistingSubscriptionAccess
+                    existingSubscriptionAccessOverride: paywallDemoAudience.hasExistingSubscriptionAccess,
+                    defaultPlanSelectionOverride: demo.paywallDefaultPlanSelectionOverride,
+                    presentsCancelFeedbackOnAppear: demo.presentsCancelFeedbackOnAppear
                 )
                 .overlay(alignment: .topTrailing) {
                     screenDemoPaywallControls
@@ -147,6 +149,9 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
     case login
     case onboarding
     case paywall
+    case paywallAnnualDefault
+    case paywallMonthlyVariant
+    case paywallCancelFeedback
 
     var id: String { rawValue }
 
@@ -154,7 +159,10 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
         switch self {
         case .login: return "Login"
         case .onboarding: return "Full Onboarding"
-        case .paywall: return "Paywall"
+        case .paywall: return "Paywall - Remote Config"
+        case .paywallAnnualDefault: return "Paywall - Annual Baseline"
+        case .paywallMonthlyVariant: return "Paywall - Monthly Variant"
+        case .paywallCancelFeedback: return "Cancel Feedback"
         }
     }
 
@@ -165,7 +173,13 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
         case .onboarding:
             return "Walk the first-run Macra flow with mocked profile, plan, meals, and purchase."
         case .paywall:
-            return "Live App Store/RevenueCat products with real sandbox purchase, restore, and existing-subscriber paths."
+            return "Uses the active Remote Config/A-B assignment for plan order, pricing copy, and analytics metadata."
+        case .paywallAnnualDefault:
+            return "Forces the baseline annual-first treatment so you can review the control arm."
+        case .paywallMonthlyVariant:
+            return "Forces the monthly-first treatment so you can review the lower-sticker-shock variant."
+        case .paywallCancelFeedback:
+            return "Opens the new one-tap cancellation reason prompt on top of the paywall."
         }
     }
 
@@ -174,7 +188,25 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
         case .login: return "key.fill"
         case .onboarding: return "list.bullet.clipboard.fill"
         case .paywall: return "creditcard.fill"
+        case .paywallAnnualDefault: return "calendar.badge.clock"
+        case .paywallMonthlyVariant: return "calendar"
+        case .paywallCancelFeedback: return "questionmark.bubble.fill"
         }
+    }
+
+    var paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection? {
+        switch self {
+        case .paywallAnnualDefault, .paywallCancelFeedback:
+            return .annual
+        case .paywallMonthlyVariant:
+            return .monthly
+        case .login, .onboarding, .paywall:
+            return nil
+        }
+    }
+
+    var presentsCancelFeedbackOnAppear: Bool {
+        self == .paywallCancelFeedback
     }
 }
 
