@@ -76,7 +76,8 @@ struct MacraScreenDemoView: View {
                     onDismiss: { activeDemo = nil },
                     existingSubscriptionAccessOverride: paywallDemoAudience.hasExistingSubscriptionAccess,
                     defaultPlanSelectionOverride: demo.paywallDefaultPlanSelectionOverride,
-                    presentsCancelFeedbackOnAppear: demo.presentsCancelFeedbackOnAppear
+                    presentsCancelFeedbackOnAppear: demo.presentsCancelFeedbackOnAppear,
+                    persistsCancelFeedbackInDemo: demo.persistsCancelFeedbackInDemo
                 )
                 .overlay(alignment: .topTrailing) {
                     screenDemoPaywallControls
@@ -206,6 +207,10 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
     }
 
     var presentsCancelFeedbackOnAppear: Bool {
+        self == .paywallCancelFeedback
+    }
+
+    var persistsCancelFeedbackInDemo: Bool {
         self == .paywallCancelFeedback
     }
 }

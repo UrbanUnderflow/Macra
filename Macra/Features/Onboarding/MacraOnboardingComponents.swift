@@ -198,7 +198,17 @@ struct OnboardingChoiceCard<Value: Hashable>: View {
 struct PaywallTopBar: View {
     let canGoBack: Bool
     let onBack: () -> Void
-    let onClose: (() -> Void)? = nil
+    let onClose: (() -> Void)?
+
+    init(
+        canGoBack: Bool,
+        onBack: @escaping () -> Void,
+        onClose: (() -> Void)? = nil
+    ) {
+        self.canGoBack = canGoBack
+        self.onBack = onBack
+        self.onClose = onClose
+    }
 
     var body: some View {
         HStack {

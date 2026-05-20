@@ -98,7 +98,10 @@ struct ContentView: View {
                     case .calendar(let viewModel):
                         CalendarView(viewModel: viewModel)
                     case .payWall:
-                        PayWallView(viewModel: PayWallViewModel(appCoordinator: appCoordinator))
+                        PayWallView(
+                            viewModel: PayWallViewModel(appCoordinator: appCoordinator),
+                            onDismiss: appCoordinator.closeModals
+                        )
                     case .manageSubscription:
                         ManageSubscriptionView(viewModel: ManageSubscriptionViewModel(appCoordinator: appCoordinator))
                     case .settings:

@@ -42,6 +42,13 @@ private enum AppsFlyerAnalyticsEvent {
     static let paywallCancelFeedbackPresented = "macra_paywall_cancel_feedback_presented"
     static let paywallCancelFeedbackSubmitted = "macra_paywall_cancel_feedback_submitted"
     static let paywallCancelFeedbackDismissed = "macra_paywall_cancel_feedback_dismissed"
+    static let paywallCancelReasonPriceTooHigh = "macra_paywall_cancel_reason_price_too_high"
+    static let paywallCancelReasonNotReady = "macra_paywall_cancel_reason_not_ready"
+    static let paywallCancelReasonNeedMoreProof = "macra_paywall_cancel_reason_need_more_proof"
+    static let paywallCancelReasonAppleSheetConfusing = "macra_paywall_cancel_reason_apple_sheet_confusing"
+    static let paywallCancelReasonWrongPlan = "macra_paywall_cancel_reason_wrong_plan"
+    static let paywallCancelReasonSomethingDidNotWork = "macra_paywall_cancel_reason_something_did_not_work"
+    static let paywallCancelReasonUnknown = "macra_paywall_cancel_reason_unknown"
     static let paywallDismissed = "macra_paywall_dismissed"
     static let plansLoadStarted = "macra_subscription_plans_load_started"
     static let plansLoaded = "macra_subscription_plans_loaded"
@@ -753,6 +760,15 @@ final class MacraAnalyticsService {
             appsFlyerName: AppsFlyerAnalyticsEvent.paywallCancelFeedbackSubmitted,
             tikTokEventName: "PaywallCancelFeedbackSubmitted",
             eventId: makeEventId(prefix: "cancel_feedback_submitted", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+
+        let reasonEvent = cancelFeedbackReasonEvent(for: reason)
+        trackCustomLifecycleEvent(
+            appsFlyerName: reasonEvent.appsFlyerName,
+            tikTokEventName: reasonEvent.tikTokEventName,
+            eventId: makeEventId(prefix: reasonEvent.eventIdPrefix, source: source, plan: selectedPlan),
             properties: properties,
             includeRevenue: false
         )
@@ -1580,6 +1596,57 @@ final class MacraAnalyticsService {
                 character.isLetter || character.isNumber || character == "_" ? character : "_"
             }
         return "\(prefix)_\(String(safeStepId))"
+    }
+
+    private func cancelFeedbackReasonEvent(for reason: String) -> (
+        appsFlyerName: String,
+        tikTokEventName: String,
+        eventIdPrefix: String
+    ) {
+        switch reason {
+        case "price_too_high":
+            return (
+                AppsFlyerAnalyticsEvent.paywallCancelReasonPriceTooHigh,
+                "PaywallCancelReasonPriceTooHigh",
+                "cancel_reason_price_too_high"
+            )
+        case "not_ready":
+            return (
+                AppsFlyerAnalyticsEvent.paywallCancelReasonNotReady,
+                "PaywallCancelReasonNotReady",
+                "cancel_reason_not_ready"
+            )
+        case "need_more_proof":
+            return (
+                AppsFlyerAnalyticsEvent.paywallCancelReasonNeedMoreProof,
+                "PaywallCancelReasonNeedMoreProof",
+                "cancel_reason_need_more_proof"
+            )
+        case "apple_sheet_confusing":
+            return (
+                AppsFlyerAnalyticsEvent.paywallCancelReasonAppleSheetConfusing,
+                "PaywallCancelReasonAppleSheetConfusing",
+                "cancel_reason_apple_sheet_confusing"
+            )
+        case "wrong_plan":
+            return (
+                AppsFlyerAnalyticsEvent.paywallCancelReasonWrongPlan,
+                "PaywallCancelReasonWrongPlan",
+                "cancel_reason_wrong_plan"
+            )
+        case "something_did_not_work":
+            return (
+                AppsFlyerAnalyticsEvent.paywallCancelReasonSomethingDidNotWork,
+                "PaywallCancelReasonSomethingDidNotWork",
+                "cancel_reason_something_did_not_work"
+            )
+        default:
+            return (
+                AppsFlyerAnalyticsEvent.paywallCancelReasonUnknown,
+                "PaywallCancelReasonUnknown",
+                "cancel_reason_unknown"
+            )
+        }
     }
 
     private func analyticsValue(for plan: SubscriptionPlanOption) -> Double {

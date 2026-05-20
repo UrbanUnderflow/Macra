@@ -1,5 +1,6 @@
 import FirebaseAuth
 import FirebaseCore
+import FirebaseFirestore
 #if canImport(FirebaseRemoteConfig)
 import FirebaseRemoteConfig
 #endif
@@ -177,6 +178,7 @@ struct PayWallView: View {
     private let existingSubscriptionAccessOverride: Bool?
     private let defaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection?
     private let presentsCancelFeedbackOnAppear: Bool
+    private let persistsCancelFeedbackInDemo: Bool
 
     init(
         viewModel: PayWallViewModel,
@@ -186,7 +188,8 @@ struct PayWallView: View {
         onDismiss: (() -> Void)? = nil,
         existingSubscriptionAccessOverride: Bool? = nil,
         defaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection? = nil,
-        presentsCancelFeedbackOnAppear: Bool = false
+        presentsCancelFeedbackOnAppear: Bool = false,
+        persistsCancelFeedbackInDemo: Bool = false
     ) {
         self._viewModel = ObservedObject(wrappedValue: viewModel)
         self._paywallDefaultPlanSelection = State(initialValue: defaultPlanSelectionOverride ?? MacraPaywallExperimentService.cachedDefaultPlanSelection())
@@ -197,6 +200,7 @@ struct PayWallView: View {
         self.existingSubscriptionAccessOverride = existingSubscriptionAccessOverride
         self.defaultPlanSelectionOverride = defaultPlanSelectionOverride
         self.presentsCancelFeedbackOnAppear = presentsCancelFeedbackOnAppear
+        self.persistsCancelFeedbackInDemo = persistsCancelFeedbackInDemo
     }
 
     private var shouldUseDemoPlans: Bool {
@@ -205,6 +209,10 @@ struct PayWallView: View {
 
     private var shouldTrackPaywallAnalytics: Bool {
         !isDemoMode
+    }
+
+    private var shouldPersistCancelFeedback: Bool {
+        !isDemoMode || persistsCancelFeedbackInDemo
     }
 
     private var isRenewalFlow: Bool {
@@ -277,6 +285,8 @@ struct PayWallView: View {
         metadata["available_plan_count_at_paywall"] = availablePlans.count
         metadata["visible_plan_count_at_paywall"] = displayedPlans.count
         metadata["is_renewal_flow"] = isRenewalFlow
+        metadata["is_screen_demo"] = isDemoMode
+        metadata["screen_demo_persists_cancel_feedback"] = persistsCancelFeedbackInDemo
         if let paywallAppearedAt {
             metadata["paywall_elapsed_seconds"] = Int(Date().timeIntervalSince(paywallAppearedAt))
         }
@@ -447,9 +457,6 @@ struct PayWallView: View {
                 }
             }
         }
-        .onDisappear {
-            trackPaywallDismissedIfNeeded(reason: showSubscriptionSuccess ? "subscription_success" : "view_disappeared")
-        }
         .onChange(of: availablePlans.map(\.id).joined(separator: ",")) { _ in
             ensureVisiblePlanSelected()
             guard shouldTrackPaywallAnalytics else { return }
@@ -488,7 +495,7 @@ struct PayWallView: View {
                 dismissCancelFeedback(reason: "not_now")
             }
         } message: {
-            Text("One tap helps us fix the trial flow.")
+            Text("One tap helps us understand what held you back.")
         }
         .onReceive(NotificationCenter.default.publisher(for: MacraDeepLinkService.subscriptionReturnNotification)) { notification in
             handleSubscriptionReturn(notification)
@@ -500,12 +507,22 @@ struct PayWallView: View {
             presentCancelFeedbackDialog(trigger: "storekit_cancelled")
         }
         .overlay {
-            if showSubscriptionSuccess {
-                subscriptionSuccessOverlay
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            ZStack {
+                if showCancelFeedbackDialog {
+                    Color.black.opacity(0.48)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+
+                if showSubscriptionSuccess {
+                    subscriptionSuccessOverlay
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                }
             }
         }
         .animation(.easeInOut(duration: 0.18), value: showSubscriptionSuccess)
+        .animation(.easeInOut(duration: 0.18), value: showCancelFeedbackDialog)
     }
 
     // MARK: - Top bar
@@ -515,7 +532,13 @@ struct PayWallView: View {
         if let coordinator = onboardingCoordinator {
             PaywallTopBar(
                 canGoBack: coordinator.canGoBack,
-                onBack: coordinator.back
+                onBack: handlePaywallBackPressed
+            )
+        } else if onDismiss != nil {
+            PaywallTopBar(
+                canGoBack: false,
+                onBack: {},
+                onClose: handlePaywallClosePressed
             )
         } else {
             Color.clear.frame(height: 8)
@@ -1951,6 +1974,16 @@ struct PayWallView: View {
         )
     }
 
+    private func handlePaywallBackPressed() {
+        trackPaywallDismissedIfNeeded(reason: "back_button")
+        onboardingCoordinator?.back()
+    }
+
+    private func handlePaywallClosePressed() {
+        trackPaywallDismissedIfNeeded(reason: "close_button")
+        onDismiss?()
+    }
+
     private func trackPaywallDismissedIfNeeded(reason: String) {
         guard shouldTrackPaywallAnalytics, !didTrackPaywallDismissed else { return }
         didTrackPaywallDismissed = true
@@ -1985,6 +2018,7 @@ struct PayWallView: View {
     private func submitCancelFeedback(_ reason: PaywallCancelFeedbackReason) {
         didSubmitCancelFeedback = true
         showCancelFeedbackDialog = false
+        let didAttemptPersistence = persistCancelFeedback(reason)
 
         if shouldTrackPaywallAnalytics {
             MacraAnalyticsService.shared.trackPaywallCancelFeedbackSubmitted(
@@ -1997,11 +2031,72 @@ struct PayWallView: View {
             )
         }
 
+        let toastMessage = shouldPersistCancelFeedback && isDemoMode && !didAttemptPersistence
+            ? "Sign in before testing Firestore save."
+            : "Thanks. That helps us improve Macra."
         activeAppCoordinator?.showToast(viewModel: ToastViewModel(
-            message: "Thanks. That helps us improve Macra.",
+            message: toastMessage,
             backgroundColor: .secondaryCharcoal,
             textColor: .secondaryWhite
         ))
+    }
+
+    private func persistCancelFeedback(_ reason: PaywallCancelFeedbackReason) -> Bool {
+        guard shouldPersistCancelFeedback else {
+            print("[Macra][PaywallCancelFeedback] Demo persistence disabled; skipping Firestore save")
+            return false
+        }
+
+        guard let user = Auth.auth().currentUser, !user.uid.isEmpty else {
+            print("[Macra][PaywallCancelFeedback] No signed-in user; skipping Firestore save")
+            return false
+        }
+
+        let feedbackRef = Firestore.firestore()
+            .collection("Macrafeedbackreason")
+            .document()
+
+        let selectedPlanPeriod = selectedPlan.map { periodAnalyticsName($0.periodKind) } ?? "none"
+        let capturedAt = Timestamp(date: Date())
+        let latestSummary: [String: Any] = [
+            "id": feedbackRef.documentID,
+            "reason": reason.rawValue,
+            "reasonLabel": reason.title,
+            "trigger": cancelFeedbackTrigger,
+            "source": paywallAnalyticsSource,
+            "selectedPlanId": selectedPlan?.id ?? "none",
+            "selectedPlanPeriod": selectedPlanPeriod,
+            "capturedAt": capturedAt,
+            "isScreenDemo": isDemoMode,
+        ]
+
+        var payload: [String: Any] = latestSummary
+        payload["userId"] = user.uid
+        payload["email"] = user.email ?? ""
+        payload["surface"] = "paywall_cancel_feedback"
+        payload["app"] = "macra"
+        payload["isScreenDemo"] = isDemoMode
+        payload["createdAt"] = FieldValue.serverTimestamp()
+        payload["metadata"] = paywallFunnelMetadata
+
+        let userRef = Firestore.firestore()
+            .collection("users")
+            .document(user.uid)
+        let batch = Firestore.firestore().batch()
+        batch.setData(payload, forDocument: feedbackRef, merge: true)
+        batch.setData([
+            "macraLatestPaywallCancelFeedback": latestSummary,
+            "macraLatestPaywallCancelFeedbackAt": FieldValue.serverTimestamp(),
+            "macraPaywallCancelFeedbackCount": FieldValue.increment(Int64(1)),
+        ], forDocument: userRef, merge: true)
+        batch.commit { error in
+            if let error {
+                print("[Macra][PaywallCancelFeedback] Firestore save failed: \(error.localizedDescription)")
+            } else {
+                print("[Macra][PaywallCancelFeedback] Firestore saved collection=Macrafeedbackreason reason=\(reason.rawValue)")
+            }
+        }
+        return true
     }
 
     private func dismissCancelFeedback(reason: String) {
