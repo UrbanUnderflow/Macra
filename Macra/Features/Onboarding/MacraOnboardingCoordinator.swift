@@ -199,6 +199,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     /// True when the user accepted FWP macros — skip biometric steps + use FWP macros verbatim.
     private(set) var usingFWPMacros: Bool = false
     private var currentPurchasePaywallMetadata: [String: Any] = [:]
+    private var activePurchaseLogID: String?
     private var trackedPaywallViewSources: Set<String> = []
 
     /// Coach-assigned meal plan (Pulse 1-on-1) detected for this user.
@@ -673,6 +674,48 @@ final class MacraOnboardingCoordinator: ObservableObject {
             source: paywallAnalyticsSource,
             metadata: activePaywallFunnelAnalyticsMetadata
         )
+    }
+
+    private func activePurchaseLogMetadata(channel: String, extra: [String: Any] = [:]) -> [String: Any] {
+        var metadata = activePaywallFunnelAnalyticsMetadata
+        metadata["purchase_channel"] = channel
+        metadata["selected_plan_id"] = selectedPlan?.id ?? "none"
+        metadata["selected_plan_period_at_decision"] = selectedPlan.map { periodAnalyticsName($0.periodKind) } ?? "none"
+        extra.forEach { metadata[$0.key] = $0.value }
+        return metadata
+    }
+
+    private func logPurchaseSuccess(plan: SubscriptionPlanOption, channel: String) {
+        MacraPurchaseLogService.shared.markSuccess(
+            logID: activePurchaseLogID,
+            plan: plan,
+            source: paywallAnalyticsSource,
+            metadata: activePurchaseLogMetadata(channel: channel)
+        )
+        activePurchaseLogID = nil
+    }
+
+    private func logPurchaseCanceled(plan: SubscriptionPlanOption, error: Error, failureReason: String) {
+        MacraPurchaseLogService.shared.markCanceled(
+            logID: activePurchaseLogID,
+            plan: plan,
+            source: paywallAnalyticsSource,
+            error: error,
+            failureReason: failureReason,
+            metadata: activePurchaseLogMetadata(channel: "storekit")
+        )
+    }
+
+    private func logPurchaseFailed(plan: SubscriptionPlanOption, error: Error, failureReason: String) {
+        MacraPurchaseLogService.shared.markFailed(
+            logID: activePurchaseLogID,
+            plan: plan,
+            source: paywallAnalyticsSource,
+            error: error,
+            failureReason: failureReason,
+            metadata: activePurchaseLogMetadata(channel: "storekit")
+        )
+        activePurchaseLogID = nil
     }
 
     private func trackPaywallCTABlocked(reason: String) {
@@ -1303,6 +1346,11 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case .purchase(let plan):
             isPurchasing = true
             purchaseError = nil
+            activePurchaseLogID = MacraPurchaseLogService.shared.recordAttempt(
+                plan: plan,
+                source: paywallAnalyticsSource,
+                metadata: activePurchaseLogMetadata(channel: "storekit")
+            )
             trackSubscriptionPurchaseAttempted(plan: plan)
 
             offering.purchase(plan) { [weak self] result in
@@ -1310,20 +1358,28 @@ final class MacraOnboardingCoordinator: ObservableObject {
                     self?.isPurchasing = false
                     switch result {
                     case .success:
+                        self?.logPurchaseSuccess(plan: plan, channel: "storekit")
                         self?.trackSubscriptionStart(plan: plan)
                         self?.verifySubscriptionAndContinue(plan: plan)
                     case .failure(let error):
                         if PurchaseService.sharedInstance.isPurchaseCanceledError(error) {
+                            self?.logPurchaseCanceled(plan: plan, error: error, failureReason: "storekit_cancelled")
                             self?.trackSubscriptionPurchaseCancelled(plan: plan, error: error)
                             self?.purchaseError = nil
                             self?.purchaseCancellationFeedbackRequestID = UUID()
                             if let self {
-                                NotificationCenter.default.post(name: .macraPaywallPurchaseCancelled, object: self)
+                                NotificationCenter.default.post(
+                                    name: .macraPaywallPurchaseCancelled,
+                                    object: self,
+                                    userInfo: ["purchaseLogID": self.activePurchaseLogID ?? ""]
+                                )
                             }
                         } else if PurchaseService.sharedInstance.isAlreadySubscribedError(error) {
+                            self?.logPurchaseFailed(plan: plan, error: error, failureReason: "already_subscribed")
                             self?.trackSubscriptionPurchaseAlreadyActive(plan: plan, error: error)
                             self?.syncExistingSubscriptionAndContinue()
                         } else {
+                            self?.logPurchaseFailed(plan: plan, error: error, failureReason: "storekit_purchase_failed")
                             self?.trackSubscriptionPurchaseFailed(plan: plan, error: error)
                             self?.purchaseError = error.localizedDescription
                         }

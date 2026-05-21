@@ -64,6 +64,7 @@
 		21E8FBEF2A9EE0D100671B49 /* PackageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB992A9EE0D100671B49 /* PackageViewModel.swift */; };
 		21E8FBF02A9EE0D100671B49 /* PackageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9A2A9EE0D100671B49 /* PackageCardView.swift */; };
 		21E8FBF12A9EE0D100671B49 /* PreviewCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9B2A9EE0D100671B49 /* PreviewCardView.swift */; };
+		C7E5FA312FB1330000E057FB /* MacraPurchaseLogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E5FA302FB1330000E057FB /* MacraPurchaseLogService.swift */; };
 		21E8FBF22A9EE0D100671B49 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9D2A9EE0D100671B49 /* LoginView.swift */; };
 		21E8FBF32A9EE0D100671B49 /* IntroView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9E2A9EE0D100671B49 /* IntroView.swift */; };
 		21E8FBF42A9EE0D100671B49 /* PrivacyPolicyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9F2A9EE0D100671B49 /* PrivacyPolicyView.swift */; };
@@ -317,6 +318,7 @@
 		B8C912D53FE24240D88E2A87 /* MealSelectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealSelectionView.swift; path = Features/MealPlanning/MealSelectionView.swift; sourceTree = "<group>"; };
 		C7C3E94B2F97813D00170CAE /* Macra.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Macra.entitlements; sourceTree = "<group>"; };
 		C7E5FA202FB1330000E057FB /* MacraAnalyticsService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraAnalyticsService.swift; path = Services/MacraAnalyticsService.swift; sourceTree = "<group>"; };
+		C7E5FA302FB1330000E057FB /* MacraPurchaseLogService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraPurchaseLogService.swift; path = Services/MacraPurchaseLogService.swift; sourceTree = "<group>"; };
 		CAD551BFFD594329519C59B4 /* MealSocialModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MealSocialModels.swift; path = Features/Buddies/MealSocialModels.swift; sourceTree = "<group>"; };
 		CCD33EB0B615485F9D9B44F2 /* MacraScreenDemoView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MacraScreenDemoView.swift; sourceTree = "<group>"; };
 		D348E064F69ACC18B2C2F98B /* MacraFoodJournalCaptureViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalCaptureViews.swift; path = Features/FoodJournal/MacraFoodJournalCaptureViews.swift; sourceTree = "<group>"; };
@@ -465,6 +467,7 @@
 				12EEB949A7E844E068A51B91 /* FWPMacrosHandoffStepView.swift */,
 				32A45687B06E28BEA3FDA58D /* AppleSignInService.swift */,
 				C7E5FA202FB1330000E057FB /* MacraAnalyticsService.swift */,
+				C7E5FA302FB1330000E057FB /* MacraPurchaseLogService.swift */,
 				67D7D59E5735BFC9A718E562 /* MacraFoodJournalNutritionBreakdownCard.swift */,
 				A39C7846784E7C54734FFC9B /* MacraSportConfigService.swift */,
 				FB0296153587DF3F118D9B81 /* MacraDailyInsightService.swift */,
@@ -1118,6 +1121,7 @@
 				AFFC8DE905E05EAD6ACA5B4F /* FWPMacrosHandoffStepView.swift in Sources */,
 				C6341FDB24E6B3D8891D51FD /* AppleSignInService.swift in Sources */,
 				C7E5FA212FB1330000E057FB /* MacraAnalyticsService.swift in Sources */,
+				C7E5FA312FB1330000E057FB /* MacraPurchaseLogService.swift in Sources */,
 				0E127F693AFD7E4902FFED32 /* MacraFoodJournalNutritionBreakdownCard.swift in Sources */,
 				E4E31F75F22228EAD9D340D3 /* MacraSportConfigService.swift in Sources */,
 				18862A51E921780B030A4AAB /* MacraDailyInsightService.swift in Sources */,

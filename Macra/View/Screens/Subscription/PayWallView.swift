@@ -171,6 +171,7 @@ struct PayWallView: View {
     @State private var cancelFeedbackTrigger = "unknown"
     @State private var didAskCancelFeedback = false
     @State private var didSubmitCancelFeedback = false
+    @State private var activePurchaseLogID: String?
     private let isDemoMode: Bool
     private let usesLivePurchasesInDemo: Bool
     private let onboardingCoordinator: MacraOnboardingCoordinator?
@@ -504,6 +505,10 @@ struct PayWallView: View {
             guard let coordinator = onboardingCoordinator,
                   let notificationCoordinator = notification.object as? MacraOnboardingCoordinator,
                   notificationCoordinator === coordinator else { return }
+            if let purchaseLogID = notification.userInfo?["purchaseLogID"] as? String,
+               !purchaseLogID.isEmpty {
+                activePurchaseLogID = purchaseLogID
+            }
             presentCancelFeedbackDialog(trigger: "storekit_cancelled")
         }
         .overlay {
@@ -1390,6 +1395,13 @@ struct PayWallView: View {
         standalonePurchaseError = nil
         onboardingCoordinator?.purchaseError = nil
         isPreparingWebCheckout = true
+        activePurchaseLogID = MacraPurchaseLogService.shared.recordAttempt(
+            plan: selectedPlan,
+            source: paywallAnalyticsSource,
+            metadata: purchaseLogMetadata(channel: "web_checkout", extra: [
+                "fallback_reason": webCheckoutFallbackReason
+            ])
+        )
 
         Task {
             do {
@@ -1427,6 +1439,16 @@ struct PayWallView: View {
         isPreparingWebCheckout = false
         standalonePurchaseError = message
         onboardingCoordinator?.purchaseError = message
+        MacraPurchaseLogService.shared.markFailed(
+            logID: activePurchaseLogID,
+            plan: selectedPlan,
+            source: paywallAnalyticsSource,
+            failureReason: reason,
+            metadata: purchaseLogMetadata(channel: "web_checkout", extra: [
+                "fallback_reason": webCheckoutFallbackReason
+            ])
+        )
+        activePurchaseLogID = nil
         if shouldTrackPaywallAnalytics {
             MacraAnalyticsService.shared.trackSubscriptionWebCheckoutFailed(
                 source: paywallAnalyticsSource,
@@ -1485,6 +1507,17 @@ struct PayWallView: View {
 
         switch status {
         case "success", "succeeded", "verified", "complete", "completed":
+            MacraPurchaseLogService.shared.markSuccess(
+                logID: activePurchaseLogID,
+                plan: selectedPlan,
+                source: paywallAnalyticsSource,
+                metadata: purchaseLogMetadata(channel: "web_checkout", extra: [
+                    "checkout_return_status": status,
+                    "checkout_session_id": sessionId ?? "",
+                    "fallback_reason": webCheckoutFallbackReason
+                ])
+            )
+            activePurchaseLogID = nil
             if let onboardingCoordinator {
                 onboardingCoordinator.completeWebSubscriptionAndContinue()
             } else {
@@ -1493,6 +1526,17 @@ struct PayWallView: View {
         case "cancel", "cancelled", "canceled":
             standalonePurchaseError = nil
             onboardingCoordinator?.purchaseError = nil
+            MacraPurchaseLogService.shared.markCanceled(
+                logID: activePurchaseLogID,
+                plan: selectedPlan,
+                source: paywallAnalyticsSource,
+                failureReason: "web_checkout_cancelled",
+                metadata: purchaseLogMetadata(channel: "web_checkout", extra: [
+                    "checkout_return_status": status,
+                    "checkout_session_id": sessionId ?? "",
+                    "fallback_reason": webCheckoutFallbackReason
+                ])
+            )
             if shouldTrackPaywallAnalytics {
                 MacraAnalyticsService.shared.trackSubscriptionWebCheckoutFailed(
                     source: paywallAnalyticsSource,
@@ -1505,6 +1549,18 @@ struct PayWallView: View {
             let message = "Web checkout did not finish. Please try again."
             standalonePurchaseError = message
             onboardingCoordinator?.purchaseError = message
+            MacraPurchaseLogService.shared.markFailed(
+                logID: activePurchaseLogID,
+                plan: selectedPlan,
+                source: paywallAnalyticsSource,
+                failureReason: "web_checkout_return_\(status)",
+                metadata: purchaseLogMetadata(channel: "web_checkout", extra: [
+                    "checkout_return_status": status,
+                    "checkout_session_id": sessionId ?? "",
+                    "fallback_reason": webCheckoutFallbackReason
+                ])
+            )
+            activePurchaseLogID = nil
             if shouldTrackPaywallAnalytics {
                 MacraAnalyticsService.shared.trackSubscriptionWebCheckoutFailed(
                     source: paywallAnalyticsSource,
@@ -1544,6 +1600,15 @@ struct PayWallView: View {
 
                     if refreshedHasAccess || purchaseServiceHasAccess {
                         standalonePurchaseError = nil
+                        if activePurchaseLogID != nil {
+                            MacraPurchaseLogService.shared.markSuccess(
+                                logID: activePurchaseLogID,
+                                plan: plan,
+                                source: paywallAnalyticsSource,
+                                metadata: purchaseLogMetadata(channel: context)
+                            )
+                            activePurchaseLogID = nil
+                        }
                         if shouldTrackPaywallAnalytics {
                             MacraAnalyticsService.shared.trackSubscriptionAccessVerified(
                                 plan: plan,
@@ -1557,6 +1622,17 @@ struct PayWallView: View {
                     }
 
                     if let userError {
+                        if activePurchaseLogID != nil {
+                            MacraPurchaseLogService.shared.markFailed(
+                                logID: activePurchaseLogID,
+                                plan: plan,
+                                source: paywallAnalyticsSource,
+                                error: userError,
+                                failureReason: "user_refresh_error",
+                                metadata: purchaseLogMetadata(channel: context)
+                            )
+                            activePurchaseLogID = nil
+                        }
                         if shouldTrackPaywallAnalytics {
                             MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
                                 plan: plan,
@@ -1573,6 +1649,16 @@ struct PayWallView: View {
 
                     switch result {
                     case .success(false):
+                        if activePurchaseLogID != nil {
+                            MacraPurchaseLogService.shared.markFailed(
+                                logID: activePurchaseLogID,
+                                plan: plan,
+                                source: paywallAnalyticsSource,
+                                failureReason: "\(context)_access_not_active",
+                                metadata: purchaseLogMetadata(channel: context)
+                            )
+                            activePurchaseLogID = nil
+                        }
                         if shouldTrackPaywallAnalytics {
                             MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
                                 plan: plan,
@@ -1584,6 +1670,17 @@ struct PayWallView: View {
                         }
                         standalonePurchaseError = "Your subscription was created, but access is still syncing. Close and reopen Macra or tap Restore Purchases in a moment."
                     case .failure(let error):
+                        if activePurchaseLogID != nil {
+                            MacraPurchaseLogService.shared.markFailed(
+                                logID: activePurchaseLogID,
+                                plan: plan,
+                                source: paywallAnalyticsSource,
+                                error: error,
+                                failureReason: "\(context)_verification_error",
+                                metadata: purchaseLogMetadata(channel: context)
+                            )
+                            activePurchaseLogID = nil
+                        }
                         if shouldTrackPaywallAnalytics {
                             MacraAnalyticsService.shared.trackSubscriptionAccessVerificationFailed(
                                 plan: plan,
@@ -1659,6 +1756,11 @@ struct PayWallView: View {
 
         isStandalonePurchasing = true
         standalonePurchaseError = nil
+        activePurchaseLogID = MacraPurchaseLogService.shared.recordAttempt(
+            plan: plan,
+            source: paywallAnalyticsSource,
+            metadata: purchaseLogMetadata(channel: "storekit")
+        )
         if shouldTrackPaywallAnalytics {
             MacraAnalyticsService.shared.trackSubscriptionPurchaseAttempted(
                 plan: plan,
@@ -1671,6 +1773,13 @@ struct PayWallView: View {
             isStandalonePurchasing = false
             switch result {
             case .success:
+                MacraPurchaseLogService.shared.markSuccess(
+                    logID: activePurchaseLogID,
+                    plan: plan,
+                    source: paywallAnalyticsSource,
+                    metadata: purchaseLogMetadata(channel: "storekit")
+                )
+                activePurchaseLogID = nil
                 if shouldTrackPaywallAnalytics {
                     MacraAnalyticsService.shared.trackSubscriptionStart(
                         plan: plan,
@@ -1681,6 +1790,14 @@ struct PayWallView: View {
                 verifyStandaloneSubscriptionAccessAndShowSuccess(plan: plan, context: "storekit_purchase")
             case .failure(let error):
                 if PurchaseService.sharedInstance.isPurchaseCanceledError(error) {
+                    MacraPurchaseLogService.shared.markCanceled(
+                        logID: activePurchaseLogID,
+                        plan: plan,
+                        source: paywallAnalyticsSource,
+                        error: error,
+                        failureReason: "storekit_cancelled",
+                        metadata: purchaseLogMetadata(channel: "storekit")
+                    )
                     if shouldTrackPaywallAnalytics {
                         MacraAnalyticsService.shared.trackSubscriptionPurchaseCancelled(
                             plan: plan,
@@ -1692,6 +1809,15 @@ struct PayWallView: View {
                     standalonePurchaseError = nil
                     presentCancelFeedbackDialog(trigger: "storekit_cancelled")
                 } else {
+                    MacraPurchaseLogService.shared.markFailed(
+                        logID: activePurchaseLogID,
+                        plan: plan,
+                        source: paywallAnalyticsSource,
+                        error: error,
+                        failureReason: "storekit_purchase_failed",
+                        metadata: purchaseLogMetadata(channel: "storekit")
+                    )
+                    activePurchaseLogID = nil
                     if shouldTrackPaywallAnalytics {
                         MacraAnalyticsService.shared.trackSubscriptionPurchaseFailed(
                             plan: plan,
@@ -1901,6 +2027,15 @@ struct PayWallView: View {
         )
     }
 
+    private func purchaseLogMetadata(channel: String, extra: [String: Any] = [:]) -> [String: Any] {
+        var metadata = paywallFunnelMetadata
+        metadata["purchase_channel"] = channel
+        metadata["selected_plan_id"] = selectedPlan?.id ?? "none"
+        metadata["selected_plan_period"] = selectedPlan.map { periodAnalyticsName($0.periodKind) } ?? "none"
+        extra.forEach { metadata[$0.key] = $0.value }
+        return metadata
+    }
+
     private func trackPaywallValuePreviewViewedIfNeeded(previewType: String) {
         guard shouldTrackPaywallAnalytics, !didTrackPaywallValuePreviewView else { return }
         guard !hasExistingSubscriptionAccess else { return }
@@ -2019,6 +2154,14 @@ struct PayWallView: View {
         didSubmitCancelFeedback = true
         showCancelFeedbackDialog = false
         let didAttemptPersistence = persistCancelFeedback(reason)
+        MacraPurchaseLogService.shared.attachCancelReason(
+            logID: activePurchaseLogID,
+            reasonCode: reason.rawValue,
+            reasonLabel: reason.title,
+            trigger: cancelFeedbackTrigger,
+            metadata: paywallFunnelMetadata
+        )
+        activePurchaseLogID = nil
 
         if shouldTrackPaywallAnalytics {
             MacraAnalyticsService.shared.trackPaywallCancelFeedbackSubmitted(
@@ -2102,6 +2245,7 @@ struct PayWallView: View {
     private func dismissCancelFeedback(reason: String) {
         showCancelFeedbackDialog = false
         guard didAskCancelFeedback, !didSubmitCancelFeedback else { return }
+        activePurchaseLogID = nil
 
         if shouldTrackPaywallAnalytics {
             MacraAnalyticsService.shared.trackPaywallCancelFeedbackDismissed(
