@@ -1,5 +1,8 @@
 import Foundation
 import FirebaseCore
+#if canImport(FirebaseAnalytics)
+import FirebaseAnalytics
+#endif
 
 #if canImport(AppsFlyerLib)
 import AppsFlyerLib
@@ -38,6 +41,7 @@ private enum AppsFlyerAnalyticsEvent {
     static let paywallPrimaryButtonPressed = "macra_paywall_primary_button_pressed"
     static let paywallValuePreviewViewed = "macra_paywall_value_preview_viewed"
     static let paywallPricingDisclosureViewed = "macra_paywall_pricing_disclosure_viewed"
+    static let paywallTrialConfidenceViewed = "macra_paywall_trial_confidence_viewed"
     static let paywallCTABlocked = "macra_paywall_cta_blocked"
     static let paywallCancelFeedbackPresented = "macra_paywall_cancel_feedback_presented"
     static let paywallCancelFeedbackSubmitted = "macra_paywall_cancel_feedback_submitted"
@@ -138,6 +142,13 @@ final class MacraAnalyticsService {
     func identifyCurrentUserIfAvailable() {
         identifyAppsFlyerUserIfAvailable()
 
+        #if canImport(FirebaseAnalytics)
+        if FirebaseApp.app() != nil,
+           let user = UserService.sharedInstance.user {
+            Analytics.setUserID(user.id)
+        }
+        #endif
+
         #if canImport(TikTokBusinessSDK)
         guard TikTokBusiness.isInitialized(),
               FirebaseApp.app() != nil,
@@ -179,6 +190,25 @@ final class MacraAnalyticsService {
         trackAppsFlyerEvent(
             name: AppsFlyerAnalyticsEvent.completeRegistration,
             eventId: makeEventId(prefix: "complete_registration", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackFirebasePaywallExperimentAssignment(
+        defaultPlan: String,
+        layoutVariant: String,
+        source: String = "remote_config_fetch"
+    ) {
+        var properties = baseProperties(source: source)
+        properties["funnel"] = "subscription"
+        properties["funnel_step"] = "paywall_experiment_assignment"
+        properties["macra_paywall_default_plan"] = defaultPlan
+        properties["macra_paywall_layout_variant"] = layoutVariant
+
+        trackFirebaseEvent(
+            name: "macra_ab_assignment",
+            eventId: makeEventId(prefix: "ab_assignment", source: source, plan: nil),
             properties: properties,
             includeRevenue: false
         )
@@ -330,6 +360,31 @@ final class MacraAnalyticsService {
             appsFlyerName: AppsFlyerAnalyticsEvent.paywallPricingDisclosureViewed,
             tikTokEventName: "PaywallPricingDisclosureViewed",
             eventId: makeEventId(prefix: "paywall_pricing_disclosure_viewed", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackPaywallTrialConfidenceViewed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        availablePlans: [SubscriptionPlanOption],
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "paywall_trial_confidence_viewed"
+        )
+        properties["available_plan_count"] = availablePlans.count
+        properties["available_plan_ids"] = availablePlans.map(\.analyticsProductId).joined(separator: ",")
+        properties["confidence_element"] = "trial_timeline"
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallTrialConfidenceViewed,
+            tikTokEventName: "PaywallTrialConfidenceViewed",
+            eventId: makeEventId(prefix: "paywall_trial_confidence_viewed", source: source, plan: selectedPlan),
             properties: properties,
             includeRevenue: false
         )
@@ -1386,6 +1441,13 @@ final class MacraAnalyticsService {
         properties: [String: Any],
         includeRevenue: Bool
     ) {
+        trackFirebaseEvent(
+            name: name,
+            eventId: eventId,
+            properties: properties,
+            includeRevenue: includeRevenue
+        )
+
         #if canImport(AppsFlyerLib)
         identifyAppsFlyerUserIfAvailable()
 
@@ -1395,6 +1457,38 @@ final class MacraAnalyticsService {
         print("[Macra][Analytics] AppsFlyer \(name) tracked. eventId=\(eventId)")
         #else
         print("[Macra][Analytics] AppsFlyer \(name) skipped because SDK is not linked. eventId=\(eventId)")
+        #endif
+    }
+
+    private func trackFirebaseEvent(
+        name: String,
+        eventId: String,
+        properties: [String: Any],
+        includeRevenue: Bool
+    ) {
+        #if canImport(FirebaseAnalytics)
+        guard FirebaseApp.app() != nil else {
+            print("[Macra][Analytics] Firebase \(name) skipped because Firebase is not configured. eventId=\(eventId)")
+            return
+        }
+
+        var parameters = firebaseAnalyticsParameters(
+            from: properties,
+            maxCount: includeRevenue ? 22 : 24
+        )
+        parameters["macra_event_id"] = eventId
+
+        if includeRevenue {
+            if let value = properties["value"] ?? properties["selected_plan_price"] {
+                parameters["value"] = firebaseAnalyticsValue(value)
+            }
+            parameters["currency"] = (properties["currency"] as? String) ?? "USD"
+        }
+
+        Analytics.logEvent(firebaseAnalyticsEventName(name), parameters: parameters)
+        print("[Macra][Analytics] Firebase \(name) tracked. eventId=\(eventId)")
+        #else
+        print("[Macra][Analytics] Firebase \(name) skipped because SDK is not linked. eventId=\(eventId)")
         #endif
     }
 
@@ -1421,6 +1515,105 @@ final class MacraAnalyticsService {
         }
 
         return values
+    }
+
+    private func firebaseAnalyticsParameters(from properties: [String: Any], maxCount: Int) -> [String: Any] {
+        var parameters: [String: Any] = [:]
+        let priorityKeys = [
+            "funnel",
+            "funnel_step",
+            "source",
+            "plan_id",
+            "plan_period",
+            "selected_plan_period",
+            "selected_plan_id",
+            "macra_paywall_default_plan",
+            "macra_paywall_layout_variant",
+            "paywall_variant",
+            "paywall_layout_variant",
+            "paywall_default_selection",
+            "paywall_layout_selection",
+            "paywall_default_reason",
+            "paywall_ab_parameter",
+            "paywall_layout_ab_parameter",
+            "uses_web_checkout_fallback",
+            "has_trial_confidence_card",
+            "available_plan_count",
+            "available_package_count",
+            "supported_package_count",
+            "error_code",
+            "error_domain",
+            "readable_error_code",
+            "cancel_reason",
+            "purchase_status",
+            "app_version",
+            "build_number",
+            "build_configuration"
+        ]
+
+        for key in priorityKeys where parameters.count < maxCount {
+            guard let value = properties[key] else { continue }
+            parameters[firebaseAnalyticsParameterName(key)] = firebaseAnalyticsValue(value)
+        }
+
+        for key in properties.keys.sorted() where parameters.count < maxCount {
+            guard !priorityKeys.contains(key), let value = properties[key] else { continue }
+            parameters[firebaseAnalyticsParameterName(key)] = firebaseAnalyticsValue(value)
+        }
+
+        return parameters
+    }
+
+    private func firebaseAnalyticsEventName(_ name: String) -> String {
+        let sanitized = sanitizedFirebaseIdentifier(name)
+        let prefixed = sanitized.first?.isLetter == true ? sanitized : "macra_\(sanitized)"
+        return String(prefixed.prefix(40))
+    }
+
+    private func firebaseAnalyticsParameterName(_ name: String) -> String {
+        let sanitized = sanitizedFirebaseIdentifier(name)
+        let prefixed = sanitized.first?.isLetter == true ? sanitized : "macra_\(sanitized)"
+        return String(prefixed.prefix(40))
+    }
+
+    private func sanitizedFirebaseIdentifier(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
+        let scalars = value.unicodeScalars.map { scalar -> Character in
+            allowed.contains(scalar) ? Character(scalar) : "_"
+        }
+        let joined = String(scalars)
+            .replacingOccurrences(of: "__+", with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        return joined.isEmpty ? "macra_event" : joined
+    }
+
+    private func firebaseAnalyticsValue(_ value: Any) -> Any {
+        if let value = value as? NSString {
+            return truncated(value as String, maxLength: 100)
+        }
+        if let value = value as? String {
+            return truncated(value, maxLength: 100)
+        }
+        if let value = value as? Bool {
+            return NSNumber(value: value)
+        }
+        if let value = value as? NSNumber {
+            return value
+        }
+        if let value = value as? Int {
+            return NSNumber(value: value)
+        }
+        if let value = value as? Double {
+            return NSNumber(value: value)
+        }
+        if let value = value as? Float {
+            return NSNumber(value: value)
+        }
+        if let value = value as? URL {
+            return truncated(value.absoluteString, maxLength: 100)
+        }
+
+        return truncated(String(describing: value), maxLength: 100)
     }
 
     private func identifyAppsFlyerUserIfAvailable() {

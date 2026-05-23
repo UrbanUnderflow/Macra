@@ -3,7 +3,9 @@ import SwiftUI
 
 struct WelcomeStepView: View {
     @ObservedObject var coordinator: MacraOnboardingCoordinator
+    @ObservedObject private var noraVoice = MacraNoraVoiceService.shared
     private let accent = Color(hex: "E0FE10")
+    private let narrationKey = "macra_onboarding_welcome"
 
     var body: some View {
         ZStack {
@@ -13,7 +15,11 @@ struct WelcomeStepView: View {
                 Spacer()
 
                 VStack(spacing: 18) {
-                    NoraOrb(size: 62, isActive: true)
+                    TalkingNoraOrb(
+                        size: 68,
+                        isSpeaking: isNoraSpeakingHere,
+                        voiceLevel: noraVoice.voiceLevel
+                    )
 
                     Text("NORA NUTRITION AI")
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -59,6 +65,12 @@ struct WelcomeStepView: View {
                 .padding(.bottom, 20)
             }
         }
+    }
+
+    private var isNoraSpeakingHere: Bool {
+        noraVoice.isEnabled &&
+            noraVoice.isNarrating &&
+            noraVoice.activeNarrationKey == narrationKey
     }
 
     private func welcomePromiseRow(icon: String, title: String) -> some View {
@@ -783,36 +795,58 @@ struct GeneratingPlanStepView: View {
         ZStack {
             MacraChromaticBackground()
 
-            VStack(spacing: 32) {
-                Spacer()
+            VStack(spacing: 24) {
+                Spacer(minLength: 68)
 
-                Text(messages[messageIndex])
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-                    .transition(.opacity)
-                    .id(messageIndex)
+                TalkingNoraOrb(
+                    size: 104,
+                    isSpeaking: isNoraSpeakingHere,
+                    voiceLevel: noraVoice.voiceLevel
+                )
 
-                VStack(spacing: 10) {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.08))
-                            Capsule()
-                                .fill(Color.primaryGreen)
-                                .frame(width: max(8, geo.size.width * progress))
-                        }
-                    }
-                    .frame(height: 8)
-                    .frame(maxWidth: 240)
+                VStack(spacing: 8) {
+                    Text("Analyzing your answers...")
+                        .font(.system(size: 28, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
 
-                    Text("\(Int(progress * 100))%")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color.white.opacity(0.6))
+                    Text(messages[messageIndex])
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color.white.opacity(0.62))
+                        .multilineTextAlignment(.center)
+                        .transition(.opacity)
+                        .id(messageIndex)
                 }
 
-                Spacer()
+                VStack(spacing: 16) {
+                    GeneratingPlanProgressRow(
+                        title: "Profile",
+                        progress: profileProgress,
+                        accent: Color.primaryGreen
+                    )
+                    GeneratingPlanProgressRow(
+                        title: "Goals",
+                        progress: goalsProgress,
+                        accent: Color(hex: "8DB7FF")
+                    )
+                    GeneratingPlanProgressRow(
+                        title: "Personalization",
+                        progress: personalizationProgress,
+                        accent: Color(hex: "FFB454")
+                    )
+                }
+                .padding(18)
+                .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Color.black.opacity(0.24)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                )
+                .padding(.top, 2)
+
+                Spacer(minLength: 76)
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 28)
         }
         .onAppear { runAnimation() }
         .onChange(of: noraVoice.lastCompletedNarrationKey) { completedKey in
@@ -823,6 +857,28 @@ struct GeneratingPlanStepView: View {
             guard !isEnabled else { return }
             scheduleAdvanceWhenReady()
         }
+    }
+
+    private var isNoraSpeakingHere: Bool {
+        noraVoice.isEnabled &&
+            noraVoice.isNarrating &&
+            noraVoice.activeNarrationKey == narrationKey
+    }
+
+    private var profileProgress: Double {
+        clamped(progress / 0.34)
+    }
+
+    private var goalsProgress: Double {
+        clamped((progress - 0.18) / 0.42)
+    }
+
+    private var personalizationProgress: Double {
+        clamped((progress - 0.52) / 0.48)
+    }
+
+    private func clamped(_ value: Double) -> Double {
+        min(max(value, 0), 1)
     }
 
     private func runAnimation() {
@@ -855,7 +911,8 @@ struct GeneratingPlanStepView: View {
 
         if noraVoice.isEnabled,
            noraVoice.lastCompletedNarrationKey != narrationKey,
-           (noraVoice.activeNarrationKey == narrationKey || noraVoice.isNarrating) {
+           noraVoice.isNarrating,
+           noraVoice.activeNarrationKey == narrationKey {
             return
         }
 
@@ -863,6 +920,53 @@ struct GeneratingPlanStepView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
             guard coordinator.currentStep == .generatingPlan else { return }
             coordinator.advance()
+        }
+    }
+}
+
+private struct GeneratingPlanProgressRow: View {
+    let title: String
+    let progress: Double
+    let accent: Color
+
+    private var clampedProgress: Double {
+        min(max(progress, 0), 1)
+    }
+
+    private var percent: Int {
+        Int((clampedProgress * 100).rounded())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.9))
+
+                Spacer()
+
+                Text("\(percent)%")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.68))
+                    .monospacedDigit()
+            }
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.08))
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [accent, Color.primaryGreen],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: max(8, geo.size.width * clampedProgress))
+                }
+            }
+            .frame(height: 8)
         }
     }
 }
@@ -1390,7 +1494,9 @@ struct CommitTrialStepView: View {
             isDemoMode: coordinator.isDemoMode,
             usesLivePurchasesInDemo: coordinator.usesLivePurchasesInDemo,
             onboardingCoordinator: coordinator,
-            existingSubscriptionAccessOverride: coordinator.existingSubscriptionAccessOverride
+            existingSubscriptionAccessOverride: coordinator.existingSubscriptionAccessOverride,
+            defaultPlanSelectionOverride: coordinator.paywallDefaultPlanSelectionOverride,
+            layoutVariantOverride: coordinator.paywallLayoutVariantOverride
         )
     }
 }

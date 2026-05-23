@@ -2,6 +2,9 @@ import FirebaseAuth
 import FirebaseCore
 import FirebaseFirestore
 import FirebaseStorage
+#if canImport(FirebaseAnalytics)
+import FirebaseAnalytics
+#endif
 import AuthenticationServices
 import UIKit
 
@@ -49,6 +52,9 @@ class FirebaseService: NSObject  {
         options.bundleID = Bundle.main.bundleIdentifier ?? "Tremaine.Macra"
 
         FirebaseApp.configure(options: options)
+        #if canImport(FirebaseAnalytics)
+        Analytics.setAnalyticsCollectionEnabled(true)
+        #endif
         print("[Firebase] Configured shared Pulse project \(SharedPulseFirebaseConfig.projectID) for bundle \(options.bundleID)")
     }
     

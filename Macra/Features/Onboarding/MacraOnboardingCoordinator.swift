@@ -202,6 +202,10 @@ final class MacraOnboardingCoordinator: ObservableObject {
     private var activePurchaseLogID: String?
     private var trackedPaywallViewSources: Set<String> = []
 
+    var currentPurchaseLogIDForFeedback: String? {
+        activePurchaseLogID
+    }
+
     /// Coach-assigned meal plan (Pulse 1-on-1) detected for this user.
     /// `.checking` while we resolve, `.unavailable` when the user has
     /// no active 1-on-1 with a meal-plan attachment, `.available`
@@ -232,6 +236,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
     let startingStep: Step
     let isDemoMode: Bool
     let usesLivePurchasesInDemo: Bool
+    let paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection?
+    let paywallLayoutVariantOverride: MacraPaywallLayoutVariant?
     private let onDemoDismiss: (() -> Void)?
 
     init(
@@ -240,13 +246,17 @@ final class MacraOnboardingCoordinator: ObservableObject {
         isDemoMode: Bool = false,
         usesLivePurchasesInDemo: Bool = false,
         onDemoDismiss: (() -> Void)? = nil,
-        existingSubscriptionAccessOverride: Bool? = nil
+        existingSubscriptionAccessOverride: Bool? = nil,
+        paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection? = nil,
+        paywallLayoutVariantOverride: MacraPaywallLayoutVariant? = nil
     ) {
         self.appCoordinator = appCoordinator
         self.startingStep = startingStep
         self.currentStep = startingStep
         self.isDemoMode = isDemoMode
         self.usesLivePurchasesInDemo = usesLivePurchasesInDemo
+        self.paywallDefaultPlanSelectionOverride = paywallDefaultPlanSelectionOverride
+        self.paywallLayoutVariantOverride = paywallLayoutVariantOverride
         self.onDemoDismiss = onDemoDismiss
         self.existingSubscriptionAccessOverride = existingSubscriptionAccessOverride
 
@@ -1697,6 +1707,8 @@ struct MacraOnboardingFlowView: View {
     @StateObject private var coordinator: MacraOnboardingCoordinator
     @ObservedObject private var noraVoice = MacraNoraVoiceService.shared
     private let existingSubscriptionAccessOverride: Bool?
+    private let paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection?
+    private let paywallLayoutVariantOverride: MacraPaywallLayoutVariant?
 
     init(
         appCoordinator: AppCoordinator,
@@ -1704,16 +1716,22 @@ struct MacraOnboardingFlowView: View {
         isDemoMode: Bool = false,
         usesLivePurchasesInDemo: Bool = false,
         onDemoDismiss: (() -> Void)? = nil,
-        existingSubscriptionAccessOverride: Bool? = nil
+        existingSubscriptionAccessOverride: Bool? = nil,
+        paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection? = nil,
+        paywallLayoutVariantOverride: MacraPaywallLayoutVariant? = nil
     ) {
         self.existingSubscriptionAccessOverride = existingSubscriptionAccessOverride
+        self.paywallDefaultPlanSelectionOverride = paywallDefaultPlanSelectionOverride
+        self.paywallLayoutVariantOverride = paywallLayoutVariantOverride
         _coordinator = StateObject(wrappedValue: MacraOnboardingCoordinator(
             appCoordinator: appCoordinator,
             startingStep: startingStep,
             isDemoMode: isDemoMode,
             usesLivePurchasesInDemo: usesLivePurchasesInDemo,
             onDemoDismiss: onDemoDismiss,
-            existingSubscriptionAccessOverride: existingSubscriptionAccessOverride
+            existingSubscriptionAccessOverride: existingSubscriptionAccessOverride,
+            paywallDefaultPlanSelectionOverride: paywallDefaultPlanSelectionOverride,
+            paywallLayoutVariantOverride: paywallLayoutVariantOverride
         ))
     }
 
@@ -1801,14 +1819,11 @@ struct MacraOnboardingFlowView: View {
         let step = coordinator.currentStep
         let narration = step.noraNarration
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-            guard coordinator.currentStep == step else { return }
-            MacraNoraVoiceService.shared.narrateOnboarding(
-                stepId: step.analyticsId,
-                fallbackText: narration,
-                key: "macra_onboarding_\(step.analyticsId)",
-                force: force
-            )
-        }
+        MacraNoraVoiceService.shared.narrateOnboarding(
+            stepId: step.analyticsId,
+            fallbackText: narration,
+            key: "macra_onboarding_\(step.analyticsId)",
+            force: force
+        )
     }
 }

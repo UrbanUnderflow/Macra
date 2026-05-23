@@ -20,12 +20,19 @@ final class MacraPurchaseLogService {
             print("[Macra][PurchaseLogs] Firebase is not configured; skipping purchase attempt log")
             return nil
         }
+        guard let identity = resolvedIdentity(action: "create attempted", source: source) else {
+            return nil
+        }
 
         let document = Firestore.firestore().collection(collectionName).document()
-        var payload = basePayload(plan: plan, source: source, metadata: metadata)
+        var payload = basePayload(plan: plan, source: source, metadata: metadata, identity: identity)
+        let timestamp = Date().timeIntervalSince1970
         payload["status"] = "attempted"
+        payload["purchaseStatus"] = "attempted"
         payload["createdAt"] = FieldValue.serverTimestamp()
+        payload["createdAtEpoch"] = timestamp
         payload["updatedAt"] = FieldValue.serverTimestamp()
+        payload["updatedAtEpoch"] = timestamp
 
         write(documentID: document.documentID, payload: payload, merge: false, action: "created")
         return document.documentID
@@ -101,13 +108,21 @@ final class MacraPurchaseLogService {
     ) {
         guard let logID, !logID.isEmpty else { return }
         guard FirebaseApp.app() != nil else { return }
+        guard let identity = resolvedIdentity(action: "update cancel reason", source: trigger) else {
+            return
+        }
 
         var payload: [String: Any] = [
+            "userId": identity.userId,
+            "authUid": identity.authUid,
+            "appUserId": identity.appUserId,
             "status": "canceled",
+            "purchaseStatus": "canceled",
             "cancelReasonCode": reasonCode,
             "cancelReasonLabel": reasonLabel,
             "cancelFeedbackTrigger": trigger,
-            "updatedAt": FieldValue.serverTimestamp()
+            "updatedAt": FieldValue.serverTimestamp(),
+            "updatedAtEpoch": Date().timeIntervalSince1970
         ]
         if !metadata.isEmpty {
             payload["cancelFeedbackMetadata"] = sanitize(metadata)
@@ -128,13 +143,20 @@ final class MacraPurchaseLogService {
             print("[Macra][PurchaseLogs] Firebase is not configured; skipping \(status) log")
             return
         }
+        guard let identity = resolvedIdentity(action: "update \(status)", source: source) else {
+            return
+        }
 
         let documentID = validDocumentID(logID) ?? Firestore.firestore().collection(collectionName).document().documentID
-        var payload = basePayload(plan: plan, source: source, metadata: metadata)
+        var payload = basePayload(plan: plan, source: source, metadata: metadata, identity: identity)
+        let timestamp = Date().timeIntervalSince1970
         payload["status"] = status
+        payload["purchaseStatus"] = status
         payload["updatedAt"] = FieldValue.serverTimestamp()
+        payload["updatedAtEpoch"] = timestamp
         if validDocumentID(logID) == nil {
             payload["createdAt"] = FieldValue.serverTimestamp()
+            payload["createdAtEpoch"] = timestamp
         }
         extraFields.forEach { payload[$0.key] = $0.value }
 
@@ -144,16 +166,14 @@ final class MacraPurchaseLogService {
     private func basePayload(
         plan: SubscriptionPlanOption?,
         source: String,
-        metadata: [String: Any]
+        metadata: [String: Any],
+        identity: PurchaseLogIdentity
     ) -> [String: Any] {
-        let firebaseUser = Auth.auth().currentUser
-        let appUser = UserService.sharedInstance.user
-        let userId = firebaseUser?.uid ?? appUser?.id ?? ""
-        let email = firebaseUser?.email ?? appUser?.email ?? ""
-
         return [
-            "userId": userId,
-            "email": email,
+            "userId": identity.userId,
+            "authUid": identity.authUid,
+            "appUserId": identity.appUserId,
+            "email": identity.email,
             "plan": planPayload(plan),
             "source": source,
             "errorDomain": "",
@@ -165,6 +185,37 @@ final class MacraPurchaseLogService {
             "app": "macra",
             "platform": "ios"
         ]
+    }
+
+    private struct PurchaseLogIdentity {
+        let userId: String
+        let authUid: String
+        let appUserId: String
+        let email: String
+    }
+
+    private func resolvedIdentity(action: String, source: String) -> PurchaseLogIdentity? {
+        let firebaseUser = Auth.auth().currentUser
+        let appUser = UserService.sharedInstance.user
+        let authUid = firebaseUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let appUserId = (appUser?.id ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let userId = authUid.isEmpty ? appUserId : authUid
+
+        guard !userId.isEmpty else {
+            print("[Macra][PurchaseLogs] \(action) blocked: missing Firebase Auth user source=\(source) appUserId=\(appUserId.isEmpty ? "none" : appUserId)")
+            return nil
+        }
+
+        if authUid.isEmpty {
+            print("[Macra][PurchaseLogs] \(action) using app user fallback source=\(source) appUserId=\(appUserId)")
+        }
+
+        return PurchaseLogIdentity(
+            userId: userId,
+            authUid: authUid,
+            appUserId: appUserId,
+            email: firebaseUser?.email ?? appUser?.email ?? ""
+        )
     }
 
     private func planPayload(_ plan: SubscriptionPlanOption?) -> [String: Any] {
@@ -179,7 +230,7 @@ final class MacraPurchaseLogService {
         }
 
         return [
-            "id": plan.analyticsProductId,
+            "id": productIdentifier(for: plan),
             "packageId": plan.id,
             "title": plan.displayTitle,
             "period": periodName(plan.periodKind),
@@ -187,6 +238,15 @@ final class MacraPurchaseLogService {
             "priceLabel": plan.priceLabel,
             "trialDays": plan.trialDays ?? 0
         ]
+    }
+
+    private func productIdentifier(for plan: SubscriptionPlanOption) -> String {
+        switch plan {
+        case .revenueCat(let package):
+            return package.package.storeProduct.productIdentifier
+        case .local(let plan):
+            return plan.id
+        }
     }
 
     private func errorPayload(error: Error?, failureReason: String?) -> [String: Any] {
@@ -226,14 +286,19 @@ final class MacraPurchaseLogService {
     }
 
     private func write(documentID: String, payload: [String: Any], merge: Bool, action: String) {
+        let status = payload["purchaseStatus"] as? String ?? payload["status"] as? String ?? "unknown"
+        let source = payload["source"] as? String ?? payload["cancelFeedbackTrigger"] as? String ?? "unknown"
+        let userId = payload["userId"] as? String ?? "none"
+
         Firestore.firestore()
             .collection(collectionName)
             .document(documentID)
             .setData(payload, merge: merge) { error in
                 if let error {
-                    print("[Macra][PurchaseLogs] Firestore \(action) failed: \(error.localizedDescription)")
+                    let nsError = error as NSError
+                    print("[Macra][PurchaseLogs] Firestore \(action) failed collection=\(self.collectionName) id=\(documentID) status=\(status) source=\(source) userId=\(userId) domain=\(nsError.domain) code=\(nsError.code) message=\(nsError.localizedDescription)")
                 } else {
-                    print("[Macra][PurchaseLogs] Firestore \(action) collection=Macra-purchase-logs id=\(documentID)")
+                    print("[Macra][PurchaseLogs] Firestore \(action) collection=\(self.collectionName) id=\(documentID) status=\(status) source=\(source) userId=\(userId)")
                 }
             }
     }

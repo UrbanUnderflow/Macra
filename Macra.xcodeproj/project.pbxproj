@@ -64,7 +64,6 @@
 		21E8FBEF2A9EE0D100671B49 /* PackageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB992A9EE0D100671B49 /* PackageViewModel.swift */; };
 		21E8FBF02A9EE0D100671B49 /* PackageCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9A2A9EE0D100671B49 /* PackageCardView.swift */; };
 		21E8FBF12A9EE0D100671B49 /* PreviewCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9B2A9EE0D100671B49 /* PreviewCardView.swift */; };
-		C7E5FA312FB1330000E057FB /* MacraPurchaseLogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E5FA302FB1330000E057FB /* MacraPurchaseLogService.swift */; };
 		21E8FBF22A9EE0D100671B49 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9D2A9EE0D100671B49 /* LoginView.swift */; };
 		21E8FBF32A9EE0D100671B49 /* IntroView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9E2A9EE0D100671B49 /* IntroView.swift */; };
 		21E8FBF42A9EE0D100671B49 /* PrivacyPolicyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E8FB9F2A9EE0D100671B49 /* PrivacyPolicyView.swift */; };
@@ -150,6 +149,7 @@
 		C7E5E8E22FAA624500E057FB /* AppsFlyerLib-Strict in Frameworks */ = {isa = PBXBuildFile; productRef = C7E5E8E12FAA624500E057FB /* AppsFlyerLib-Strict */; };
 		C7E5FA192FB126EC00E057FB /* TikTokBusinessSDK in Frameworks */ = {isa = PBXBuildFile; productRef = C7E5FA182FB126EC00E057FB /* TikTokBusinessSDK */; };
 		C7E5FA212FB1330000E057FB /* MacraAnalyticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E5FA202FB1330000E057FB /* MacraAnalyticsService.swift */; };
+		C7E5FA312FB1330000E057FB /* MacraPurchaseLogService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7E5FA302FB1330000E057FB /* MacraPurchaseLogService.swift */; };
 		C7F9A0102F8B100100000001 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = C7F9A0112F8B100100000001 /* FirebaseMessaging */; };
 		C86AAB347F83472293EB9F1F /* MacraNutritionInsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86BC286054F0765ED3EFBF80 /* MacraNutritionInsightsView.swift */; };
 		CA77ADB196E9546ACF7FFD6E /* MealRowSocialObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69DF056D452DE7AF4CB79E6A /* MealRowSocialObserver.swift */; };
@@ -1294,7 +1294,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Macra/Macra.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Macra/Preview Content\"";
 				DEVELOPMENT_TEAM = ZG887P86D5;
 				ENABLE_PREVIEWS = YES;
@@ -1316,7 +1316,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.11;
+				MARKETING_VERSION = 1.12;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1336,7 +1336,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Macra/Macra.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Macra/Preview Content\"";
 				DEVELOPMENT_TEAM = ZG887P86D5;
 				ENABLE_PREVIEWS = YES;
@@ -1358,7 +1358,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.11;
+				MARKETING_VERSION = 1.12;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

@@ -23,17 +23,13 @@ struct MacraScreenDemoView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     header
 
-                    VStack(spacing: 12) {
-                        ForEach(MacraDemoScreen.allCases) { demo in
-                            Button {
-                                activeDemo = demo
-                            } label: {
-                                MacraScreenDemoRow(demo: demo)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("macra-screen-demo-\(demo.id)-button")
-                        }
-                    }
+                    screenSection(
+                        title: "Core Screens",
+                        subtitle: "Use the Remote Config paywall to see the treatment your device is actually receiving.",
+                        entries: coreDemoEntries
+                    )
+
+                    abTestPreviewSection
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 54)
@@ -56,19 +52,21 @@ struct MacraScreenDemoView: View {
                     .padding(.top, 18)
                     .padding(.trailing, 18)
                 }
-            case .onboarding:
+            case .onboarding, .onboardingControl, .onboardingTrialPrepCompact:
                 MacraOnboardingFlowView(
                     appCoordinator: appCoordinator,
                     isDemoMode: true,
                     usesLivePurchasesInDemo: true,
                     onDemoDismiss: { activeDemo = nil },
-                    existingSubscriptionAccessOverride: paywallDemoAudience.hasExistingSubscriptionAccess
+                    existingSubscriptionAccessOverride: paywallDemoAudience.hasExistingSubscriptionAccess,
+                    paywallDefaultPlanSelectionOverride: demo.paywallDefaultPlanSelectionOverride,
+                    paywallLayoutVariantOverride: demo.paywallLayoutVariantOverride
                 )
                 .environment(\.isMacraDemoMode, true)
                 .overlay(alignment: .topTrailing) {
                     screenDemoPaywallControls
                 }
-            case .paywall, .paywallAnnualDefault, .paywallMonthlyVariant, .paywallCancelFeedback:
+            case .paywall, .paywallAnnualDefault, .paywallMonthlyVariant, .paywallTrialPrepCompact, .paywallCancelFeedback:
                 PayWallView(
                     viewModel: PayWallViewModel(appCoordinator: appCoordinator),
                     isDemoMode: true,
@@ -76,6 +74,7 @@ struct MacraScreenDemoView: View {
                     onDismiss: { activeDemo = nil },
                     existingSubscriptionAccessOverride: paywallDemoAudience.hasExistingSubscriptionAccess,
                     defaultPlanSelectionOverride: demo.paywallDefaultPlanSelectionOverride,
+                    layoutVariantOverride: demo.paywallLayoutVariantOverride,
                     presentsCancelFeedbackOnAppear: demo.presentsCancelFeedbackOnAppear,
                     persistsCancelFeedbackInDemo: demo.persistsCancelFeedbackInDemo
                 )
@@ -126,6 +125,125 @@ struct MacraScreenDemoView: View {
             .accessibilityIdentifier("macra-screen-demo-close-button")
         }
     }
+
+    private var coreDemoEntries: [MacraScreenDemoEntry] {
+        [
+            MacraScreenDemoEntry(demo: .login),
+            MacraScreenDemoEntry(demo: .onboarding),
+            MacraScreenDemoEntry(demo: .onboardingControl),
+            MacraScreenDemoEntry(demo: .onboardingTrialPrepCompact),
+            MacraScreenDemoEntry(demo: .paywall),
+            MacraScreenDemoEntry(demo: .paywallCancelFeedback)
+        ]
+    }
+
+    private var abTestPreviewGroups: [MacraABTestPreviewGroup] {
+        [
+            MacraABTestPreviewGroup(
+                id: "default-plan",
+                title: "Default Plan Selection",
+                parameter: MacraPaywallExperimentService.defaultPlanParameterKey,
+                summary: "Checks whether annual-first or monthly-first reduces sticker shock and improves purchase intent.",
+                entries: [
+                    MacraScreenDemoEntry(
+                        demo: .paywallAnnualDefault,
+                        title: "Baseline - Annual First",
+                        subtitle: "Value: annual. The yearly plan is selected when the paywall opens.",
+                        systemImage: "calendar.badge.clock",
+                        badge: "Base",
+                        idSuffix: "default-plan-baseline"
+                    ),
+                    MacraScreenDemoEntry(
+                        demo: .paywallMonthlyVariant,
+                        title: "Variant A - Monthly First",
+                        subtitle: "Value: monthly. The monthly plan is selected when the paywall opens.",
+                        systemImage: "calendar",
+                        badge: "A",
+                        idSuffix: "default-plan-variant-a"
+                    )
+                ]
+            ),
+            MacraABTestPreviewGroup(
+                id: "trial-confidence",
+                title: "Paywall Layout",
+                parameter: MacraPaywallExperimentService.layoutVariantParameterKey,
+                summary: "Checks whether Apple-sheet prep, trial education, and a compact plan-first paywall improve purchase confirmation.",
+                entries: [
+                    MacraScreenDemoEntry(
+                        demo: .onboardingControl,
+                        title: "Baseline - Full Onboarding",
+                        subtitle: "Value: trial_confidence_control. Walks the full onboarding flow into the current long paywall.",
+                        systemImage: "rectangle.stack.fill",
+                        badge: "Base",
+                        idSuffix: "trial-confidence-baseline"
+                    ),
+                    MacraScreenDemoEntry(
+                        demo: .onboardingTrialPrepCompact,
+                        title: "Variant A - Full Onboarding Compact",
+                        subtitle: "Value: trial_confidence. Walks the full onboarding flow into two prep screens and the condensed plan page.",
+                        systemImage: "rectangle.stack.fill",
+                        badge: "A",
+                        idSuffix: "trial-confidence-variant-a"
+                    )
+                ]
+            )
+        ]
+    }
+
+    private func screenSection(
+        title: String,
+        subtitle: String,
+        entries: [MacraScreenDemoEntry]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline.weight(.heavy))
+                    .foregroundColor(.black)
+
+                Text(subtitle)
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(.black.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 12) {
+                ForEach(entries) { entry in
+                    screenDemoButton(for: entry)
+                }
+            }
+        }
+    }
+
+    private var abTestPreviewSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("A/B Tests")
+                    .font(.headline.weight(.heavy))
+                    .foregroundColor(.black)
+
+                Text("Preview both variants without waiting for Remote Config assignment.")
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(.black.opacity(0.58))
+            }
+
+            ForEach(abTestPreviewGroups) { group in
+                MacraABTestPreviewCard(group: group) { entry in
+                    screenDemoButton(for: entry)
+                }
+            }
+        }
+    }
+
+    private func screenDemoButton(for entry: MacraScreenDemoEntry) -> some View {
+        Button {
+            activeDemo = entry.demo
+        } label: {
+            MacraScreenDemoRow(entry: entry)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("macra-screen-demo-\(entry.id)-button")
+    }
 }
 
 private enum MacraPaywallDemoAudience: String, CaseIterable, Identifiable {
@@ -149,9 +267,12 @@ private enum MacraPaywallDemoAudience: String, CaseIterable, Identifiable {
 private enum MacraDemoScreen: String, CaseIterable, Identifiable {
     case login
     case onboarding
+    case onboardingControl
+    case onboardingTrialPrepCompact
     case paywall
     case paywallAnnualDefault
     case paywallMonthlyVariant
+    case paywallTrialPrepCompact
     case paywallCancelFeedback
 
     var id: String { rawValue }
@@ -159,10 +280,13 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .login: return "Login"
-        case .onboarding: return "Full Onboarding"
+        case .onboarding: return "Full Onboarding - Remote Config"
+        case .onboardingControl: return "Full Onboarding - Baseline"
+        case .onboardingTrialPrepCompact: return "Full Onboarding - Compact"
         case .paywall: return "Paywall - Remote Config"
         case .paywallAnnualDefault: return "Paywall - Annual Baseline"
         case .paywallMonthlyVariant: return "Paywall - Monthly Variant"
+        case .paywallTrialPrepCompact: return "Paywall - Trial Prep Compact"
         case .paywallCancelFeedback: return "Cancel Feedback"
         }
     }
@@ -172,13 +296,19 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
         case .login:
             return "Preview the returning-user auth page with email, password, reset, and Apple sign-in states."
         case .onboarding:
-            return "Walk the first-run Macra flow with mocked profile, plan, meals, and purchase."
+            return "Walk the first-run Macra flow using the active Remote Config paywall assignment."
+        case .onboardingControl:
+            return "Walk the first-run Macra flow into the current long paywall baseline."
+        case .onboardingTrialPrepCompact:
+            return "Walk the first-run Macra flow into the two prep screens and compact plan-first paywall."
         case .paywall:
             return "Uses the active Remote Config/A-B assignment for plan order, pricing copy, and analytics metadata."
         case .paywallAnnualDefault:
             return "Forces the baseline annual-first treatment so you can review the control arm."
         case .paywallMonthlyVariant:
             return "Forces the monthly-first treatment so you can review the lower-sticker-shock variant."
+        case .paywallTrialPrepCompact:
+            return "Forces the two-step trial prep and condensed plan-first paywall treatment."
         case .paywallCancelFeedback:
             return "Opens the new one-tap cancellation reason prompt on top of the paywall."
         }
@@ -188,19 +318,33 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
         switch self {
         case .login: return "key.fill"
         case .onboarding: return "list.bullet.clipboard.fill"
+        case .onboardingControl: return "rectangle.stack.fill"
+        case .onboardingTrialPrepCompact: return "rectangle.stack.fill"
         case .paywall: return "creditcard.fill"
         case .paywallAnnualDefault: return "calendar.badge.clock"
         case .paywallMonthlyVariant: return "calendar"
+        case .paywallTrialPrepCompact: return "rectangle.stack.fill"
         case .paywallCancelFeedback: return "questionmark.bubble.fill"
         }
     }
 
     var paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection? {
         switch self {
-        case .paywallAnnualDefault, .paywallCancelFeedback:
+        case .onboardingControl, .onboardingTrialPrepCompact, .paywallAnnualDefault, .paywallTrialPrepCompact, .paywallCancelFeedback:
             return .annual
         case .paywallMonthlyVariant:
             return .monthly
+        case .login, .onboarding, .paywall:
+            return nil
+        }
+    }
+
+    var paywallLayoutVariantOverride: MacraPaywallLayoutVariant? {
+        switch self {
+        case .onboardingTrialPrepCompact, .paywallTrialPrepCompact:
+            return .trialPrepCompact
+        case .onboardingControl, .paywallAnnualDefault, .paywallMonthlyVariant, .paywallCancelFeedback:
+            return .control
         case .login, .onboarding, .paywall:
             return nil
         }
@@ -213,6 +357,43 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
     var persistsCancelFeedbackInDemo: Bool {
         self == .paywallCancelFeedback
     }
+}
+
+private struct MacraScreenDemoEntry: Identifiable {
+    let demo: MacraDemoScreen
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let badge: String?
+    let idSuffix: String?
+
+    var id: String {
+        [demo.id, idSuffix].compactMap { $0 }.joined(separator: "-")
+    }
+
+    init(
+        demo: MacraDemoScreen,
+        title: String? = nil,
+        subtitle: String? = nil,
+        systemImage: String? = nil,
+        badge: String? = nil,
+        idSuffix: String? = nil
+    ) {
+        self.demo = demo
+        self.title = title ?? demo.title
+        self.subtitle = subtitle ?? demo.subtitle
+        self.systemImage = systemImage ?? demo.systemImage
+        self.badge = badge
+        self.idSuffix = idSuffix
+    }
+}
+
+private struct MacraABTestPreviewGroup: Identifiable {
+    let id: String
+    let title: String
+    let parameter: String
+    let summary: String
+    let entries: [MacraScreenDemoEntry]
 }
 
 private struct MacraScreenDemoDismissButton: View {
@@ -271,11 +452,11 @@ private struct MacraPaywallDemoAudienceToggle: View {
 }
 
 private struct MacraScreenDemoRow: View {
-    let demo: MacraDemoScreen
+    let entry: MacraScreenDemoEntry
 
     var body: some View {
         HStack(spacing: 14) {
-            Image(systemName: demo.systemImage)
+            Image(systemName: entry.systemImage)
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(.primaryGreen)
                 .frame(width: 42, height: 42)
@@ -283,11 +464,23 @@ private struct MacraScreenDemoRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(demo.title)
-                    .font(.headline.weight(.bold))
-                    .foregroundColor(.black)
+                HStack(spacing: 8) {
+                    Text(entry.title)
+                        .font(.headline.weight(.bold))
+                        .foregroundColor(.black)
 
-                Text(demo.subtitle)
+                    if let badge = entry.badge {
+                        Text(badge)
+                            .font(.caption2.weight(.heavy))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.primaryGreen.opacity(0.86))
+                            .clipShape(Capsule())
+                    }
+                }
+
+                Text(entry.subtitle)
                     .font(.subheadline)
                     .foregroundColor(.black.opacity(0.55))
                     .fixedSize(horizontal: false, vertical: true)
@@ -301,6 +494,43 @@ private struct MacraScreenDemoRow: View {
         }
         .padding(16)
         .background(Color.white.opacity(0.92))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.black.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+private struct MacraABTestPreviewCard<Content: View>: View {
+    let group: MacraABTestPreviewGroup
+    let content: (MacraScreenDemoEntry) -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(group.title)
+                    .font(.headline.weight(.bold))
+                    .foregroundColor(.black)
+
+                Text(group.parameter)
+                    .font(.caption.monospaced().weight(.bold))
+                    .foregroundColor(.black.opacity(0.6))
+
+                Text(group.summary)
+                    .font(.caption.weight(.medium))
+                    .foregroundColor(.black.opacity(0.58))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 10) {
+                ForEach(group.entries) { entry in
+                    content(entry)
+                }
+            }
+        }
+        .padding(16)
+        .background(Color.white.opacity(0.74))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)

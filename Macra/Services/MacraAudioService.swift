@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import CryptoKit
 import FirebaseFirestore
 import Foundation
 
@@ -101,9 +102,12 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         static let configCollection = "app-config"
         static let configDocument = "ai-voice"
         static let narrationField = "macraOnboardingNarrations"
+        static let diskCacheDirectoryName = "MacraNoraNarrationCache"
+        static let priorityOnboardingStepId = "welcome"
     }
 
     private var audioPlayer: AVAudioPlayer?
+    private var preparedAudioPlayers: [String: AVAudioPlayer] = [:]
     private var cachedAssets: [String: NarrationAsset] = [:]
     private var lastConfigFetchAt: Date?
     private var audioDataCache: [String: Data] = [:]
@@ -177,7 +181,7 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
 
                 let data = try await self.audioData(for: asset)
                 guard !Task.isCancelled, runID == self.narrationRunID else { return }
-                self.playNarrationAudio(data, runID: runID, key: key)
+                self.playNarrationAudio(asset: asset, data: data, runID: runID, key: key)
                 self.lastLoggedFailureMessage = nil
             } catch {
                 guard !Task.isCancelled, runID == self.narrationRunID else { return }
@@ -212,29 +216,29 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
     }
 
     private func warmOnboardingNarrationCache(force: Bool = false) async {
+        MacraAudioService.configurePlaybackSessionForNarration()
         let assets = await loadNarrationAssets(force: force)
         guard !Task.isCancelled else { return }
-        let uncachedAssets = assets.values.filter { force || audioDataCache[$0.downloadURL] == nil }
+        if let priorityAsset = assets[Constants.priorityOnboardingStepId] {
+            do {
+                _ = try await cacheAndPrepareAudio(for: priorityAsset, force: force)
+            } catch {
+                logNarrationFailureIfNeeded(error.localizedDescription)
+            }
+        }
+
+        let uncachedAssets = assets
+            .filter { $0.key != Constants.priorityOnboardingStepId }
+            .map(\.value)
+            .filter { force || audioDataCache[$0.downloadURL] == nil || preparedAudioPlayers[$0.downloadURL] == nil }
         guard !uncachedAssets.isEmpty else { return }
 
-        await withTaskGroup(of: (String, Data?, String?).self) { group in
-            for asset in uncachedAssets {
-                group.addTask {
-                    do {
-                        let data = try await Self.fetchAudioData(from: asset.downloadURL)
-                        return (asset.downloadURL, data, nil)
-                    } catch {
-                        return (asset.downloadURL, nil, error.localizedDescription)
-                    }
-                }
-            }
-
-            for await (downloadURL, data, errorMessage) in group {
-                if let data {
-                    audioDataCache[downloadURL] = data
-                } else if let errorMessage {
-                    logNarrationFailureIfNeeded(errorMessage)
-                }
+        for asset in uncachedAssets {
+            guard !Task.isCancelled else { return }
+            do {
+                _ = try await cacheAndPrepareAudio(for: asset, force: force)
+            } catch {
+                logNarrationFailureIfNeeded(error.localizedDescription)
             }
         }
     }
@@ -269,12 +273,91 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
 
     private func audioData(for asset: NarrationAsset) async throws -> Data {
         if let cached = audioDataCache[asset.downloadURL] {
+            try prepareAudioPlayerIfNeeded(downloadURL: asset.downloadURL, data: cached)
             return cached
         }
 
+        if let diskCached = loadDiskCachedAudioData(for: asset.downloadURL) {
+            cacheAudioData(diskCached, for: asset.downloadURL)
+            try prepareAudioPlayerIfNeeded(downloadURL: asset.downloadURL, data: diskCached)
+            return diskCached
+        }
+
         let data = try await Self.fetchAudioData(from: asset.downloadURL)
-        audioDataCache[asset.downloadURL] = data
+        cacheAudioData(data, for: asset.downloadURL)
+        persistAudioDataToDisk(data, for: asset.downloadURL)
+        try prepareAudioPlayerIfNeeded(downloadURL: asset.downloadURL, data: data)
         return data
+    }
+
+    @discardableResult
+    private func cacheAndPrepareAudio(for asset: NarrationAsset, force: Bool) async throws -> Data {
+        if !force, let cached = audioDataCache[asset.downloadURL] {
+            try prepareAudioPlayerIfNeeded(downloadURL: asset.downloadURL, data: cached)
+            return cached
+        }
+
+        if !force, let diskCached = loadDiskCachedAudioData(for: asset.downloadURL) {
+            cacheAudioData(diskCached, for: asset.downloadURL)
+            try prepareAudioPlayerIfNeeded(downloadURL: asset.downloadURL, data: diskCached)
+            return diskCached
+        }
+
+        let data = try await Self.fetchAudioData(from: asset.downloadURL)
+        cacheAudioData(data, for: asset.downloadURL)
+        persistAudioDataToDisk(data, for: asset.downloadURL)
+        try prepareAudioPlayerIfNeeded(downloadURL: asset.downloadURL, data: data)
+        return data
+    }
+
+    private func cacheAudioData(_ data: Data, for downloadURL: String) {
+        audioDataCache[downloadURL] = data
+    }
+
+    @discardableResult
+    private func prepareAudioPlayerIfNeeded(downloadURL: String, data: Data) throws -> AVAudioPlayer {
+        if let preparedPlayer = preparedAudioPlayers[downloadURL] {
+            return preparedPlayer
+        }
+
+        let player = try AVAudioPlayer(data: data)
+        player.delegate = self
+        player.isMeteringEnabled = true
+        player.volume = 0.92
+        player.prepareToPlay()
+        preparedAudioPlayers[downloadURL] = player
+        return player
+    }
+
+    private func loadDiskCachedAudioData(for downloadURL: String) -> Data? {
+        let fileURL = diskCacheFileURL(for: downloadURL)
+        return try? Data(contentsOf: fileURL)
+    }
+
+    private func persistAudioDataToDisk(_ data: Data, for downloadURL: String) {
+        do {
+            let directoryURL = diskCacheDirectoryURL()
+            try FileManager.default.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            try data.write(to: diskCacheFileURL(for: downloadURL), options: [.atomic])
+        } catch {
+            logNarrationFailureIfNeeded("Failed to persist Nora narration cache: \(error.localizedDescription)")
+        }
+    }
+
+    private func diskCacheDirectoryURL() -> URL {
+        let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return cacheDirectory.appendingPathComponent(Constants.diskCacheDirectoryName, isDirectory: true)
+    }
+
+    private func diskCacheFileURL(for downloadURL: String) -> URL {
+        let digest = SHA256.hash(data: Data(downloadURL.utf8))
+        let filename = digest.map { String(format: "%02x", $0) }.joined() + ".mp3"
+        return diskCacheDirectoryURL().appendingPathComponent(filename)
     }
 
     private nonisolated static func fetchAudioData(from downloadURL: String) async throws -> Data {
@@ -296,18 +379,19 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         return data
     }
 
-    private func playNarrationAudio(_ data: Data, runID: UUID, key: String) {
+    private func playNarrationAudio(asset: NarrationAsset, data: Data, runID: UUID, key: String) {
         guard runID == narrationRunID else { return }
         stopPlayback()
         activeNarrationKey = key
 
         do {
             MacraAudioService.configurePlaybackSessionForNarration()
-            let player = try AVAudioPlayer(data: data)
+            let player = try prepareAudioPlayerIfNeeded(downloadURL: asset.downloadURL, data: data)
             audioPlayer = player
             player.delegate = self
             player.isMeteringEnabled = true
             player.volume = 0.92
+            player.currentTime = 0
             player.prepareToPlay()
             if player.play() {
                 isNarrating = true
@@ -325,7 +409,10 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
 
     private func stopPlayback() {
         stopMetering()
-        audioPlayer?.stop()
+        if let audioPlayer {
+            audioPlayer.stop()
+            audioPlayer.currentTime = 0
+        }
         audioPlayer = nil
     }
 
@@ -385,6 +472,7 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         Task { @MainActor [weak self] in
             let completedKey = self?.activeNarrationKey
             self?.stopMetering()
+            player.currentTime = 0
             self?.audioPlayer = nil
             if let completedKey {
                 self?.completeNarration(key: completedKey)
