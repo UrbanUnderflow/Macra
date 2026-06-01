@@ -7,6 +7,10 @@ struct WelcomeStepView: View {
     private let accent = Color(hex: "E0FE10")
     private let narrationKey = "macra_onboarding_welcome"
 
+    private var isNoraGuided: Bool {
+        coordinator.onboardingExperienceVariant == .noraGuided
+    }
+
     var body: some View {
         ZStack {
             MacraChromaticBackground()
@@ -26,12 +30,12 @@ struct WelcomeStepView: View {
                         .tracking(1.4)
                         .foregroundColor(accent)
 
-                    Text("Get your calories,\nmacros, meal plan,\nand goal date.")
+                    Text(isNoraGuided ? "Let's build the plan you'll actually use." : "Get your calories,\nmacros, meal plan,\nand goal date.")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
 
-                    Text("Answer a few questions. Macra builds the numbers, then Nora helps you follow them day by day.")
+                    Text(isNoraGuided ? "I'll ask a few quick questions, then turn them into calories, macros, meals, and a goal date." : "Answer a few questions. Macra builds the numbers, then Nora helps you follow them day by day.")
                         .font(.system(size: 15))
                         .foregroundColor(Color.white.opacity(0.72))
                         .multilineTextAlignment(.center)
@@ -56,7 +60,7 @@ struct WelcomeStepView: View {
                 Spacer()
 
                 MacraPrimaryButton(
-                    title: "Build my plan",
+                    title: isNoraGuided ? "Start with my goal" : "Build my plan",
                     accent: accent,
                     isLoading: false,
                     action: coordinator.advance
@@ -84,6 +88,34 @@ struct WelcomeStepView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.white.opacity(0.88))
             Spacer(minLength: 0)
+        }
+    }
+}
+
+struct PrimaryFocusStepView: View {
+    @ObservedObject var coordinator: MacraOnboardingCoordinator
+
+    var body: some View {
+        OnboardingScaffold(
+            title: "What do you want Macra to help with first?",
+            subtitle: "Nora will use this as the lens for your targets, meals, and reminders.",
+            noraPrompt: coordinator.noraPrompt(for: .primaryFocus),
+            progress: coordinator.progress,
+            canGoBack: coordinator.canGoBack,
+            canGoForward: coordinator.canGoForward,
+            onBack: coordinator.back,
+            onForward: coordinator.advance
+        ) {
+            VStack(spacing: 10) {
+                ForEach(MacraPrimaryFocus.allCases) { focus in
+                    OnboardingChoiceCard(
+                        title: focus.title,
+                        subtitle: focus.subtitle,
+                        value: focus,
+                        selection: $coordinator.answers.primaryFocus
+                    )
+                }
+            }
         }
     }
 }
@@ -294,6 +326,7 @@ struct SexStepView: View {
         OnboardingScaffold(
             title: "What's your biological sex?",
             subtitle: "This is used to calculate your metabolic rate.",
+            noraPrompt: coordinator.noraPrompt(for: .sex),
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -322,6 +355,7 @@ struct AgeStepView: View {
         OnboardingScaffold(
             title: "When were you born?",
             subtitle: "Age affects your daily calorie needs.",
+            noraPrompt: coordinator.noraPrompt(for: .age),
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -360,6 +394,7 @@ struct HeightStepView: View {
         OnboardingScaffold(
             title: "How tall are you?",
             subtitle: nil,
+            noraPrompt: coordinator.noraPrompt(for: .height),
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -413,7 +448,7 @@ struct HeightStepView: View {
 }
 
 struct WeightStepView: View {
-    enum Kind {
+    enum Kind: Equatable {
         case current
         case goal
 
@@ -433,6 +468,7 @@ struct WeightStepView: View {
         OnboardingScaffold(
             title: kind.title,
             subtitle: nil,
+            noraPrompt: coordinator.noraPrompt(for: kind == .current ? .currentWeight : .goalWeight),
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -488,6 +524,7 @@ struct ActivityLevelStepView: View {
         OnboardingScaffold(
             title: "How active are you?",
             subtitle: "On an average week, outside of any planned workouts.",
+            noraPrompt: coordinator.noraPrompt(for: .activityLevel),
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -515,6 +552,7 @@ struct PaceStepView: View {
         OnboardingScaffold(
             title: "How fast do you want to get there?",
             subtitle: "Your calorie target adjusts to match. You can change this later.",
+            noraPrompt: coordinator.noraPrompt(for: .pace),
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -550,6 +588,7 @@ struct SportSelectionStepView: View {
         OnboardingScaffold(
             title: "What sport do you play?",
             subtitle: "We'll tune Nora to your sport's training, fueling, and game-day demands.",
+            noraPrompt: coordinator.noraPrompt(for: .sportSelection),
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -726,6 +765,7 @@ struct DietaryPreferenceStepView: View {
         OnboardingScaffold(
             title: "Any dietary preferences?",
             subtitle: "We'll tailor meal suggestions to match.",
+            noraPrompt: coordinator.noraPrompt(for: .dietaryPreference),
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -753,6 +793,7 @@ struct BiggestStruggleStepView: View {
         OnboardingScaffold(
             title: "What's held you back before?",
             subtitle: "We'll design your daily coaching around this.",
+            noraPrompt: coordinator.noraPrompt(for: .biggestStruggle),
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -1482,6 +1523,203 @@ struct FeaturesStepView: View {
                 .padding(.bottom, 20)
             }
         }
+    }
+}
+
+struct TrialActivationStartStepView: View {
+    @ObservedObject var coordinator: MacraOnboardingCoordinator
+
+    private var firstMeal: MacraSuggestedMeal? {
+        coordinator.suggestedMealPlan?.meals.first
+    }
+
+    var body: some View {
+        ZStack {
+            MacraChromaticBackground()
+
+            VStack(spacing: 0) {
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 24, weight: .bold))
+                                .foregroundColor(.black)
+                                .frame(width: 54, height: 54)
+                                .background(Color.primaryGreen)
+                                .clipShape(Circle())
+
+                            Text("Your plan is active.")
+                                .font(.system(size: 32, weight: .heavy, design: .rounded))
+                                .foregroundColor(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            Text("The first win is simple: log one real meal so Nora can compare it to your target and guide the next choice.")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(.white.opacity(0.72))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        activationTargetsCard
+
+                        if let firstMeal {
+                            firstMealCard(firstMeal)
+                        } else {
+                            activationStepCard(
+                                icon: "camera.viewfinder",
+                                title: "Start with the food in front of you",
+                                body: "Use a photo or quick entry. A real meal is more useful than another setup screen."
+                            )
+                        }
+
+                        activationStepCard(
+                            icon: "sparkles",
+                            title: "Nora reacts to the log",
+                            body: "After that first meal, Macra can show what is left for today and where to adjust."
+                        )
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 32)
+                    .padding(.bottom, 36)
+                }
+
+                MacraPrimaryButton(
+                    title: "Start with one meal",
+                    accent: Color.primaryGreen,
+                    isLoading: false,
+                    action: coordinator.startTrialActivationFirstMeal
+                )
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+            }
+        }
+        .onAppear {
+            coordinator.trackTrialActivationScreenViewedIfNeeded()
+        }
+    }
+
+    @ViewBuilder
+    private var activationTargetsCard: some View {
+        if let macros = coordinator.planMacros {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("TODAY'S TARGET")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .tracking(1.3)
+                    .foregroundColor(Color.primaryGreen)
+
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(macros.calories)")
+                        .font(.system(size: 42, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("kcal")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+
+                HStack(spacing: 10) {
+                    macroMetric(label: "Protein", value: "\(macros.protein)g", accent: Color.primaryBlue)
+                    macroMetric(label: "Carbs", value: "\(macros.carbs)g", accent: Color.primaryGreen)
+                    macroMetric(label: "Fat", value: "\(macros.fat)g", accent: Color(hex: "FFB454"))
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.05)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .strokeBorder(Color.primaryGreen.opacity(0.18), lineWidth: 1)
+            )
+        } else {
+            activationStepCard(
+                icon: "target",
+                title: "Your targets are ready",
+                body: "Macra will open to the journal so the first meal can start shaping the rest of today."
+            )
+        }
+    }
+
+    private func firstMealCard(_ meal: MacraSuggestedMeal) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "fork.knife")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(Color.primaryGreen)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Color.primaryGreen.opacity(0.12)))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("FIRST MEAL TO LOG")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .tracking(1.2)
+                        .foregroundColor(Color.primaryGreen)
+                    Text(meal.title)
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Text("\(meal.totalCalories) calories planned")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.62))
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                macroMetric(label: "Protein", value: "\(meal.totalProtein)g", accent: Color.primaryBlue)
+                macroMetric(label: "Carbs", value: "\(meal.totalCarbs)g", accent: Color.primaryGreen)
+                macroMetric(label: "Fat", value: "\(meal.totalFat)g", accent: Color(hex: "FFB454"))
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.05)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private func macroMetric(label: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .tracking(0.9)
+                .foregroundColor(accent)
+            Text(value)
+                .font(.system(size: 15, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 13).fill(accent.opacity(0.08)))
+    }
+
+    private func activationStepCard(icon: String, title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Color.primaryGreen)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Color.primaryGreen.opacity(0.12)))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                Text(body)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.white.opacity(0.68))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18).fill(Color.white.opacity(0.04)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+        )
     }
 }
 

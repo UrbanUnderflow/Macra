@@ -60,7 +60,7 @@ final class NutritionSupplementTrackerViewModel: ObservableObject {
                 case .success(let supplements):
                     self?.savedSupplements = supplements
                 case .failure(let error):
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.sync(error)
                 }
                 group.leave()
             }
@@ -84,7 +84,7 @@ final class NutritionSupplementTrackerViewModel: ObservableObject {
                         Calendar.current.isDate($0.createdAt, inSameDayAs: dateForQuery)
                     }
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
                 group.leave()
             }
@@ -106,7 +106,7 @@ final class NutritionSupplementTrackerViewModel: ObservableObject {
                         self?.savedSupplements.insert(supplement, at: 0)
                     }
                 case .failure(let error):
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -123,7 +123,7 @@ final class NutritionSupplementTrackerViewModel: ObservableObject {
                     case .success:
                         self?.loggedForSelectedDate.removeAll { $0.id == existing.id }
                     case .failure(let error):
-                        self?.errorMessage = error.localizedDescription
+                        self?.errorMessage = MacraUserFacingError.sync(error)
                     }
                 }
             }
@@ -148,7 +148,7 @@ final class NutritionSupplementTrackerViewModel: ObservableObject {
                     self.loggedForSelectedDate.append(displaySupplement)
                     self.loggedForSelectedDate.sort { $0.createdAt < $1.createdAt }
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -186,7 +186,7 @@ final class NutritionSupplementTrackerViewModel: ObservableObject {
                         self.loggedForSelectedDate.append(displaySupplement)
                         self.loggedForSelectedDate.sort { $0.createdAt < $1.createdAt }
                     case .failure(let error):
-                        self.errorMessage = error.localizedDescription
+                        self.errorMessage = MacraUserFacingError.sync(error)
                     }
                 }
             }

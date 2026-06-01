@@ -18,6 +18,7 @@ final class NotificationService {
     private enum Identifier {
         static let morningLog = "macra.morningLogReminder"
         static let endOfDayCheckin = "macra.endOfDayCheckin"
+        static let trialEnding = "macra.trialEndingReminder"
         static func mealReminder(index: Int) -> String { "macra.mealReminder.\(index)" }
         static let allMealReminderIndices = 0..<8
     }
@@ -120,6 +121,53 @@ final class NotificationService {
             identifiers.append(Identifier.mealReminder(index: index))
         }
         center.removePendingNotificationRequests(withIdentifiers: identifiers)
+    }
+
+    func scheduleTrialEndingReminder(trialDays: Int, leadDays: Int) {
+        center.removePendingNotificationRequests(withIdentifiers: [Identifier.trialEnding])
+
+        let normalizedTrialDays = max(trialDays, 1)
+        let normalizedLeadDays = max(1, min(leadDays, max(normalizedTrialDays - 1, 1)))
+        let daysUntilReminder = max(normalizedTrialDays - normalizedLeadDays, 1)
+        guard let reminderDate = Calendar.current.date(byAdding: .day, value: daysUntilReminder, to: Date()) else {
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Your Macra trial ends soon"
+        content.body = normalizedLeadDays == 1
+            ? "Your trial renews tomorrow. Review or cancel in Apple Subscriptions before the yearly plan starts."
+            : "Your trial renews in \(normalizedLeadDays) days. Review or cancel in Apple Subscriptions before the yearly plan starts."
+        content.sound = .default
+        content.userInfo = [
+            "type": "macra_trial_ending_reminder",
+            "leadDays": "\(normalizedLeadDays)",
+            "trialDays": "\(normalizedTrialDays)"
+        ]
+
+        let components = Calendar.current.dateComponents(
+            [.year, .month, .day, .hour, .minute],
+            from: reminderDate
+        )
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+        let request = UNNotificationRequest(identifier: Identifier.trialEnding, content: content, trigger: trigger)
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            let status = await self.authorizationStatus()
+            if status == .notDetermined {
+                _ = await self.requestAuthorization()
+            } else {
+                await self.registerForRemoteNotificationsIfAuthorized()
+            }
+
+            self.center.add(request) { error in
+                if let error = error {
+                    print("NotificationService: failed to schedule \(Identifier.trialEnding) — \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     // MARK: - Private helpers

@@ -1,5 +1,61 @@
 import Foundation
 
+enum MacraOnboardingExperienceVariant: String, Hashable {
+    case standard
+    case noraGuided = "nora_guided"
+
+    static let parameterKey = "onboarding_experience_variant"
+
+    static func normalized(_ rawValue: String?) -> Self {
+        guard let value = rawValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_"),
+              !value.isEmpty else {
+            return .standard
+        }
+
+        switch value {
+        case "nora_guided", "nora", "guided", "duolingo_inspired", "variant_b", "variant_2":
+            return .noraGuided
+        case "standard", "control", "baseline":
+            return .standard
+        default:
+            return Self(rawValue: value) ?? .standard
+        }
+    }
+}
+
+enum MacraPrimaryFocus: String, CaseIterable, Identifiable, Hashable {
+    case loseBodyFat
+    case buildMuscle
+    case eatConsistently
+    case stopGuessing
+    case supportTraining
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .loseBodyFat: return "Lose body fat"
+        case .buildMuscle: return "Build muscle"
+        case .eatConsistently: return "Eat with more consistency"
+        case .stopGuessing: return "Stop guessing what fits"
+        case .supportTraining: return "Support training days"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .loseBodyFat: return "A clear calorie lane with enough protein to protect progress."
+        case .buildMuscle: return "Fuel training while keeping meals structured."
+        case .eatConsistently: return "Make the next food decision easier on normal days."
+        case .stopGuessing: return "Use scans, labels, and Nora to make food math visible."
+        case .supportTraining: return "Match meals to practices, lifts, games, and recovery."
+        }
+    }
+}
+
 enum BiologicalSex: String, CaseIterable, Identifiable, Hashable {
     case male
     case female
@@ -191,6 +247,7 @@ enum BiggestStruggle: String, CaseIterable, Identifiable, Hashable {
 }
 
 struct MacraOnboardingAnswers {
+    var primaryFocus: MacraPrimaryFocus?
     var sex: BiologicalSex?
     var birthdate: Date?
     var heightCm: Double?
@@ -214,6 +271,7 @@ struct MacraOnboardingAnswers {
 
     func toDictionary() -> [String: Any] {
         var dict: [String: Any] = [:]
+        if let primaryFocus = primaryFocus { dict["primaryFocus"] = primaryFocus.rawValue }
         if let sex = sex { dict["sex"] = sex.rawValue }
         if let birthdate = birthdate { dict["birthdate"] = birthdate.timeIntervalSince1970 }
         if let heightCm = heightCm { dict["heightCm"] = heightCm }

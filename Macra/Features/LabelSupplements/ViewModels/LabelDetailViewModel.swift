@@ -195,7 +195,7 @@ final class LabelDetailViewModel: ObservableObject {
                     self.qaMessages.append(LabelQAMessage(role: .assistant, content: answer))
                     self.persistQAHistory()
                 case .failure(let error):
-                    self.qaError = "Failed to get answer: \(error.localizedDescription)"
+                    self.qaError = MacraUserFacingError.nora(error)
                 }
             }
         }
@@ -230,7 +230,7 @@ final class LabelDetailViewModel: ObservableObject {
                     }
                     self.persistDeepDive()
                 case .failure(let error):
-                    self.deepDiveError = error.localizedDescription
+                    self.deepDiveError = MacraUserFacingError.analyzer(error)
                 }
             }
         }
@@ -261,7 +261,7 @@ final class LabelDetailViewModel: ObservableObject {
                     }
                     self.persistAlternatives(backfillProductTitle: self.isTitleEdited ? nil : payload.productTitle)
                 case .failure(let error):
-                    self.alternativesError = error.localizedDescription
+                    self.alternativesError = MacraUserFacingError.analyzer(error)
                 }
             }
         }
@@ -313,4 +313,3 @@ final class LabelDetailViewModel: ObservableObject {
         }
     }
 }
-

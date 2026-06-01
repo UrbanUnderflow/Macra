@@ -232,10 +232,9 @@ struct LabelGradeResult: Codable, Hashable {
             case "LABEL-006":
                 return "Label not detected. Please ensure the nutrition facts panel is clearly visible."
             default:
-                return detailedExplanation.isEmpty ? summary : detailedExplanation
+                return "Analysis service error. Please try again in a moment. Code: \(errorCode)."
             }
         }
         return detailedExplanation.isEmpty ? summary : detailedExplanation
     }
 }
-

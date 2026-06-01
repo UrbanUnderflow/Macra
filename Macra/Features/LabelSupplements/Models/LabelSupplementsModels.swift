@@ -241,7 +241,7 @@ struct LabelGradeResult: Codable {
             case "LABEL-005":
                 return "Unable to process image format. Please try another photo."
             default:
-                return errorDetails ?? "Unknown error"
+                return "Analysis service error. Please try again in a moment. Code: \(errorCode)."
             }
         }
         return "Unable to analyze label"
@@ -763,4 +763,3 @@ struct LoggedSupplement: Identifiable, Hashable, Codable {
         return nil
     }
 }
-

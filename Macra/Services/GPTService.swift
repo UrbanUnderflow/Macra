@@ -206,7 +206,7 @@ class GPTService {
 
         var errorDescription: String? {
             switch self {
-            case .parsingFailed(let detail): return "Couldn't parse the analyzer response: \(detail)"
+            case .parsingFailed(_): return "We couldn't read the analyzer response. Code: AI_ANALYZER_PARSE_FAILED."
             case .zeroMacros: return "The analyzer couldn't estimate macros for that. Try adding portion sizes (e.g. '1 cup', '3 oz') or more detail."
             }
         }
@@ -937,7 +937,7 @@ class GPTService {
 
         var errorDescription: String? {
             switch self {
-            case .parsingFailed(let detail): return "Nora couldn't parse that: \(detail)"
+            case .parsingFailed(_): return "We couldn't read Nora's response. Code: NORA_PARSE_FAILED."
             case .emptyInput: return "Add a prompt or an image so Nora has something to work with."
             }
         }
@@ -1223,7 +1223,7 @@ class GPTService {
         var errorDescription: String? {
             switch self {
             case .emptyPrompt: return "Tell Nora what to change first."
-            case .parsingFailed(let detail): return "Nora couldn't parse that: \(detail)"
+            case .parsingFailed(_): return "We couldn't read Nora's response. Code: NORA_PARSE_FAILED."
             case .noItems: return "Nora returned no foods. Try a more specific prompt."
             }
         }
@@ -2374,14 +2374,23 @@ enum MacraOpenAIBridge {
         var errorDescription: String? {
             switch self {
             case .notAuthenticated: return "You need to be signed in to use the AI analyzer."
-            case .invalidURL(let base): return "Analyzer endpoint misconfigured (base: \(base))."
-            case .invalidRequestBody(let error): return "Failed to encode request body: \(error.localizedDescription)"
-            case .transport(let error): return error.localizedDescription
-            case .nonHTTPResponse: return "Unexpected non-HTTP response from analyzer bridge."
+            case .invalidURL(_):
+                return "We couldn't reach the analyzer right now. Code: AI_BRIDGE_UNAVAILABLE."
+            case .invalidRequestBody(_):
+                return "We couldn't prepare that request. Code: BAD_REQUEST."
+            case .transport(let error):
+                return MacraUserFacingError.analyzer(error)
+            case .nonHTTPResponse:
+                return "We couldn't reach the analyzer right now. Code: AI_BRIDGE_UNAVAILABLE."
             case .httpError(let status, let body):
-                let trimmed = body.prefix(180)
-                return "Analyzer bridge returned \(status): \(trimmed)"
-            case .emptyContent: return "Analyzer bridge returned empty content."
+                let error = NSError(
+                    domain: "MacraAnalyzerBridge",
+                    code: status,
+                    userInfo: [NSLocalizedDescriptionKey: body]
+                )
+                return MacraUserFacingError.analyzer(error)
+            case .emptyContent:
+                return "We couldn't read the analyzer response. Code: AI_ANALYZER_EMPTY_RESPONSE."
             }
         }
     }

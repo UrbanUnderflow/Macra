@@ -46,7 +46,7 @@ final class SupplementChecklistViewModel: ObservableObject {
             self?.isLoading = false
             self?.savedSupplements = loadedSaved
             self?.loggedSupplements = loadedLogged
-            self?.errorMessage = loadError?.localizedDescription
+            self?.errorMessage = loadError.map { MacraUserFacingError.sync($0) }
         }
     }
 
@@ -118,4 +118,3 @@ final class SupplementChecklistViewModel: ObservableObject {
         loggedSupplements.first { $0.id == Date().dayMonthYearFormat + supplement.id || $0.name == supplement.name }
     }
 }
-

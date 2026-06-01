@@ -49,6 +49,7 @@ struct NoraVoiceToggleButton: View {
 struct OnboardingScaffold<Content: View>: View {
     let title: String
     let subtitle: String?
+    let noraPrompt: String?
     let progress: Double
     let canGoBack: Bool
     let canGoForward: Bool
@@ -61,6 +62,7 @@ struct OnboardingScaffold<Content: View>: View {
     init(
         title: String,
         subtitle: String? = nil,
+        noraPrompt: String? = nil,
         progress: Double,
         canGoBack: Bool,
         canGoForward: Bool,
@@ -72,6 +74,7 @@ struct OnboardingScaffold<Content: View>: View {
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.noraPrompt = noraPrompt
         self.progress = progress
         self.canGoBack = canGoBack
         self.canGoForward = canGoForward
@@ -118,11 +121,16 @@ struct OnboardingScaffold<Content: View>: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 12) {
+                        if let noraPrompt {
+                            NoraOnboardingPromptBubble(text: noraPrompt)
+                                .padding(.top, 28)
+                        }
+
                         Text(title)
                             .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 32)
+                            .padding(.top, noraPrompt == nil ? 32 : 8)
 
                         if let subtitle = subtitle {
                             Text(subtitle)
@@ -149,6 +157,34 @@ struct OnboardingScaffold<Content: View>: View {
                 .opacity(canGoForward ? 1 : 0.4)
                 .disabled(!canGoForward || isLoading)
             }
+        }
+    }
+}
+
+private struct NoraOnboardingPromptBubble: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            NoraOrb(size: 42, isActive: true)
+                .padding(.top, 2)
+
+            Text(text)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white.opacity(0.88))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.white.opacity(0.07))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+                )
+
+            Spacer(minLength: 0)
         }
     }
 }

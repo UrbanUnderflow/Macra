@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import CryptoKit
+import FirebaseAuth
 import FirebaseFirestore
 import Foundation
 
@@ -84,6 +85,12 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
     private struct NarrationAsset: Sendable {
         let downloadURL: String
 
+        init?(downloadURL: String) {
+            let trimmedURL = downloadURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedURL.isEmpty else { return nil }
+            self.downloadURL = trimmedURL
+        }
+
         init?(dictionary: [String: Any]) {
             guard
                 let downloadURL = dictionary["downloadURL"] as? String,
@@ -96,6 +103,14 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         }
     }
 
+    private struct GeneratedNarrationAssetResponse: Decodable {
+        let asset: GeneratedNarrationAssetPayload
+    }
+
+    private struct GeneratedNarrationAssetPayload: Decodable {
+        let downloadURL: String
+    }
+
     private enum Constants {
         static let preferenceKey = "macra.noraOnboardingVoiceEnabled"
         static let configRefreshInterval: TimeInterval = 300
@@ -104,6 +119,7 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         static let narrationField = "macraOnboardingNarrations"
         static let diskCacheDirectoryName = "MacraNoraNarrationCache"
         static let priorityOnboardingStepId = "welcome"
+        static let generatedNarrationFunctionPath = "/.netlify/functions/generate-macra-onboarding-narration"
     }
 
     private var audioPlayer: AVAudioPlayer?
@@ -175,7 +191,11 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
             do {
                 guard let asset = await self.narrationAsset(for: stepId) else {
                     self.logNarrationFailureIfNeeded("No Macra onboarding narration asset configured for \(stepId).")
-                    self.completeNarrationIfCurrent(key: key)
+                    let generatedAsset = try await self.generateStoredNarrationAsset(stepId: stepId, text: fallbackText)
+                    let data = try await self.audioData(for: generatedAsset)
+                    guard !Task.isCancelled, runID == self.narrationRunID else { return }
+                    self.playNarrationAudio(asset: generatedAsset, data: data, runID: runID, key: key)
+                    self.lastLoggedFailureMessage = nil
                     return
                 }
 
@@ -290,6 +310,22 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         return data
     }
 
+    private func generateStoredNarrationAsset(stepId: String, text: String) async throws -> NarrationAsset {
+        let spokenText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !spokenText.isEmpty else {
+            throw NSError(
+                domain: "MacraNoraVoiceService",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "No narration text was available."]
+            )
+        }
+
+        let generatedAsset = try await fetchGeneratedNarrationAsset(stepId: stepId, text: spokenText)
+        cachedAssets[stepId] = generatedAsset
+        lastConfigFetchAt = Date()
+        return generatedAsset
+    }
+
     @discardableResult
     private func cacheAndPrepareAudio(for asset: NarrationAsset, force: Bool) async throws -> Data {
         if !force, let cached = audioDataCache[asset.downloadURL] {
@@ -358,6 +394,60 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         let digest = SHA256.hash(data: Data(downloadURL.utf8))
         let filename = digest.map { String(format: "%02x", $0) }.joined() + ".mp3"
         return diskCacheDirectoryURL().appendingPathComponent(filename)
+    }
+
+    private func fetchGeneratedNarrationAsset(stepId: String, text: String) async throws -> NarrationAsset {
+        let trimmedBase = ConfigManager.shared
+            .getWebsiteBaseURL()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(trimmedBase)\(Constants.generatedNarrationFunctionPath)") else {
+            throw URLError(.badURL)
+        }
+
+        guard let user = Auth.auth().currentUser else {
+            throw NSError(
+                domain: "MacraNoraVoiceService",
+                code: -3,
+                userInfo: [NSLocalizedDescriptionKey: "Sign in is required for generated Nora narration."]
+            )
+        }
+
+        let token = try await user.getIDToken()
+        let payload: [String: Any] = [
+            "stepId": stepId,
+            "text": text
+        ]
+        let body = try JSONSerialization.data(withJSONObject: payload)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let detail = String(data: data, encoding: .utf8) ?? "Unknown server response"
+            throw NSError(
+                domain: "MacraNoraVoiceService",
+                code: httpResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Generated Nora narration failed: \(detail)"]
+            )
+        }
+
+        let decoded = try JSONDecoder().decode(GeneratedNarrationAssetResponse.self, from: data)
+        guard let asset = NarrationAsset(downloadURL: decoded.asset.downloadURL) else {
+            throw NSError(
+                domain: "MacraNoraVoiceService",
+                code: -4,
+                userInfo: [NSLocalizedDescriptionKey: "Generated Nora narration did not include a playable asset URL."]
+            )
+        }
+        return asset
     }
 
     private nonisolated static func fetchAudioData(from downloadURL: String) async throws -> Data {

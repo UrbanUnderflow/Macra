@@ -1,5 +1,6 @@
 import Foundation
 import FirebaseCore
+import FirebaseAuth
 #if canImport(FirebaseAnalytics)
 import FirebaseAnalytics
 #endif
@@ -27,6 +28,7 @@ private enum AppsFlyerAnalyticsEvent {
     static let startTrial = "af_start_trial"
     static let subscribe = "af_subscribe"
     static let purchase = "af_purchase"
+    static let experimentAssignment = "macra_experiment_assignment"
     static let planSelected = "macra_subscription_plan_selected"
     static let purchaseCancelled = "macra_subscription_purchase_cancelled"
     static let purchaseFailed = "macra_subscription_purchase_failed"
@@ -42,6 +44,9 @@ private enum AppsFlyerAnalyticsEvent {
     static let paywallValuePreviewViewed = "macra_paywall_value_preview_viewed"
     static let paywallPricingDisclosureViewed = "macra_paywall_pricing_disclosure_viewed"
     static let paywallTrialConfidenceViewed = "macra_paywall_trial_confidence_viewed"
+    static let paywallPurchaseBridgeViewed = "macra_paywall_purchase_bridge_viewed"
+    static let paywallPurchaseBridgeContinued = "macra_paywall_purchase_bridge_continued"
+    static let paywallPurchaseBridgeDismissed = "macra_paywall_purchase_bridge_dismissed"
     static let paywallCTABlocked = "macra_paywall_cta_blocked"
     static let paywallCancelFeedbackPresented = "macra_paywall_cancel_feedback_presented"
     static let paywallCancelFeedbackSubmitted = "macra_paywall_cancel_feedback_submitted"
@@ -70,6 +75,8 @@ private enum AppsFlyerAnalyticsEvent {
     static let onboardingStepCompleted = "macra_onboarding_step_completed"
     static let onboardingStepBack = "macra_onboarding_step_back"
     static let onboardingExited = "macra_onboarding_exited"
+    static let trialActivationScreenViewed = "macra_trial_activation_screen_viewed"
+    static let trialActivationPrimaryPressed = "macra_trial_activation_primary_pressed"
 }
 
 private enum AppsFlyerAnalyticsParam {
@@ -143,9 +150,8 @@ final class MacraAnalyticsService {
         identifyAppsFlyerUserIfAvailable()
 
         #if canImport(FirebaseAnalytics)
-        if FirebaseApp.app() != nil,
-           let user = UserService.sharedInstance.user {
-            Analytics.setUserID(user.id)
+        if let userId = currentAnalyticsUserId() {
+            Analytics.setUserID(userId)
         }
         #endif
 
@@ -209,6 +215,36 @@ final class MacraAnalyticsService {
         trackFirebaseEvent(
             name: "macra_ab_assignment",
             eventId: makeEventId(prefix: "ab_assignment", source: source, plan: nil),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackMacraExperimentAssignment(
+        experimentId: String,
+        variantId: String,
+        variantName: String,
+        defaultPlan: String,
+        layoutVariant: String,
+        onboardingVariant: String,
+        source: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = baseProperties(source: source)
+        properties["funnel"] = "subscription"
+        properties["funnel_step"] = "experiment_assignment"
+        properties["experiment_id"] = experimentId
+        properties["experiment_variant_id"] = variantId
+        properties["experiment_variant_name"] = variantName
+        properties["macra_paywall_default_plan"] = defaultPlan
+        properties["macra_paywall_layout_variant"] = layoutVariant
+        properties["onboarding_experience_variant"] = onboardingVariant
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.experimentAssignment,
+            tikTokEventName: "MacraExperimentAssignment",
+            eventId: makeEventId(prefix: "experiment_assignment_\(experimentId)_\(variantId)", source: source, plan: nil),
             properties: properties,
             includeRevenue: false
         )
@@ -385,6 +421,152 @@ final class MacraAnalyticsService {
             appsFlyerName: AppsFlyerAnalyticsEvent.paywallTrialConfidenceViewed,
             tikTokEventName: "PaywallTrialConfidenceViewed",
             eventId: makeEventId(prefix: "paywall_trial_confidence_viewed", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackPaywallPurchaseBridgeViewed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        ctaTitle: String,
+        metadata: [String: Any] = [:]
+    ) {
+        trackPaywallPurchaseBridgeEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallPurchaseBridgeViewed,
+            tikTokEventName: "PaywallPurchaseBridgeViewed",
+            funnelStep: "purchase_bridge_viewed",
+            eventIdPrefix: "purchase_bridge_viewed",
+            source: source,
+            selectedPlan: selectedPlan,
+            ctaTitle: ctaTitle,
+            action: "viewed",
+            metadata: metadata
+        )
+    }
+
+    func trackPaywallPurchaseBridgeContinued(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        ctaTitle: String,
+        metadata: [String: Any] = [:]
+    ) {
+        trackPaywallPurchaseBridgeEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallPurchaseBridgeContinued,
+            tikTokEventName: "PaywallPurchaseBridgeContinued",
+            funnelStep: "purchase_bridge_continued",
+            eventIdPrefix: "purchase_bridge_continued",
+            source: source,
+            selectedPlan: selectedPlan,
+            ctaTitle: ctaTitle,
+            action: "continued",
+            metadata: metadata
+        )
+    }
+
+    func trackPaywallPurchaseBridgeDismissed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        ctaTitle: String,
+        reason: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var bridgeMetadata = metadata
+        bridgeMetadata["dismiss_reason"] = reason
+        trackPaywallPurchaseBridgeEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.paywallPurchaseBridgeDismissed,
+            tikTokEventName: "PaywallPurchaseBridgeDismissed",
+            funnelStep: "purchase_bridge_dismissed",
+            eventIdPrefix: "purchase_bridge_dismissed",
+            source: source,
+            selectedPlan: selectedPlan,
+            ctaTitle: ctaTitle,
+            action: "dismissed",
+            metadata: bridgeMetadata
+        )
+    }
+
+    func trackTrialActivationScreenViewed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "trial_activation_screen_viewed"
+        )
+        properties["activation_surface"] = "day_1_start"
+        properties["activation_prompt"] = "start_with_one_meal"
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.trialActivationScreenViewed,
+            tikTokEventName: "TrialActivationScreenViewed",
+            eventId: makeEventId(prefix: "trial_activation_screen_viewed", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    func trackTrialActivationPrimaryPressed(
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        actionTitle: String,
+        metadata: [String: Any] = [:]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: "trial_activation_primary_pressed"
+        )
+        properties["activation_surface"] = "day_1_start"
+        properties["activation_prompt"] = "start_with_one_meal"
+        properties["button_name"] = "trial_activation_primary"
+        properties["cta_title"] = actionTitle
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: AppsFlyerAnalyticsEvent.trialActivationPrimaryPressed,
+            tikTokEventName: "TrialActivationPrimaryPressed",
+            eventId: makeEventId(prefix: "trial_activation_primary_pressed", source: source, plan: selectedPlan),
+            properties: properties,
+            includeRevenue: false
+        )
+    }
+
+    private func trackPaywallPurchaseBridgeEvent(
+        appsFlyerName: String,
+        tikTokEventName: String,
+        funnelStep: String,
+        eventIdPrefix: String,
+        source: String,
+        selectedPlan: SubscriptionPlanOption?,
+        ctaTitle: String,
+        action: String,
+        metadata: [String: Any]
+    ) {
+        var properties = subscriptionLifecycleProperties(
+            source: source,
+            plan: selectedPlan,
+            funnelStep: funnelStep
+        )
+        properties["bridge_surface"] = "pre_storekit_confirmation"
+        properties["purchase_bridge_action"] = action
+        properties["cta_title"] = ctaTitle
+        if let trialDays = selectedPlan?.trialDays {
+            properties["trial_days"] = trialDays
+        }
+        if let selectedPlan {
+            properties["renewal_price_label"] = selectedPlan.priceLabel
+            properties["selected_plan_period"] = selectedPlan.analyticsPeriod
+        }
+        mergeAnalyticsMetadata(metadata, into: &properties)
+
+        trackCustomLifecycleEvent(
+            appsFlyerName: appsFlyerName,
+            tikTokEventName: tikTokEventName,
+            eventId: makeEventId(prefix: eventIdPrefix, source: source, plan: selectedPlan),
             properties: properties,
             includeRevenue: false
         )
@@ -1527,8 +1709,13 @@ final class MacraAnalyticsService {
             "plan_period",
             "selected_plan_period",
             "selected_plan_id",
+            "experiment_id",
+            "experiment_variant_id",
+            "experiment_variant_name",
+            "experiment_assignment_source",
             "macra_paywall_default_plan",
             "macra_paywall_layout_variant",
+            "onboarding_experience_variant",
             "paywall_variant",
             "paywall_layout_variant",
             "paywall_default_selection",
@@ -1538,6 +1725,15 @@ final class MacraAnalyticsService {
             "paywall_layout_ab_parameter",
             "uses_web_checkout_fallback",
             "has_trial_confidence_card",
+            "uses_trial_prep_compact_layout",
+            "uses_hard_paywall_value_layout",
+            "compact_paywall_step",
+            "trial_disclosure_days",
+            "trial_reminder_lead_days",
+            "trial_reminder_choice",
+            "purchase_bridge_action",
+            "activation_surface",
+            "activation_prompt",
             "available_plan_count",
             "available_package_count",
             "supported_package_count",
@@ -1618,11 +1814,26 @@ final class MacraAnalyticsService {
 
     private func identifyAppsFlyerUserIfAvailable() {
         #if canImport(AppsFlyerLib)
-        if FirebaseApp.app() != nil,
-           let user = UserService.sharedInstance.user {
-            AppsFlyerLib.shared().customerUserID = user.id
+        if let userId = currentAnalyticsUserId() {
+            AppsFlyerLib.shared().customerUserID = userId
         }
         #endif
+    }
+
+    private func currentAnalyticsUserId() -> String? {
+        guard FirebaseApp.app() != nil else { return nil }
+
+        if let userId = UserService.sharedInstance.user?.id.trimmingCharacters(in: .whitespacesAndNewlines),
+           !userId.isEmpty {
+            return userId
+        }
+
+        if let userId = Auth.auth().currentUser?.uid.trimmingCharacters(in: .whitespacesAndNewlines),
+           !userId.isEmpty {
+            return userId
+        }
+
+        return nil
     }
 
     private func tikTokReadyForTracking() -> Bool {
@@ -1643,6 +1854,12 @@ final class MacraAnalyticsService {
             "build_number": buildNumber,
             "build_configuration": buildConfiguration
         ]
+
+        if let analyticsUserId = currentAnalyticsUserId() {
+            properties["external_id"] = analyticsUserId
+            properties["firebase_uid"] = analyticsUserId
+            properties["customer_user_id"] = analyticsUserId
+        }
 
         if FirebaseApp.app() != nil,
            let user = UserService.sharedInstance.user {

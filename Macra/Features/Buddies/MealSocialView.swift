@@ -385,7 +385,7 @@ final class MealSocialViewModel: ObservableObject {
                 guard let self else { return }
                 self.isTogglingLike = false
                 if case .failure(let error) = result {
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
                 // Listener re-emits on success — UI updates without
                 // needing a manual mutation.
@@ -409,7 +409,7 @@ final class MealSocialViewModel: ObservableObject {
                 case .success:
                     self.commentDraft = ""
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }

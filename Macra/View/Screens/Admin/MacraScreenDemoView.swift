@@ -25,7 +25,7 @@ struct MacraScreenDemoView: View {
 
                     screenSection(
                         title: "Core Screens",
-                        subtitle: "Use the Remote Config paywall to see the treatment your device is actually receiving.",
+                        subtitle: "Use the Experiments assignment to see the treatment your device is actually receiving.",
                         entries: coreDemoEntries
                     )
 
@@ -52,7 +52,7 @@ struct MacraScreenDemoView: View {
                     .padding(.top, 18)
                     .padding(.trailing, 18)
                 }
-            case .onboarding, .onboardingControl, .onboardingTrialPrepCompact:
+            case .onboarding, .onboardingControl, .onboardingTrialPrepCompact, .onboardingNoraGuided, .onboardingHardPaywallValue:
                 MacraOnboardingFlowView(
                     appCoordinator: appCoordinator,
                     isDemoMode: true,
@@ -60,13 +60,14 @@ struct MacraScreenDemoView: View {
                     onDemoDismiss: { activeDemo = nil },
                     existingSubscriptionAccessOverride: paywallDemoAudience.hasExistingSubscriptionAccess,
                     paywallDefaultPlanSelectionOverride: demo.paywallDefaultPlanSelectionOverride,
-                    paywallLayoutVariantOverride: demo.paywallLayoutVariantOverride
+                    paywallLayoutVariantOverride: demo.paywallLayoutVariantOverride,
+                    onboardingExperienceVariantOverride: demo.onboardingExperienceVariantOverride
                 )
                 .environment(\.isMacraDemoMode, true)
                 .overlay(alignment: .topTrailing) {
-                    screenDemoPaywallControls
+                    screenDemoDismissControl
                 }
-            case .paywall, .paywallAnnualDefault, .paywallMonthlyVariant, .paywallTrialPrepCompact, .paywallCancelFeedback:
+            case .paywall, .paywallAnnualDefault, .paywallMonthlyVariant, .paywallTrialPrepCompact, .paywallHardPaywallValue, .paywallCancelFeedback:
                 PayWallView(
                     viewModel: PayWallViewModel(appCoordinator: appCoordinator),
                     isDemoMode: true,
@@ -92,6 +93,14 @@ struct MacraScreenDemoView: View {
             }
 
             MacraPaywallDemoAudienceToggle(selection: $paywallDemoAudience)
+        }
+        .padding(.top, 52)
+        .padding(.trailing, 14)
+    }
+
+    private var screenDemoDismissControl: some View {
+        MacraScreenDemoDismissButton {
+            activeDemo = nil
         }
         .padding(.top, 52)
         .padding(.trailing, 14)
@@ -132,7 +141,10 @@ struct MacraScreenDemoView: View {
             MacraScreenDemoEntry(demo: .onboarding),
             MacraScreenDemoEntry(demo: .onboardingControl),
             MacraScreenDemoEntry(demo: .onboardingTrialPrepCompact),
+            MacraScreenDemoEntry(demo: .onboardingNoraGuided),
+            MacraScreenDemoEntry(demo: .onboardingHardPaywallValue),
             MacraScreenDemoEntry(demo: .paywall),
+            MacraScreenDemoEntry(demo: .paywallHardPaywallValue),
             MacraScreenDemoEntry(demo: .paywallCancelFeedback)
         ]
     }
@@ -184,6 +196,22 @@ struct MacraScreenDemoView: View {
                         systemImage: "rectangle.stack.fill",
                         badge: "A",
                         idSuffix: "trial-confidence-variant-a"
+                    ),
+                    MacraScreenDemoEntry(
+                        demo: .onboardingNoraGuided,
+                        title: "Variant B - Nora Guided Onboarding",
+                        subtitle: "Value: nora_guided. Adds the intent question, Nora prompt bubbles, and the compact trial prep paywall.",
+                        systemImage: "sparkles",
+                        badge: "B",
+                        idSuffix: "trial-confidence-variant-b"
+                    ),
+                    MacraScreenDemoEntry(
+                        demo: .onboardingHardPaywallValue,
+                        title: "Variant C - Hard Paywall Value",
+                        subtitle: "Value: hard_paywall_value. Monthly-first value flow that pushes the built plan, scanner, and Nora before Apple confirmation.",
+                        systemImage: "creditcard.fill",
+                        badge: "C",
+                        idSuffix: "hard-paywall-value-variant-c"
                     )
                 ]
             )
@@ -218,11 +246,11 @@ struct MacraScreenDemoView: View {
     private var abTestPreviewSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("A/B Tests")
+                Text("Experiments")
                     .font(.headline.weight(.heavy))
                     .foregroundColor(.black)
 
-                Text("Preview both variants without waiting for Remote Config assignment.")
+                Text("Preview variants without waiting for the Experiments assignment.")
                     .font(.caption.weight(.medium))
                     .foregroundColor(.black.opacity(0.58))
             }
@@ -269,10 +297,13 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
     case onboarding
     case onboardingControl
     case onboardingTrialPrepCompact
+    case onboardingNoraGuided
+    case onboardingHardPaywallValue
     case paywall
     case paywallAnnualDefault
     case paywallMonthlyVariant
     case paywallTrialPrepCompact
+    case paywallHardPaywallValue
     case paywallCancelFeedback
 
     var id: String { rawValue }
@@ -280,13 +311,16 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .login: return "Login"
-        case .onboarding: return "Full Onboarding - Remote Config"
+        case .onboarding: return "Full Onboarding - Experiments"
         case .onboardingControl: return "Full Onboarding - Baseline"
         case .onboardingTrialPrepCompact: return "Full Onboarding - Compact"
-        case .paywall: return "Paywall - Remote Config"
+        case .onboardingNoraGuided: return "Full Onboarding - Nora Guided"
+        case .onboardingHardPaywallValue: return "Full Onboarding - Hard Paywall"
+        case .paywall: return "Paywall - Experiments"
         case .paywallAnnualDefault: return "Paywall - Annual Baseline"
         case .paywallMonthlyVariant: return "Paywall - Monthly Variant"
         case .paywallTrialPrepCompact: return "Paywall - Trial Prep Compact"
+        case .paywallHardPaywallValue: return "Paywall - Hard Value"
         case .paywallCancelFeedback: return "Cancel Feedback"
         }
     }
@@ -296,19 +330,25 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
         case .login:
             return "Preview the returning-user auth page with email, password, reset, and Apple sign-in states."
         case .onboarding:
-            return "Walk the first-run Macra flow using the active Remote Config paywall assignment."
+            return "Walk the first-run Macra flow using the active Experiments assignment."
         case .onboardingControl:
             return "Walk the first-run Macra flow into the current long paywall baseline."
         case .onboardingTrialPrepCompact:
             return "Walk the first-run Macra flow into the two prep screens and compact plan-first paywall."
+        case .onboardingNoraGuided:
+            return "Walk the third variant with the early intent question, Nora prompt bubbles, reminder simplification, and compact paywall."
+        case .onboardingHardPaywallValue:
+            return "Walk the paid-conversion variant with Nora guided onboarding and a monthly-first value paywall."
         case .paywall:
-            return "Uses the active Remote Config/A-B assignment for plan order, pricing copy, and analytics metadata."
+            return "Uses the active Experiments assignment for plan order, pricing copy, and analytics metadata."
         case .paywallAnnualDefault:
             return "Forces the baseline annual-first treatment so you can review the control arm."
         case .paywallMonthlyVariant:
             return "Forces the monthly-first treatment so you can review the lower-sticker-shock variant."
         case .paywallTrialPrepCompact:
             return "Forces the two-step trial prep and condensed plan-first paywall treatment."
+        case .paywallHardPaywallValue:
+            return "Forces the monthly-first value paywall built for immediate paid conversion."
         case .paywallCancelFeedback:
             return "Opens the new one-tap cancellation reason prompt on top of the paywall."
         }
@@ -320,19 +360,22 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
         case .onboarding: return "list.bullet.clipboard.fill"
         case .onboardingControl: return "rectangle.stack.fill"
         case .onboardingTrialPrepCompact: return "rectangle.stack.fill"
+        case .onboardingNoraGuided: return "sparkles"
+        case .onboardingHardPaywallValue: return "creditcard.fill"
         case .paywall: return "creditcard.fill"
         case .paywallAnnualDefault: return "calendar.badge.clock"
         case .paywallMonthlyVariant: return "calendar"
         case .paywallTrialPrepCompact: return "rectangle.stack.fill"
+        case .paywallHardPaywallValue: return "creditcard.fill"
         case .paywallCancelFeedback: return "questionmark.bubble.fill"
         }
     }
 
     var paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection? {
         switch self {
-        case .onboardingControl, .onboardingTrialPrepCompact, .paywallAnnualDefault, .paywallTrialPrepCompact, .paywallCancelFeedback:
+        case .onboardingControl, .onboardingTrialPrepCompact, .onboardingNoraGuided, .paywallAnnualDefault, .paywallTrialPrepCompact, .paywallCancelFeedback:
             return .annual
-        case .paywallMonthlyVariant:
+        case .onboardingHardPaywallValue, .paywallMonthlyVariant, .paywallHardPaywallValue:
             return .monthly
         case .login, .onboarding, .paywall:
             return nil
@@ -341,11 +384,22 @@ private enum MacraDemoScreen: String, CaseIterable, Identifiable {
 
     var paywallLayoutVariantOverride: MacraPaywallLayoutVariant? {
         switch self {
-        case .onboardingTrialPrepCompact, .paywallTrialPrepCompact:
+        case .onboardingTrialPrepCompact, .onboardingNoraGuided, .paywallTrialPrepCompact:
             return .trialPrepCompact
+        case .onboardingHardPaywallValue, .paywallHardPaywallValue:
+            return .hardPaywallValue
         case .onboardingControl, .paywallAnnualDefault, .paywallMonthlyVariant, .paywallCancelFeedback:
             return .control
         case .login, .onboarding, .paywall:
+            return nil
+        }
+    }
+
+    var onboardingExperienceVariantOverride: MacraOnboardingExperienceVariant? {
+        switch self {
+        case .onboardingNoraGuided, .onboardingHardPaywallValue:
+            return .noraGuided
+        case .login, .onboarding, .onboardingControl, .onboardingTrialPrepCompact, .paywall, .paywallAnnualDefault, .paywallMonthlyVariant, .paywallTrialPrepCompact, .paywallHardPaywallValue, .paywallCancelFeedback:
             return nil
         }
     }

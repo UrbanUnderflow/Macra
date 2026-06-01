@@ -41,7 +41,7 @@ final class MacraDailyInsightService: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     if let error = error {
-                        self.lastError = error.localizedDescription
+                        self.lastError = MacraUserFacingError.sync(error)
                         return
                     }
                     guard let data = snapshot?.data() else {
@@ -95,12 +95,16 @@ final class MacraDailyInsightService: ObservableObject {
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 let bodyString = String(data: data, encoding: .utf8) ?? ""
                 throw NSError(domain: "MacraDailyInsight", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: "Insight service returned \((response as? HTTPURLResponse)?.statusCode ?? -1): \(bodyString.prefix(200))"
+                    NSLocalizedDescriptionKey: bodyString
                 ])
             }
             // Firestore listener will update `insight` when the function persists.
         } catch {
-            lastError = error.localizedDescription
+            lastError = MacraUserFacingError.message(
+                for: error,
+                fallbackCode: "MACRA_DAILY_INSIGHT_FAILED",
+                fallbackMessage: "We couldn't refresh today's insight right now. Try again in a moment."
+            )
         }
 
         isRegenerating = false

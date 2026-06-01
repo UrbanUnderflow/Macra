@@ -11,11 +11,14 @@ struct NotificationPreferencesStepView: View {
     @State private var isRequesting = false
 
     private let accent = Color(hex: "E0FE10")
+    private var isNoraGuided: Bool {
+        coordinator.onboardingExperienceVariant == .noraGuided
+    }
 
     var body: some View {
         OnboardingScaffold(
-            title: "Choose how Nora holds you to this.",
-            subtitle: "This is your first commitment before unlocking Macra: decide when you want the plan to pull you back on track.",
+            title: isNoraGuided ? "When should Nora pull you back on track?" : "Choose how Nora holds you to this.",
+            subtitle: isNoraGuided ? "Pick the moments where a small nudge would help you make the next food decision." : "This is your first commitment before unlocking Macra: decide when you want the plan to pull you back on track.",
             progress: coordinator.progress,
             canGoBack: coordinator.canGoBack,
             canGoForward: coordinator.canGoForward,
@@ -28,22 +31,22 @@ struct NotificationPreferencesStepView: View {
                 commitmentCard
 
                 toggleCard(
-                    title: "I will log every meal",
-                    subtitle: "Nora can nudge Meal 1, 2, 3, and 4 so the plan stays visible.",
+                    title: isNoraGuided ? "Meal nudges" : "I will log every meal",
+                    subtitle: isNoraGuided ? "A reminder around each planned meal window." : "Nora can nudge Meal 1, 2, 3, and 4 so the plan stays visible.",
                     icon: "fork.knife",
                     isOn: $preferences.mealReminders
                 )
 
                 toggleCard(
-                    title: "I will start the day on track",
-                    subtitle: "An 8 AM nudge to make the first food decision intentional.",
+                    title: isNoraGuided ? "Morning start" : "I will start the day on track",
+                    subtitle: isNoraGuided ? "An 8 AM prompt before the day starts drifting." : "An 8 AM nudge to make the first food decision intentional.",
                     icon: "sunrise.fill",
                     isOn: $preferences.morningLogReminder
                 )
 
                 toggleCard(
-                    title: "I will check in before the day ends",
-                    subtitle: "An 8 PM reflection with Nora so one day can teach the next.",
+                    title: isNoraGuided ? "Evening check-in" : "I will check in before the day ends",
+                    subtitle: isNoraGuided ? "An 8 PM reflection so one day can teach the next." : "An 8 PM reflection with Nora so one day can teach the next.",
                     icon: "moon.stars.fill",
                     isOn: $preferences.endOfDayCheckin
                 )
@@ -69,11 +72,11 @@ struct NotificationPreferencesStepView: View {
                 .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 5) {
-                Text("I am doing this.")
+                Text(isNoraGuided ? "Choose the helpful moments." : "I am doing this.")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
 
-                Text("Pick one or more moments where Future You wants Nora to step in before old habits do.")
+                Text(isNoraGuided ? "You can start light. The goal is to keep the plan visible when decisions happen." : "Pick one or more moments where Future You wants Nora to step in before old habits do.")
                     .font(.system(size: 13))
                     .foregroundColor(.white.opacity(0.66))
                     .fixedSize(horizontal: false, vertical: true)

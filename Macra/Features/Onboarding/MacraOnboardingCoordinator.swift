@@ -153,6 +153,7 @@ struct MacraPlanHistoryItem: Identifiable, Hashable {
 final class MacraOnboardingCoordinator: ObservableObject {
     enum Step: Int, CaseIterable, Hashable {
         case welcome
+        case primaryFocus
         case meetNora
         case coachAssignedPlan
         case fwpMacrosHandoff
@@ -172,6 +173,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case features
         case notificationPreferences
         case commitTrial
+        case activationStart
     }
 
     enum FWPHandoffState: Equatable {
@@ -188,6 +190,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     @Published var selectedPackageId: String?
     @Published var isPurchasing: Bool = false
     @Published var purchaseError: String?
+    @Published var onboardingExperienceVariant: MacraOnboardingExperienceVariant
     @Published var planMacros: MacroRecommendation?
     @Published var isLoadingPlanMacros: Bool = false
     @Published var suggestedMealPlan: MacraSuggestedMealPlan?
@@ -229,6 +232,8 @@ final class MacraOnboardingCoordinator: ObservableObject {
     private var didTrackOnboardingProfileCompleted = false
     private var didTrackOnboardingCompleted = false
     private var didTrackExistingSubscriptionAccessContinue = false
+    private var didTrackTrialActivationScreenViewed = false
+    private var didTrackTrialActivationPrimaryPressed = false
     private var trackedOnboardingStepViews: Set<Step> = []
     private var trackedOnboardingStepCompletions: Set<Step> = []
 
@@ -238,6 +243,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     let usesLivePurchasesInDemo: Bool
     let paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection?
     let paywallLayoutVariantOverride: MacraPaywallLayoutVariant?
+    let onboardingExperienceVariantOverride: MacraOnboardingExperienceVariant?
     private let onDemoDismiss: (() -> Void)?
 
     init(
@@ -248,8 +254,10 @@ final class MacraOnboardingCoordinator: ObservableObject {
         onDemoDismiss: (() -> Void)? = nil,
         existingSubscriptionAccessOverride: Bool? = nil,
         paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection? = nil,
-        paywallLayoutVariantOverride: MacraPaywallLayoutVariant? = nil
+        paywallLayoutVariantOverride: MacraPaywallLayoutVariant? = nil,
+        onboardingExperienceVariantOverride: MacraOnboardingExperienceVariant? = nil
     ) {
+        let cachedExperimentAssignment = MacraPaywallExperimentService.cachedAssignment()
         self.appCoordinator = appCoordinator
         self.startingStep = startingStep
         self.currentStep = startingStep
@@ -257,8 +265,10 @@ final class MacraOnboardingCoordinator: ObservableObject {
         self.usesLivePurchasesInDemo = usesLivePurchasesInDemo
         self.paywallDefaultPlanSelectionOverride = paywallDefaultPlanSelectionOverride
         self.paywallLayoutVariantOverride = paywallLayoutVariantOverride
+        self.onboardingExperienceVariantOverride = onboardingExperienceVariantOverride
         self.onDemoDismiss = onDemoDismiss
         self.existingSubscriptionAccessOverride = existingSubscriptionAccessOverride
+        self.onboardingExperienceVariant = onboardingExperienceVariantOverride ?? cachedExperimentAssignment.onboardingVariant
 
         if isDemoMode {
             self.answers = Self.demoAnswers
@@ -269,6 +279,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
 
     private static var demoAnswers: MacraOnboardingAnswers {
         var answers = MacraOnboardingAnswers()
+        answers.primaryFocus = .eatConsistently
         answers.sex = .male
         answers.birthdate = Calendar.current.date(byAdding: .year, value: -31, to: Date())
         answers.heightCm = 180
@@ -372,7 +383,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
                 localizedPriceString: "$4.99",
                 price: Decimal(4.99),
                 periodKind: .month,
-                trialDays: 3,
+                trialDays: nil,
                 product: nil
             ))
         ]
@@ -386,7 +397,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     var canGoBack: Bool {
         if currentStep == startingStep { return false }
         switch currentStep {
-        case .welcome, .generatingPlan, .notificationPreferences:
+        case .welcome, .generatingPlan, .notificationPreferences, .activationStart:
             return false
         default:
             return currentStep.rawValue > 0
@@ -396,6 +407,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
     var canGoForward: Bool {
         switch currentStep {
         case .welcome: return true
+        case .primaryFocus: return onboardingExperienceVariant != .noraGuided || answers.primaryFocus != nil
         case .meetNora: return true
         case .coachAssignedPlan:
             // Coach-handoff screen drives its own CTA; no global "continue".
@@ -419,6 +431,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case .features: return true
         case .commitTrial: return !isPurchasing
         case .notificationPreferences: return true
+        case .activationStart: return true
         }
     }
 
@@ -608,6 +621,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
             "can_go_forward": canGoForward,
             "using_fwp_macros": usingFWPMacros,
             "using_coach_plan": usingCoachPlan,
+            "onboarding_experience_variant": onboardingExperienceVariant.rawValue,
             "has_plan_macros": planMacros != nil,
             "has_suggested_meal_plan": suggestedMealPlan != nil
         ]
@@ -686,6 +700,37 @@ final class MacraOnboardingCoordinator: ObservableObject {
         )
     }
 
+    func trackTrialActivationScreenViewedIfNeeded() {
+        guard !isDemoMode, !didTrackTrialActivationScreenViewed else { return }
+        didTrackTrialActivationScreenViewed = true
+        var metadata = activePaywallFunnelAnalyticsMetadata
+        metadata["has_suggested_first_meal"] = suggestedMealPlan?.meals.first != nil
+        metadata["has_activation_macros"] = planMacros != nil
+        MacraAnalyticsService.shared.trackTrialActivationScreenViewed(
+            source: paywallAnalyticsSource,
+            selectedPlan: selectedPlan,
+            metadata: metadata
+        )
+    }
+
+    func startTrialActivationFirstMeal() {
+        guard !isPurchasing else { return }
+        if !isDemoMode, !didTrackTrialActivationPrimaryPressed {
+            didTrackTrialActivationPrimaryPressed = true
+            var metadata = activePaywallFunnelAnalyticsMetadata
+            metadata["has_suggested_first_meal"] = suggestedMealPlan?.meals.first != nil
+            metadata["has_activation_macros"] = planMacros != nil
+            MacraAnalyticsService.shared.trackTrialActivationPrimaryPressed(
+                source: paywallAnalyticsSource,
+                selectedPlan: selectedPlan,
+                actionTitle: "Start with one meal",
+                metadata: metadata
+            )
+        }
+        pendingOnboardingCompletionAction = "activation_primary_pressed"
+        advance()
+    }
+
     private func activePurchaseLogMetadata(channel: String, extra: [String: Any] = [:]) -> [String: Any] {
         var metadata = activePaywallFunnelAnalyticsMetadata
         metadata["purchase_channel"] = channel
@@ -693,6 +738,34 @@ final class MacraOnboardingCoordinator: ObservableObject {
         metadata["selected_plan_period_at_decision"] = selectedPlan.map { periodAnalyticsName($0.periodKind) } ?? "none"
         extra.forEach { metadata[$0.key] = $0.value }
         return metadata
+    }
+
+    private func scheduleTrialEndingReminderIfRequested(plan: SubscriptionPlanOption?) {
+        guard !isDemoMode,
+              let leadDays = intPurchaseMetadataValue(for: "trial_reminder_lead_days"),
+              leadDays > 0 else { return }
+
+        let trialDays = intPurchaseMetadataValue(for: "trial_disclosure_days") ?? plan?.trialDays
+        guard let trialDays, trialDays > 0 else { return }
+
+        NotificationService.sharedInstance.scheduleTrialEndingReminder(
+            trialDays: trialDays,
+            leadDays: leadDays
+        )
+    }
+
+    private func intPurchaseMetadataValue(for key: String) -> Int? {
+        let value = currentPurchasePaywallMetadata[key]
+        if let intValue = value as? Int {
+            return intValue
+        }
+        if let numberValue = value as? NSNumber {
+            return numberValue.intValue
+        }
+        if let stringValue = value as? String {
+            return Int(stringValue)
+        }
+        return nil
     }
 
     private func logPurchaseSuccess(plan: SubscriptionPlanOption, channel: String) {
@@ -1082,7 +1155,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self?.mealPlanError = error.localizedDescription
+                    self?.mealPlanError = MacraUserFacingError.mealPlan(error)
                     self?.isLoadingMealPlan = false
                 }
             }
@@ -1104,6 +1177,14 @@ final class MacraOnboardingCoordinator: ObservableObject {
         guard let nextStep = Step(rawValue: next) else {
             trackCurrentOnboardingStepCompleted(action: "flow_finished", destination: nil)
             completeOnboardingAndEnterApp(action: "flow_finished")
+            return
+        }
+
+        if shouldSkip(step: nextStep),
+           let destinationStep = Step(rawValue: nextStep.rawValue + 1) {
+            trackCurrentOnboardingStepCompleted(action: "advance", destination: destinationStep)
+            currentStep = nextStep
+            advance()
             return
         }
 
@@ -1176,6 +1257,14 @@ final class MacraOnboardingCoordinator: ObservableObject {
         let prev = currentStep.rawValue - 1
         guard let prevStep = Step(rawValue: prev) else { return }
 
+        if shouldSkip(step: prevStep),
+           let destinationStep = Step(rawValue: prevStep.rawValue - 1) {
+            trackCurrentOnboardingStepBack(destination: destinationStep)
+            currentStep = prevStep
+            back()
+            return
+        }
+
         if prevStep == .sportSelection,
            answers.activityLevel != .athlete,
            let destinationStep = Step(rawValue: prevStep.rawValue - 1) {
@@ -1224,6 +1313,68 @@ final class MacraOnboardingCoordinator: ObservableObject {
 
         withAnimation(.easeInOut(duration: 0.3)) {
             currentStep = prevStep
+        }
+    }
+
+    private func shouldSkip(step: Step) -> Bool {
+        switch step {
+        case .primaryFocus:
+            return onboardingExperienceVariant != .noraGuided
+        default:
+            return false
+        }
+    }
+
+    func refreshExperimentAssignmentIfNeeded() async {
+        guard !isDemoMode else { return }
+        guard onboardingExperienceVariantOverride == nil else { return }
+        let assignment = await MacraPaywallExperimentService.fetchAndActivateAssignment()
+        guard onboardingExperienceVariant != assignment.onboardingVariant else { return }
+        onboardingExperienceVariant = assignment.onboardingVariant
+    }
+
+    func noraPrompt(for step: Step) -> String? {
+        guard onboardingExperienceVariant == .noraGuided else { return nil }
+        switch step {
+        case .primaryFocus:
+            if let focus = answers.primaryFocus {
+                return "Good. I'll shape the plan around: \(focus.title.lowercased())."
+            }
+            return "First, tell me what you want food to help with most."
+        case .sex:
+            if answers.sex != nil { return "Got it. I only use this for the calorie estimate." }
+            return "This keeps the starting target from being generic."
+        case .age:
+            if answers.birthdate != nil { return "Good. Age helps tighten the baseline." }
+            return "Your age helps me estimate daily energy needs."
+        case .height:
+            if answers.heightCm != nil { return "Perfect. Height gives the estimate more shape." }
+            return "Height keeps your targets anchored to your body."
+        case .currentWeight:
+            if answers.currentWeightKg != nil { return "That is the baseline, not a judgment." }
+            return "Tell me where we are starting today."
+        case .goalWeight:
+            if answers.goalWeightKg != nil { return "Now I can map the path from here to there." }
+            return "Choose the weight you want the plan to move toward."
+        case .pace:
+            if answers.pace != nil { return "I'll use that pace to keep the plan livable." }
+            return "Pick the pace you can repeat on normal days."
+        case .activityLevel:
+            if answers.activityLevel != nil { return "I'll match the target to your actual week." }
+            return "Your normal activity changes how much food fits."
+        case .sportSelection:
+            if let sportName = answers.sportName, !sportName.isEmpty {
+                return "Great. I'll tune the plan around \(sportName.lowercased())."
+            }
+            return "If sport drives your week, I'll use it to tune fueling."
+        case .dietaryPreference:
+            if answers.dietaryPreference != nil { return "I'll keep meal ideas inside those boundaries." }
+            return "Tell me any food boundaries you want respected."
+        case .biggestStruggle:
+            if answers.biggestStruggle != nil { return "That tells me where to coach hardest." }
+            return "This is the part I'll help protect when real life gets messy."
+        default:
+            return nil
         }
     }
 
@@ -1370,6 +1521,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
                     case .success:
                         self?.logPurchaseSuccess(plan: plan, channel: "storekit")
                         self?.trackSubscriptionStart(plan: plan)
+                        self?.scheduleTrialEndingReminderIfRequested(plan: plan)
                         self?.verifySubscriptionAndContinue(plan: plan)
                     case .failure(let error):
                         if PurchaseService.sharedInstance.isPurchaseCanceledError(error) {
@@ -1391,7 +1543,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
                         } else {
                             self?.logPurchaseFailed(plan: plan, error: error, failureReason: "storekit_purchase_failed")
                             self?.trackSubscriptionPurchaseFailed(plan: plan, error: error)
-                            self?.purchaseError = error.localizedDescription
+                            self?.purchaseError = MacraUserFacingError.purchase(error)
                         }
                     }
                 }
@@ -1478,6 +1630,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
 
                     if refreshedHasAccess || purchaseServiceHasAccess {
                         self.purchaseError = nil
+                        self.scheduleTrialEndingReminderIfRequested(plan: self.selectedPlan)
                         MacraAnalyticsService.shared.trackSubscriptionAccessVerified(
                             plan: self.selectedPlan,
                             source: self.paywallAnalyticsSource,
@@ -1497,7 +1650,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
                             error: userError,
                             metadata: self.paywallFunnelAnalyticsMetadata
                         )
-                        self.purchaseError = userError.localizedDescription
+                        self.purchaseError = MacraUserFacingError.purchase(userError)
                         return
                     }
 
@@ -1520,7 +1673,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
                             error: error,
                             metadata: self.paywallFunnelAnalyticsMetadata
                         )
-                        self.purchaseError = error.localizedDescription
+                        self.purchaseError = MacraUserFacingError.purchase(error)
                     case .success(true):
                         break
                     }
@@ -1576,7 +1729,7 @@ final class MacraOnboardingCoordinator: ObservableObject {
         case .success(false):
             purchaseError = inactiveMessage
         case .failure(let error):
-            purchaseError = error.localizedDescription
+            purchaseError = MacraUserFacingError.purchase(error)
         }
     }
 
@@ -1610,6 +1763,7 @@ private extension MacraOnboardingCoordinator.Step {
     var analyticsId: String {
         switch self {
         case .welcome: return "welcome"
+        case .primaryFocus: return "primary_focus"
         case .meetNora: return "meet_nora"
         case .coachAssignedPlan: return "coach_assigned_plan"
         case .fwpMacrosHandoff: return "fwp_macros_handoff"
@@ -1628,6 +1782,7 @@ private extension MacraOnboardingCoordinator.Step {
         case .planReady: return "plan_ready"
         case .features: return "features"
         case .commitTrial: return "commit_trial"
+        case .activationStart: return "activation_start"
         case .notificationPreferences: return "notification_preferences"
         }
     }
@@ -1635,6 +1790,7 @@ private extension MacraOnboardingCoordinator.Step {
     var analyticsName: String {
         switch self {
         case .welcome: return "Welcome"
+        case .primaryFocus: return "Primary focus"
         case .meetNora: return "Meet Nora"
         case .coachAssignedPlan: return "Coach assigned plan"
         case .fwpMacrosHandoff: return "FWP macros handoff"
@@ -1653,6 +1809,7 @@ private extension MacraOnboardingCoordinator.Step {
         case .planReady: return "Plan ready"
         case .features: return "Features"
         case .commitTrial: return "Commit trial"
+        case .activationStart: return "Activation start"
         case .notificationPreferences: return "Notification preferences"
         }
     }
@@ -1661,6 +1818,8 @@ private extension MacraOnboardingCoordinator.Step {
         switch self {
         case .welcome:
             return "Welcome to Macra. I am Nora. I will help turn your goal into numbers, meals, and decisions you can actually follow."
+        case .primaryFocus:
+            return "Before the numbers, tell me what you want food to help with most. I will use that to shape the plan around your real life."
         case .meetNora:
             return "I am here to make food feel less random. Answer a few questions, and I will shape the plan around your body and your life."
         case .coachAssignedPlan:
@@ -1699,6 +1858,8 @@ private extension MacraOnboardingCoordinator.Step {
             return "Before you unlock Macra, choose when you want me to pull you back on track. This is your first commitment to the plan."
         case .commitTrial:
             return "Your plan is ready. Unlock Macra to start using your targets, meal plan, scanner, and Nora coaching."
+        case .activationStart:
+            return "Your plan is active. Start with one meal, and I will use that first signal to tune the rest of today."
         }
     }
 }
@@ -1709,6 +1870,7 @@ struct MacraOnboardingFlowView: View {
     private let existingSubscriptionAccessOverride: Bool?
     private let paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection?
     private let paywallLayoutVariantOverride: MacraPaywallLayoutVariant?
+    private let onboardingExperienceVariantOverride: MacraOnboardingExperienceVariant?
 
     init(
         appCoordinator: AppCoordinator,
@@ -1718,11 +1880,13 @@ struct MacraOnboardingFlowView: View {
         onDemoDismiss: (() -> Void)? = nil,
         existingSubscriptionAccessOverride: Bool? = nil,
         paywallDefaultPlanSelectionOverride: MacraPaywallDefaultPlanSelection? = nil,
-        paywallLayoutVariantOverride: MacraPaywallLayoutVariant? = nil
+        paywallLayoutVariantOverride: MacraPaywallLayoutVariant? = nil,
+        onboardingExperienceVariantOverride: MacraOnboardingExperienceVariant? = nil
     ) {
         self.existingSubscriptionAccessOverride = existingSubscriptionAccessOverride
         self.paywallDefaultPlanSelectionOverride = paywallDefaultPlanSelectionOverride
         self.paywallLayoutVariantOverride = paywallLayoutVariantOverride
+        self.onboardingExperienceVariantOverride = onboardingExperienceVariantOverride
         _coordinator = StateObject(wrappedValue: MacraOnboardingCoordinator(
             appCoordinator: appCoordinator,
             startingStep: startingStep,
@@ -1731,7 +1895,8 @@ struct MacraOnboardingFlowView: View {
             onDemoDismiss: onDemoDismiss,
             existingSubscriptionAccessOverride: existingSubscriptionAccessOverride,
             paywallDefaultPlanSelectionOverride: paywallDefaultPlanSelectionOverride,
-            paywallLayoutVariantOverride: paywallLayoutVariantOverride
+            paywallLayoutVariantOverride: paywallLayoutVariantOverride,
+            onboardingExperienceVariantOverride: onboardingExperienceVariantOverride
         ))
     }
 
@@ -1740,6 +1905,8 @@ struct MacraOnboardingFlowView: View {
             switch coordinator.currentStep {
             case .welcome:
                 WelcomeStepView(coordinator: coordinator)
+            case .primaryFocus:
+                PrimaryFocusStepView(coordinator: coordinator)
             case .meetNora:
                 MeetNoraStepView(coordinator: coordinator)
             case .coachAssignedPlan:
@@ -1778,6 +1945,8 @@ struct MacraOnboardingFlowView: View {
                 NotificationPreferencesStepView(coordinator: coordinator)
             case .commitTrial:
                 CommitTrialStepView(coordinator: coordinator)
+            case .activationStart:
+                TrialActivationStartStepView(coordinator: coordinator)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -1799,9 +1968,15 @@ struct MacraOnboardingFlowView: View {
         .onChange(of: existingSubscriptionAccessOverride) { newValue in
             coordinator.existingSubscriptionAccessOverride = newValue
         }
+        .task {
+            await coordinator.refreshExperimentAssignmentIfNeeded()
+        }
         .onChange(of: coordinator.currentStep) { _ in
             coordinator.trackCurrentOnboardingStepViewed(trigger: "step_changed")
             narrateCurrentStep()
+        }
+        .onChange(of: coordinator.answers.primaryFocus) { _ in
+            narratePrimaryFocusSelectionIfNeeded()
         }
         .onDisappear {
             MacraNoraVoiceService.shared.stop()
@@ -1824,6 +1999,19 @@ struct MacraOnboardingFlowView: View {
             fallbackText: narration,
             key: "macra_onboarding_\(step.analyticsId)",
             force: force
+        )
+    }
+
+    private func narratePrimaryFocusSelectionIfNeeded() {
+        guard coordinator.currentStep == .primaryFocus,
+              let focus = coordinator.answers.primaryFocus,
+              let prompt = coordinator.noraPrompt(for: .primaryFocus) else { return }
+
+        MacraNoraVoiceService.shared.narrateOnboarding(
+            stepId: "primary_focus_selection_\(focus.rawValue)",
+            fallbackText: prompt,
+            key: "macra_onboarding_primary_focus_\(focus.rawValue)",
+            force: true
         )
     }
 }

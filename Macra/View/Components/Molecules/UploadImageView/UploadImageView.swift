@@ -88,7 +88,7 @@ class UploadImageViewModel: ObservableObject {
             case .failure(let error):
                 print("Failed to upload image: \(error)")
                 self?.showErrorAlert = true
-                self?.errorText = error.localizedDescription
+                self?.errorText = MacraUserFacingError.upload(error)
             }
         }
     }

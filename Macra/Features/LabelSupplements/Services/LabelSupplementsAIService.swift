@@ -107,12 +107,12 @@ final class LabelSupplementsAIService {
                     grade: "?",
                     flaggedIngredients: [],
                     summary: "Analysis service unavailable",
-                    detailedExplanation: error.localizedDescription,
+                    detailedExplanation: "Analysis service unavailable. Please try again in a moment.",
                     confidence: 0.0,
                     concerns: [],
                     sources: [],
                     errorCode: "LABEL-004",
-                    errorDetails: error.localizedDescription,
+                    errorDetails: MacraUserFacingError.analyzer(error),
                     errorCategory: "api"
                 )))
             }
@@ -680,7 +680,7 @@ final class LabelSupplementsAIService {
                 concerns: [],
                 sources: [],
                 errorCode: "LABEL-003",
-                errorDetails: error.localizedDescription,
+                errorDetails: MacraUserFacingError.sync(error),
                 errorCategory: "network"
             )
         }
@@ -694,7 +694,7 @@ final class LabelSupplementsAIService {
                 concerns: [],
                 sources: [],
                 errorCode: "LABEL-004",
-                errorDetails: error.localizedDescription,
+                errorDetails: MacraUserFacingError.analyzer(error),
                 errorCategory: "api"
             )
         }
@@ -702,12 +702,12 @@ final class LabelSupplementsAIService {
             grade: "?",
             flaggedIngredients: [],
             summary: "Analysis service unavailable",
-            detailedExplanation: error.localizedDescription,
+            detailedExplanation: "Analysis service unavailable. Please try again in a moment.",
             confidence: 0.0,
             concerns: [],
             sources: [],
             errorCode: "LABEL-004",
-            errorDetails: error.localizedDescription,
+            errorDetails: MacraUserFacingError.analyzer(error),
             errorCategory: "api"
         )
     }

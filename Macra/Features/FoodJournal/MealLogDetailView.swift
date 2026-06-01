@@ -887,7 +887,7 @@ struct MealLogDetailView: View {
                     onUpdated(saved)
                     isEditingTime = false
                 case .failure(let error):
-                    errorMessage = error.localizedDescription
+                    errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -915,14 +915,14 @@ struct MealLogDetailView: View {
                                 meal = saved
                                 onUpdated(saved)
                             case .failure(let error):
-                                imageUploadError = error.localizedDescription
+                                imageUploadError = MacraUserFacingError.upload(error)
                             }
                         }
                     }
                 case .failure(let error):
                     isUploadingImage = false
                     pickedImage = nil
-                    imageUploadError = error.localizedDescription
+                    imageUploadError = MacraUserFacingError.upload(error)
                 }
             }
         }
@@ -1044,7 +1044,7 @@ struct MealLogDetailView: View {
                     reanalyzeContext = ""
                 case .failure(let error):
                     isReanalyzing = false
-                    reanalysisErrorMessage = error.localizedDescription
+                    reanalysisErrorMessage = MacraUserFacingError.analyzer(error)
                     print("[Macra][MealLogDetailView.reanalyze] ❌ \(error.localizedDescription)")
                 }
             }
@@ -1109,7 +1109,7 @@ struct MealLogDetailView: View {
                     }
                     print("[Macra][MealLogDetailView.reanalyze] ✅ netCarbs \(oldNet)g → \(newNet)g fiber:\(saved.fiber ?? 0) sugarAlcohols:\(saved.sugarAlcohols ?? 0)")
                 case .failure(let error):
-                    reanalysisErrorMessage = error.localizedDescription
+                    reanalysisErrorMessage = MacraUserFacingError.sync(error)
                     print("[Macra][MealLogDetailView.reanalyze] ❌ save failed: \(error.localizedDescription)")
                 }
             }
@@ -1334,7 +1334,7 @@ struct MealLogDetailView: View {
                     onUpdated(saved)
                     showNetCarbsEditor = false
                 case .failure(let error):
-                    netCarbsErrorMessage = error.localizedDescription
+                    netCarbsErrorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -1361,7 +1361,7 @@ struct MealLogDetailView: View {
                     onUpdated(saved)
                     dismiss()
                 case .failure(let error):
-                    eatAgainErrorMessage = error.localizedDescription
+                    eatAgainErrorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -1379,7 +1379,7 @@ struct MealLogDetailView: View {
                     onDeleted?()
                     dismiss()
                 case .failure(let error):
-                    errorMessage = error.localizedDescription
+                    errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }

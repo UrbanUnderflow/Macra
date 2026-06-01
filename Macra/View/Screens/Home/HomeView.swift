@@ -3148,7 +3148,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                 case .success(let generated):
                     self.insertGeneratedMeal(generated)
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.mealPlan(error)
                 }
             }
         }
@@ -3196,7 +3196,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                 code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "Skipped meals cannot be logged."]
             )
-            mealEditErrors[suggestedMeal.id] = error.localizedDescription
+            mealEditErrors[suggestedMeal.id] = MacraUserFacingError.sync(error)
             completion?(.failure(error))
             return
         }
@@ -3206,7 +3206,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                 code: 2,
                 userInfo: [NSLocalizedDescriptionKey: "Sign in again before logging this meal."]
             )
-            mealEditErrors[suggestedMeal.id] = error.localizedDescription
+            mealEditErrors[suggestedMeal.id] = MacraUserFacingError.sync(error)
             completion?(.failure(error))
             return
         }
@@ -3244,7 +3244,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                     self.mealEditErrors.removeValue(forKey: suggestedMeal.id)
                     completion?(.success(savedMeal))
                 case .failure(let error):
-                    self.mealEditErrors[suggestedMeal.id] = error.localizedDescription
+                    self.mealEditErrors[suggestedMeal.id] = MacraUserFacingError.sync(error)
                     completion?(.failure(error))
                 }
             }
@@ -3452,7 +3452,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                 case .success(let edited):
                     self.applyEditedMeal(edited, replacing: suggestedMeal)
                 case .failure(let error):
-                    self.mealEditErrors[mealId] = error.localizedDescription
+                    self.mealEditErrors[mealId] = MacraUserFacingError.mealPlan(error)
                 }
             }
         }
@@ -3573,7 +3573,7 @@ final class MacraPlanHubViewModel: ObservableObject {
             if let error {
                 print("[Macra][PlanHub.regenerateMeal] ❌ persist failed: \(error.localizedDescription)")
                 DispatchQueue.main.async {
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.sync(error)
                 }
                 return
             }
@@ -3649,7 +3649,7 @@ final class MacraPlanHubViewModel: ObservableObject {
             .setData(["planName": label], merge: true) { [weak self] error in
                 if let error {
                     DispatchQueue.main.async {
-                        self?.errorMessage = error.localizedDescription
+                        self?.errorMessage = MacraUserFacingError.sync(error)
                     }
                 }
             }
@@ -3705,7 +3705,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                             UserService.sharedInstance.currentMacroTarget = current
                         }
                     case .failure(let error):
-                        self.errorMessage = error.localizedDescription
+                        self.errorMessage = MacraUserFacingError.sync(error)
                     }
                     completion?()
                 }
@@ -3737,7 +3737,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                     self.macroTarget = saved
                     UserService.sharedInstance.currentMacroTarget = saved
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
                 completion?()
             }
@@ -4273,7 +4273,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.nora(error)
                     self?.isGenerating = false
                     completion?()
                 }
@@ -8003,7 +8003,7 @@ struct AskNoraSection: View {
                     // the user keeps their thread. Only surface the error
                     // if the cache was empty (nothing to show otherwise).
                     if messages.isEmpty {
-                        errorMessage = "Couldn't load thread: \(error.localizedDescription)"
+                        errorMessage = MacraUserFacingError.nora(error)
                     }
                 }
             }
@@ -8111,7 +8111,7 @@ struct AskNoraSection: View {
             } catch {
                 await MainActor.run {
                     if dayKey == threadDayKey {
-                        errorMessage = error.localizedDescription
+                        errorMessage = MacraUserFacingError.nora(error)
                     }
                     isAsking = false
                 }
@@ -8413,7 +8413,7 @@ struct MealAttachmentSheet: View {
                     allItems = unique.values.sorted { $0.loggedOn > $1.loggedOn }
                     selectedKeys = Set(currentlyAttached.map { $0.dedupeKey })
                 case .failure(let error):
-                    errorMessage = error.localizedDescription
+                    errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -10629,7 +10629,7 @@ private struct MacraHealthKitToggleRow: View {
             MacraHealthKitService.shared.requestAuthorization { granted, error in
                 isRequesting = false
                 if let error {
-                    authErrorMessage = error.localizedDescription
+                    authErrorMessage = MacraUserFacingError.sync(error)
                     isOn = false
                     MacraHealthKitService.shared.userOptIn = false
                 } else if granted {

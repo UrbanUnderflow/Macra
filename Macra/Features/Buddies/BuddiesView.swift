@@ -395,7 +395,7 @@ struct BuddiesView: View {
             case .success:
                 pasteText = ""
             case .failure(let error):
-                pasteErrorMessage = error.localizedDescription
+                pasteErrorMessage = MacraUserFacingError.sync(error)
             }
         }
     }
@@ -493,7 +493,7 @@ struct BuddiesView: View {
             case .failure(let error):
                 pendingInviteBanner = PendingInviteBannerState(
                     token: token,
-                    status: .failed(error.localizedDescription)
+                    status: .failed(MacraUserFacingError.sync(error))
                 )
             }
         }
@@ -1491,7 +1491,7 @@ final class BuddiesViewModel: ObservableObject {
                 case .success(let buddies):
                     self.buddies = buddies
                 case .failure(let error):
-                    self.generateErrorMessage = error.localizedDescription
+                    self.generateErrorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -1554,7 +1554,7 @@ final class BuddiesViewModel: ObservableObject {
                 guard let self else { return }
                 self.isGeneratingInvite = false
                 if case .failure(let error) = result {
-                    self.generateErrorMessage = error.localizedDescription
+                    self.generateErrorMessage = MacraUserFacingError.sync(error)
                 }
                 completion(result)
             }
@@ -1580,7 +1580,7 @@ final class BuddiesViewModel: ObservableObject {
                 guard let self else { return }
                 self.unfollowingIds.remove(id)
                 if case .failure(let error) = result {
-                    self.generateErrorMessage = error.localizedDescription
+                    self.generateErrorMessage = MacraUserFacingError.sync(error)
                 }
                 // No manual list mutation — the Firestore listener
                 // re-emits the buddies array on delete.
@@ -1600,7 +1600,7 @@ final class BuddiesViewModel: ObservableObject {
                 guard let self else { return }
                 self.requestingShareBackUids.remove(id)
                 if case .failure(let error) = result {
-                    self.generateErrorMessage = error.localizedDescription
+                    self.generateErrorMessage = MacraUserFacingError.sync(error)
                 }
                 // outgoingRequestsListener picks up the new request and
                 // flips the row's button to "Requested" automatically.
@@ -1620,7 +1620,7 @@ final class BuddiesViewModel: ObservableObject {
                 guard let self else { return }
                 self.requestingShareBackUids.remove(id)
                 if case .failure(let error) = result {
-                    self.generateErrorMessage = error.localizedDescription
+                    self.generateErrorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -1637,7 +1637,7 @@ final class BuddiesViewModel: ObservableObject {
                 guard let self else { return }
                 self.respondingToRequestUids.remove(id)
                 if case .failure(let error) = result {
-                    self.generateErrorMessage = error.localizedDescription
+                    self.generateErrorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -1653,7 +1653,7 @@ final class BuddiesViewModel: ObservableObject {
                 guard let self else { return }
                 self.respondingToRequestUids.remove(id)
                 if case .failure(let error) = result {
-                    self.generateErrorMessage = error.localizedDescription
+                    self.generateErrorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -1670,7 +1670,7 @@ final class BuddiesViewModel: ObservableObject {
                 guard let self else { return }
                 self.revokingShareIds.remove(id)
                 if case .failure(let error) = result {
-                    self.generateErrorMessage = error.localizedDescription
+                    self.generateErrorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -2223,7 +2223,7 @@ struct BuddyInviteReceiverSheet: View {
                     if let buddyError = error as? BuddyError, buddyError == .alreadyFollowing {
                         finishAccepting(shareBack: shareBack)
                     } else {
-                        actionState = .failed(error.localizedDescription)
+                        actionState = .failed(MacraUserFacingError.sync(error))
                     }
                 }
             }
@@ -2245,7 +2245,7 @@ struct BuddyInviteReceiverSheet: View {
                     actionState = .accepted
                     shareBackInvite = invite
                 case .failure(let error):
-                    actionState = .failed(error.localizedDescription)
+                    actionState = .failed(MacraUserFacingError.sync(error))
                 }
             }
         }

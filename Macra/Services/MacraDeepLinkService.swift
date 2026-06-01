@@ -84,6 +84,7 @@ final class MacraDeepLinkService: NSObject {
     /// doesn't crash on IDFA access.
     func startSDK() {
         #if canImport(AppsFlyerLib)
+        MacraAnalyticsService.shared.identifyCurrentUserIfAvailable()
         AppsFlyerLib.shared().start()
         MacraAnalyticsService.shared.trackAppOpened()
         print("[Macra][DeepLink.startSDK] AppsFlyer started")

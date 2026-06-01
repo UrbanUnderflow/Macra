@@ -1,11 +1,9 @@
 import FirebaseAuth
 import FirebaseCore
 import FirebaseFirestore
-#if canImport(FirebaseRemoteConfig)
-import FirebaseRemoteConfig
-#endif
 import SafariServices
 import SwiftUI
+import UIKit
 
 extension Notification.Name {
     static let macraPaywallPurchaseCancelled = Notification.Name("MacraPaywallPurchaseCancelled")
@@ -73,12 +71,14 @@ enum MacraPaywallLayoutVariant: String {
     case control = "trial_confidence_control"
     case trialConfidence = "trial_confidence_legacy"
     case trialPrepCompact = "trial_confidence"
+    case hardPaywallValue = "hard_paywall_value"
 
     var analyticsVariantName: String {
         switch self {
         case .control: return rawValue
         case .trialConfidence: return rawValue
         case .trialPrepCompact: return rawValue
+        case .hardPaywallValue: return rawValue
         }
     }
 
@@ -94,6 +94,8 @@ enum MacraPaywallLayoutVariant: String {
         switch value {
         case "trial_confidence", "trialconfidence", "variant_b", "compact", "compact_paywall", "trial_confidence_compact", "multi_screen_compact":
             return .trialPrepCompact
+        case "hard_paywall_value", "hard_paywall", "paid_value", "paid_plan_value", "variant_c", "value_hard_paywall":
+            return .hardPaywallValue
         case "trial_confidence_legacy", "confidence", "trial_confidence_v1":
             return .trialConfidence
         case "trial_confidence_control", "control", "baseline", "control_v1":
@@ -107,11 +109,23 @@ enum MacraPaywallLayoutVariant: String {
 struct MacraPaywallExperimentAssignment {
     let defaultPlanSelection: MacraPaywallDefaultPlanSelection
     let layoutVariant: MacraPaywallLayoutVariant
+    let onboardingVariant: MacraOnboardingExperienceVariant
+    let experimentId: String
+    let variantId: String
+    let variantName: String
+    let assignmentSource: String
+    let parameters: [String: String]
 }
 
 enum MacraPaywallExperimentService {
     static let defaultPlanParameterKey = "macra_paywall_default_plan"
     static let layoutVariantParameterKey = "macra_paywall_layout_variant"
+    static let onboardingVariantParameterKey = MacraOnboardingExperienceVariant.parameterKey
+    static let collectionName = "macra-experiments"
+    static let documentId = "macra_paywall_onboarding"
+
+    private static let installIdDefaultsKey = "macra_experiment_install_id"
+    private static let lastAssignmentDefaultsKey = "macra_experiment_last_paywall_onboarding_assignment"
 
     static func cachedDefaultPlanSelection() -> MacraPaywallDefaultPlanSelection {
         cachedAssignment().defaultPlanSelection
@@ -122,22 +136,16 @@ enum MacraPaywallExperimentService {
     }
 
     static func cachedAssignment() -> MacraPaywallExperimentAssignment {
-        #if canImport(FirebaseRemoteConfig)
-        guard FirebaseApp.app() != nil else {
-            return MacraPaywallExperimentAssignment(defaultPlanSelection: .annual, layoutVariant: .trialPrepCompact)
+        guard let cached = readCachedAssignment(forKey: lastAssignmentDefaultsKey) else {
+            return defaultAssignment(source: "local_default")
         }
-        let remoteConfig = RemoteConfig.remoteConfig()
-        return MacraPaywallExperimentAssignment(
-            defaultPlanSelection: MacraPaywallDefaultPlanSelection.normalized(
-                remoteConfig.configValue(forKey: defaultPlanParameterKey).stringValue
-            ),
-            layoutVariant: MacraPaywallLayoutVariant.normalized(
-                remoteConfig.configValue(forKey: layoutVariantParameterKey).stringValue
-            )
+        return assignment(
+            experimentId: cached.experimentId,
+            variantId: cached.variantId,
+            variantName: cached.variantName,
+            parameters: cached.parameters,
+            source: "local_cache"
         )
-        #else
-        return MacraPaywallExperimentAssignment(defaultPlanSelection: .annual, layoutVariant: .trialPrepCompact)
-        #endif
     }
 
     static func fetchAndActivateDefaultPlanSelection() async -> MacraPaywallDefaultPlanSelection {
@@ -145,58 +153,253 @@ enum MacraPaywallExperimentService {
     }
 
     static func fetchAndActivateAssignment() async -> MacraPaywallExperimentAssignment {
-        #if canImport(FirebaseRemoteConfig)
         guard FirebaseApp.app() != nil else {
-            return MacraPaywallExperimentAssignment(defaultPlanSelection: .annual, layoutVariant: .trialPrepCompact)
+            return cachedAssignment()
         }
 
-        let remoteConfig = RemoteConfig.remoteConfig()
-        remoteConfig.setDefaults([
-            defaultPlanParameterKey: MacraPaywallDefaultPlanSelection.annual.rawValue as NSString,
-            layoutVariantParameterKey: MacraPaywallLayoutVariant.trialPrepCompact.rawValue as NSString
-        ])
-
-        #if DEBUG
-        let settings = RemoteConfigSettings()
-        settings.minimumFetchInterval = 0
-        settings.fetchTimeout = 3
-        remoteConfig.configSettings = settings
-        #endif
-
-        return await withCheckedContinuation { continuation in
-            remoteConfig.fetchAndActivate { _, error in
-                if let error {
-                    print("[Macra][PaywallExperiment] Remote Config fetch failed: \(error.localizedDescription)")
-                }
-
-                let assignment = MacraPaywallExperimentAssignment(
-                    defaultPlanSelection: MacraPaywallDefaultPlanSelection.normalized(
-                        remoteConfig.configValue(forKey: defaultPlanParameterKey).stringValue
-                    ),
-                    layoutVariant: error == nil
-                        ? MacraPaywallLayoutVariant.normalized(
-                            remoteConfig.configValue(forKey: layoutVariantParameterKey).stringValue
-                        )
-                        : .trialPrepCompact
-                )
-
-                MacraAnalyticsService.shared.trackFirebasePaywallExperimentAssignment(
-                    defaultPlan: assignment.defaultPlanSelection.rawValue,
-                    layoutVariant: assignment.layoutVariant.rawValue
-                )
-
-                continuation.resume(returning: assignment)
+        do {
+            let snapshot = try await fetchExperimentSnapshot()
+            guard let config = ExperimentConfig(id: documentId, data: snapshot.data() ?? [:]),
+                  config.isEnabled,
+                  !config.enabledVariants.isEmpty else {
+                return cachedAssignment()
             }
+
+            let variant = stickyVariant(for: config)
+            let assignment = assignment(
+                experimentId: config.id,
+                variantId: variant.id,
+                variantName: variant.name,
+                parameters: variant.parameters,
+                source: "firestore_experiment"
+            )
+            cacheAssignment(assignment, salt: config.salt)
+            MacraAnalyticsService.shared.trackMacraExperimentAssignment(
+                experimentId: assignment.experimentId,
+                variantId: assignment.variantId,
+                variantName: assignment.variantName,
+                defaultPlan: assignment.defaultPlanSelection.rawValue,
+                layoutVariant: assignment.layoutVariant.rawValue,
+                onboardingVariant: assignment.onboardingVariant.rawValue,
+                source: assignment.assignmentSource,
+                metadata: [
+                    "experiment_collection": collectionName,
+                    "experiment_document_id": documentId,
+                    "experiment_salt": config.salt
+                ]
+            )
+            return assignment
+        } catch {
+            print("[Macra][Experiment] Firestore assignment fetch failed: \(error.localizedDescription)")
+            return cachedAssignment()
         }
-        #else
-        return MacraPaywallExperimentAssignment(defaultPlanSelection: .annual, layoutVariant: .trialPrepCompact)
-        #endif
     }
 
     static func prefetch() {
         Task {
             _ = await fetchAndActivateAssignment()
         }
+    }
+
+    private static func fetchExperimentSnapshot() async throws -> DocumentSnapshot {
+        try await withCheckedThrowingContinuation { continuation in
+            Firestore.firestore()
+                .collection(collectionName)
+                .document(documentId)
+                .getDocument { snapshot, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else if let snapshot {
+                        continuation.resume(returning: snapshot)
+                    } else {
+                        continuation.resume(throwing: NSError(
+                            domain: "MacraExperimentService",
+                            code: -1,
+                            userInfo: [NSLocalizedDescriptionKey: "Experiment document did not return a snapshot."]
+                        ))
+                    }
+                }
+        }
+    }
+
+    private static func defaultAssignment(source: String) -> MacraPaywallExperimentAssignment {
+        assignment(
+            experimentId: documentId,
+            variantId: "variant_a",
+            variantName: "Trial prep compact",
+            parameters: [
+                defaultPlanParameterKey: MacraPaywallDefaultPlanSelection.annual.rawValue,
+                layoutVariantParameterKey: MacraPaywallLayoutVariant.trialPrepCompact.rawValue,
+                onboardingVariantParameterKey: MacraOnboardingExperienceVariant.standard.rawValue
+            ],
+            source: source
+        )
+    }
+
+    private static func assignment(
+        experimentId: String,
+        variantId: String,
+        variantName: String,
+        parameters: [String: String],
+        source: String
+    ) -> MacraPaywallExperimentAssignment {
+        MacraPaywallExperimentAssignment(
+            defaultPlanSelection: MacraPaywallDefaultPlanSelection.normalized(parameters[defaultPlanParameterKey]),
+            layoutVariant: MacraPaywallLayoutVariant.normalized(parameters[layoutVariantParameterKey]),
+            onboardingVariant: MacraOnboardingExperienceVariant.normalized(parameters[onboardingVariantParameterKey]),
+            experimentId: experimentId,
+            variantId: variantId,
+            variantName: variantName,
+            assignmentSource: source,
+            parameters: parameters
+        )
+    }
+
+    private static func stickyVariant(for config: ExperimentConfig) -> ExperimentVariantConfig {
+        let cacheKey = assignmentCacheKey(experimentId: config.id, salt: config.salt)
+        if let cached = readCachedAssignment(forKey: cacheKey),
+           let cachedVariant = config.enabledVariants.first(where: { $0.id == cached.variantId }) {
+            return cachedVariant
+        }
+
+        let totalWeight = config.enabledVariants.reduce(0.0) { $0 + max(0, $1.weight) }
+        guard totalWeight > 0 else { return config.enabledVariants[0] }
+
+        let bucket = deterministicBucket(
+            key: "\(config.id):\(config.salt):\(stableSubjectId())"
+        )
+        let target = bucket * totalWeight
+        var cumulative = 0.0
+        for variant in config.enabledVariants {
+            cumulative += max(0, variant.weight)
+            if target <= cumulative {
+                return variant
+            }
+        }
+        return config.enabledVariants.last ?? config.enabledVariants[0]
+    }
+
+    private static func deterministicBucket(key: String) -> Double {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in key.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return Double(hash % 1_000_000) / 1_000_000.0
+    }
+
+    private static func stableSubjectId() -> String {
+        if let uid = Auth.auth().currentUser?.uid, !uid.isEmpty {
+            return "user:\(uid)"
+        }
+        let defaults = UserDefaults.standard
+        if let existing = defaults.string(forKey: installIdDefaultsKey), !existing.isEmpty {
+            return "install:\(existing)"
+        }
+        let installId = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        defaults.set(installId, forKey: installIdDefaultsKey)
+        return "install:\(installId)"
+    }
+
+    private static func assignmentCacheKey(experimentId: String, salt: String) -> String {
+        "macra_experiment_assignment_\(experimentId)_\(salt)"
+    }
+
+    private static func cacheAssignment(_ assignment: MacraPaywallExperimentAssignment, salt: String) {
+        let cached = CachedExperimentAssignment(
+            experimentId: assignment.experimentId,
+            variantId: assignment.variantId,
+            variantName: assignment.variantName,
+            parameters: assignment.parameters,
+            salt: salt,
+            assignedAt: Date().timeIntervalSince1970
+        )
+        writeCachedAssignment(cached, forKey: assignmentCacheKey(experimentId: assignment.experimentId, salt: salt))
+        writeCachedAssignment(cached, forKey: lastAssignmentDefaultsKey)
+    }
+
+    private static func readCachedAssignment(forKey key: String) -> CachedExperimentAssignment? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(CachedExperimentAssignment.self, from: data)
+    }
+
+    private static func writeCachedAssignment(_ assignment: CachedExperimentAssignment, forKey key: String) {
+        guard let data = try? JSONEncoder().encode(assignment) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
+private struct ExperimentConfig {
+    let id: String
+    let isEnabled: Bool
+    let salt: String
+    let variants: [ExperimentVariantConfig]
+
+    var enabledVariants: [ExperimentVariantConfig] {
+        variants.filter { $0.isEnabled && $0.weight > 0 }
+    }
+
+    init?(id: String, data: [String: Any]) {
+        self.id = (data["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? id
+        self.isEnabled = data["isEnabled"] as? Bool ?? data["enabled"] as? Bool ?? false
+        self.salt = (data["assignmentSalt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? (data["salt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? MacraPaywallExperimentService.documentId
+
+        let rawVariants = data["variants"] as? [[String: Any]] ?? []
+        self.variants = rawVariants.compactMap(ExperimentVariantConfig.init(data:))
+    }
+}
+
+private struct ExperimentVariantConfig {
+    let id: String
+    let name: String
+    let weight: Double
+    let isEnabled: Bool
+    let parameters: [String: String]
+
+    init?(data: [String: Any]) {
+        guard let id = (data["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else {
+            return nil
+        }
+        self.id = id
+        self.name = (data["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? (data["label"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? id
+        self.weight = Self.doubleValue(from: data["weight"]) ?? Self.doubleValue(from: data["rolloutWeight"]) ?? 0
+        self.isEnabled = data["isEnabled"] as? Bool ?? data["enabled"] as? Bool ?? true
+
+        let rawParameters = data["parameters"] as? [String: Any] ?? [:]
+        self.parameters = rawParameters.reduce(into: [String: String]()) { result, entry in
+            if let value = entry.value as? String {
+                result[entry.key] = value
+            } else if let value = entry.value as? CustomStringConvertible {
+                result[entry.key] = value.description
+            }
+        }
+    }
+
+    private static func doubleValue(from value: Any?) -> Double? {
+        if let value = value as? Double { return value }
+        if let value = value as? Int { return Double(value) }
+        if let value = value as? NSNumber { return value.doubleValue }
+        if let value = value as? String { return Double(value) }
+        return nil
+    }
+}
+
+private struct CachedExperimentAssignment: Codable {
+    let experimentId: String
+    let variantId: String
+    let variantName: String
+    let parameters: [String: String]
+    let salt: String
+    let assignedAt: Double
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }
 
@@ -225,12 +428,17 @@ private enum PaywallCancelFeedbackReason: String, CaseIterable, Identifiable {
 private enum CompactPaywallStep: String {
     case trialWorks = "trial_works"
     case firstSevenDays = "first_seven_days"
+    case trialReminder = "trial_reminder"
     case plans = "plans"
 
     var next: CompactPaywallStep? {
         switch self {
-        case .trialWorks: return .firstSevenDays
-        case .firstSevenDays: return .plans
+        case .trialWorks:
+            return .firstSevenDays
+        case .firstSevenDays:
+            return .trialReminder
+        case .trialReminder:
+            return .plans
         case .plans: return nil
         }
     }
@@ -238,8 +446,12 @@ private enum CompactPaywallStep: String {
     var previous: CompactPaywallStep? {
         switch self {
         case .trialWorks: return nil
-        case .firstSevenDays: return .trialWorks
-        case .plans: return .firstSevenDays
+        case .firstSevenDays:
+            return .trialWorks
+        case .trialReminder:
+            return .firstSevenDays
+        case .plans:
+            return .trialReminder
         }
     }
 }
@@ -250,6 +462,7 @@ struct PayWallView: View {
     private static let webCheckoutAnnualPriceID = "price_1PDq3LRobSf56MUOng0UxhCC"
     @State private var paywallDefaultPlanSelection: MacraPaywallDefaultPlanSelection
     @State private var paywallLayoutVariant: MacraPaywallLayoutVariant
+    @State private var paywallExperimentAssignment: MacraPaywallExperimentAssignment
     @State private var didTrackPaywallView = false
     @State private var didTrackExistingAccessView = false
     @State private var didTrackPaywallValuePreviewView = false
@@ -266,7 +479,9 @@ struct PayWallView: View {
     @State private var isPreparingWebCheckout = false
     @State private var isVerifyingSubscriptionAccess = false
     @State private var showSubscriptionSuccess = false
-    @State private var didScheduleSubscriptionSuccessAdvance = false
+    @State private var didTrackSubscriptionSuccessActivationView = false
+    @State private var didTrackSubscriptionSuccessActivationPrimary = false
+    @State private var showAppleConfirmationBridge = false
     @State private var showCancelFeedbackDialog = false
     @State private var cancelFeedbackTrigger = "unknown"
     @State private var didAskCancelFeedback = false
@@ -274,6 +489,7 @@ struct PayWallView: View {
     @State private var activePurchaseLogID: String?
     @State private var cancelFeedbackPresentationTask: Task<Void, Never>?
     @State private var compactPaywallStep: CompactPaywallStep = .trialWorks
+    @State private var selectedTrialReminderLeadDays = 2
     private let isDemoMode: Bool
     private let usesLivePurchasesInDemo: Bool
     private let onboardingCoordinator: MacraOnboardingCoordinator?
@@ -300,6 +516,7 @@ struct PayWallView: View {
         self._viewModel = ObservedObject(wrappedValue: viewModel)
         self._paywallDefaultPlanSelection = State(initialValue: defaultPlanSelectionOverride ?? cachedAssignment.defaultPlanSelection)
         self._paywallLayoutVariant = State(initialValue: layoutVariantOverride ?? cachedAssignment.layoutVariant)
+        self._paywallExperimentAssignment = State(initialValue: cachedAssignment)
         self.isDemoMode = isDemoMode
         self.usesLivePurchasesInDemo = usesLivePurchasesInDemo
         self.onboardingCoordinator = onboardingCoordinator
@@ -335,10 +552,21 @@ struct PayWallView: View {
     }
 
     private var displayedPlans: [SubscriptionPlanOption] {
-        Self.paywallPlans(
+        if usesHardPaywallValueLayout {
+            let hardPaywallPlans = Self.hardPaywallPlans(from: availablePlans)
+            if !hardPaywallPlans.isEmpty {
+                return hardPaywallPlans
+            }
+        }
+
+        return Self.paywallPlans(
             from: availablePlans,
             preferMonthlyFirst: shouldPreferLowFrictionPlanDefault
         )
+    }
+
+    private var hardPaywallDirectPlansAvailable: Bool {
+        !Self.hardPaywallPlans(from: availablePlans).isEmpty
     }
 
     private var selectedPlan: SubscriptionPlanOption? {
@@ -385,6 +613,10 @@ struct PayWallView: View {
         paywallLayoutVariant == .trialPrepCompact && !hasExistingSubscriptionAccess
     }
 
+    private var usesHardPaywallValueLayout: Bool {
+        paywallLayoutVariant == .hardPaywallValue && !hasExistingSubscriptionAccess
+    }
+
     private var isCompactPaywallIntroStep: Bool {
         usesTrialPrepCompactLayout && compactPaywallStep != .plans
     }
@@ -400,6 +632,11 @@ struct PayWallView: View {
         metadata["paywall_layout_ab_parameter"] = MacraPaywallExperimentService.layoutVariantParameterKey
         metadata["macra_paywall_layout_variant"] = paywallLayoutVariant.rawValue
         metadata["paywall_layout_selection"] = paywallLayoutVariant.rawValue
+        metadata["experiment_id"] = paywallExperimentAssignment.experimentId
+        metadata["experiment_variant_id"] = paywallExperimentAssignment.variantId
+        metadata["experiment_variant_name"] = paywallExperimentAssignment.variantName
+        metadata["experiment_assignment_source"] = paywallExperimentAssignment.assignmentSource
+        metadata["onboarding_experience_variant"] = paywallExperimentAssignment.onboardingVariant.rawValue
         metadata["paywall_default_plan_id"] = preferredDefaultVisiblePlan?.id ?? "none"
         metadata["paywall_default_plan_period"] = preferredDefaultVisiblePlan.map { periodAnalyticsName($0.periodKind) } ?? "none"
         metadata["displayed_plan_order"] = displayedPlans.map { periodAnalyticsName($0.periodKind) }.joined(separator: ",")
@@ -409,7 +646,12 @@ struct PayWallView: View {
         metadata["has_trial_confidence_card"] = usesTrialConfidenceLayout && !shouldUseWebCheckoutFallback
         metadata["has_trial_prep_screens"] = usesTrialPrepCompactLayout
         metadata["uses_trial_prep_compact_layout"] = usesTrialPrepCompactLayout
+        metadata["uses_hard_paywall_value_layout"] = usesHardPaywallValueLayout
+        metadata["hard_paywall_direct_plan_available"] = hardPaywallDirectPlansAvailable
         metadata["compact_paywall_step"] = usesTrialPrepCompactLayout ? compactPaywallStep.rawValue : "none"
+        metadata["trial_disclosure_days"] = trialDisclosureDays ?? 0
+        metadata["trial_reminder_lead_days"] = trialReminderLeadDaysForScheduling ?? 0
+        metadata["trial_reminder_choice"] = trialReminderLeadDaysForScheduling.map { "\($0)_day_before" } ?? "none"
         metadata["uses_web_checkout_fallback"] = shouldUseWebCheckoutFallback
         metadata["available_plan_count_at_paywall"] = availablePlans.count
         metadata["visible_plan_count_at_paywall"] = displayedPlans.count
@@ -506,6 +748,27 @@ struct PayWallView: View {
         return trialDays
     }
 
+    private var trialDisclosureDays: Int? {
+        trialDisclosureDays(for: selectedPlan)
+    }
+
+    private func trialDisclosureDays(for plan: SubscriptionPlanOption?) -> Int? {
+        guard let plan else {
+            return usesTrialPrepCompactLayout ? 3 : nil
+        }
+        guard plan.periodKind == .year else { return nil }
+        if let trialDays = plan.trialDays, trialDays > 0 {
+            return trialDays
+        }
+        guard usesTrialPrepCompactLayout else { return nil }
+        return 3
+    }
+
+    private var trialReminderLeadDaysForScheduling: Int? {
+        guard let trialDays = trialDisclosureDays, trialDays > 1 else { return nil }
+        return min(selectedTrialReminderLeadDays, trialDays - 1)
+    }
+
     var body: some View {
         ZStack {
             MacraChromaticBackground()
@@ -516,6 +779,8 @@ struct PayWallView: View {
 
                 if usesTrialPrepCompactLayout {
                     compactPaywallFlowBody
+                } else if usesHardPaywallValueLayout {
+                    hardPaywallValueBody
                 } else {
                     standardPaywallBody
                 }
@@ -611,9 +876,19 @@ struct PayWallView: View {
                     subscriptionSuccessOverlay
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
+
+                if showAppleConfirmationBridge {
+                    Color.black.opacity(0.64)
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+
+                    appleConfirmationBridgeOverlay
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                }
             }
         }
         .animation(.easeInOut(duration: 0.18), value: showSubscriptionSuccess)
+        .animation(.easeInOut(duration: 0.18), value: showAppleConfirmationBridge)
         .animation(.easeInOut(duration: 0.18), value: showCancelFeedbackDialog)
         .animation(.easeInOut(duration: 0.2), value: compactPaywallStep)
     }
@@ -669,6 +944,46 @@ struct PayWallView: View {
         }
     }
 
+    private var hardPaywallValueBody: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 18) {
+                heroSection
+
+                if showsPersonalizedPlan, let macros = onboardingCoordinator?.planMacros {
+                    planSummaryCard(macros: macros)
+                        .onAppear {
+                            trackPaywallValuePreviewViewedIfNeeded(previewType: "hard_paywall_personalized_plan")
+                        }
+                }
+
+                hardPaywallValueAnchorCard
+
+                firstWeekValueCard
+
+                outcomeProofCard
+
+                noraDecisionCard
+
+                eatingOutCard
+
+                unlockHighlightsCard
+
+                if shouldUseWebCheckoutFallback {
+                    compactWebCheckoutFallbackCard
+                } else {
+                    tierPickerSection
+                    hardPaywallPriceCommitmentCard
+                    priceDisclosureCard
+                }
+
+                purchaseErrorText
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 32)
+        }
+    }
+
     @ViewBuilder
     private var compactPaywallFlowBody: some View {
         switch compactPaywallStep {
@@ -676,6 +991,8 @@ struct PayWallView: View {
             compactTrialWorksScreen
         case .firstSevenDays:
             compactFirstSevenDaysScreen
+        case .trialReminder:
+            compactTrialReminderScreen
         case .plans:
             compactPlanSelectionScreen
         }
@@ -741,18 +1058,23 @@ struct PayWallView: View {
     private var headerEyebrow: String {
         if hasExistingSubscriptionAccess { return "MACRA ACCESS ACTIVE" }
         if isRenewalFlow { return "SUBSCRIPTION REQUIRED" }
+        if usesHardPaywallValueLayout { return "MACRA PLAN READY" }
         return "MACRA PLUS"
     }
 
     private var headerTitle: String {
         if hasExistingSubscriptionAccess { return "Your Macra plan is ready." }
         if isRenewalFlow { return "Unlock your Macra Plan" }
+        if usesHardPaywallValueLayout { return "Unlock your plan and start using it today." }
         return "Build the body you want without giving up the food you love."
     }
 
     private var headerSubtitle: String {
         if hasExistingSubscriptionAccess {
             return "Your subscription already unlocks Macra. Continue when you're ready to start using this plan."
+        }
+        if usesHardPaywallValueLayout {
+            return "Your targets are built. Subscribe to unlock the scanner, Nora, meal decisions, and the plan Macra made for your goal."
         }
         return "Macra turns your calories, meals out, labels, and Nora's AI insights into a plan you can actually live with."
     }
@@ -882,7 +1204,7 @@ struct PayWallView: View {
     private var compactFirstSevenDaysScreen: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
-                compactStepPill("Step 2 of 3")
+                compactStepPill("Step 2 of 4")
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Your first 7 days with Macra")
@@ -933,10 +1255,85 @@ struct PayWallView: View {
         }
     }
 
+    private var compactTrialReminderScreen: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 18) {
+                compactStepPill("Step 3 of 4")
+
+                VStack(spacing: 18) {
+                    TalkingNoraOrb(size: 86)
+
+                    VStack(spacing: 8) {
+                        Text("When should we remind you that your trial ends?")
+                            .font(.system(size: 28, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text("Pick the nudge that gives you enough time to decide before the yearly plan starts.")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(.white.opacity(0.68))
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 4)
+
+                VStack(spacing: 10) {
+                    compactTrialReminderOption(
+                        leadDays: 2,
+                        title: "2 days before",
+                        subtitle: "More time to decide before the trial turns into your yearly plan."
+                    )
+
+                    compactTrialReminderOption(
+                        leadDays: 1,
+                        title: "1 day before",
+                        subtitle: "A final check-in the day before renewal."
+                    )
+                }
+
+                compactCallout(
+                    icon: "bell.badge.fill",
+                    title: "Easy to cancel",
+                    body: "The reminder points you back to Apple Subscriptions before the plan renews.",
+                    accent: Color.primaryBlue
+                )
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 32)
+        }
+        .onAppear {
+            trackPaywallValuePreviewViewedIfNeeded(previewType: "trial_reminder_choice")
+        }
+    }
+
+    private var compactPlanSelectionSubtitle: String {
+        if trialDisclosureDays != nil {
+            return "Start free today. Keep scanning meals, asking Nora, and using your targets after onboarding."
+        }
+        if selectedPlan?.periodKind == .month {
+            return "Monthly starts when you confirm with Apple. Choose annual if you want the 3-day trial."
+        }
+        return "Choose the plan that fits how you want to use Macra after onboarding."
+    }
+
+    private var compactPriceDisclosureTitle: String {
+        if trialDisclosureDays != nil {
+            return "No payment today."
+        }
+        if selectedPlan?.periodKind == .month {
+            return "Monthly starts after Apple confirmation."
+        }
+        return "Apple confirms the selected plan before it starts."
+    }
+
     private var compactPlanSelectionScreen: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 16) {
-                compactStepPill("Step 3 of 3")
+                compactStepPill("Step 4 of 4")
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Choose your Macra plan.")
@@ -944,7 +1341,7 @@ struct PayWallView: View {
                         .foregroundColor(.white)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text("Start free today. Keep scanning meals, asking Nora, and using your targets after onboarding.")
+                    Text(compactPlanSelectionSubtitle)
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.white.opacity(0.66))
                         .fixedSize(horizontal: false, vertical: true)
@@ -983,14 +1380,14 @@ struct PayWallView: View {
 
     private var compactTrialHeroHeader: some View {
         VStack(alignment: .leading, spacing: 14) {
-            compactStepPill("Step 1 of 3")
+            compactStepPill("Step 1 of 4")
 
             VStack(spacing: 14) {
                 TalkingNoraOrb(size: 84)
                     .padding(.top, 2)
 
                 VStack(spacing: 8) {
-                    Text("How your free trial works")
+                    Text(trialDisclosureDays == nil ? "How your plan starts" : "How your free trial works")
                         .font(.system(size: 30, weight: .heavy, design: .rounded))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
@@ -1006,13 +1403,11 @@ struct PayWallView: View {
                 HStack(spacing: 8) {
                     if let selectedPlan {
                         compactTrialChip(
-                            label: selectedPlan.periodKind == .year ? "Yearly" : "Monthly",
+                            label: compactTrialPlanChipLabel(for: selectedPlan),
                             value: selectedPlan.priceLabel,
                             accent: Color.primaryGreen
                         )
-                    }
-
-                    if let trialDays = selectedTrialDays {
+                    } else if let trialDays = trialDisclosureDays {
                         compactTrialChip(
                             label: "Trial",
                             value: "\(trialLengthText(for: trialDays)) free",
@@ -1051,6 +1446,8 @@ struct PayWallView: View {
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .tracking(0.8)
                 .foregroundColor(accent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
             Text(value)
                 .font(.system(size: 12, weight: .heavy, design: .rounded))
                 .foregroundColor(.white.opacity(0.9))
@@ -1064,16 +1461,82 @@ struct PayWallView: View {
         .overlay(Capsule().strokeBorder(accent.opacity(0.22), lineWidth: 1))
     }
 
+    private func compactTrialPlanChipLabel(for plan: SubscriptionPlanOption) -> String {
+        let cadence: String
+        switch plan.periodKind {
+        case .year:
+            cadence = "Yearly"
+        case .month:
+            cadence = "Monthly"
+        case .week:
+            cadence = "Weekly"
+        case .day:
+            cadence = "Daily"
+        case .unknown:
+            cadence = "Plan"
+        }
+
+        if let trialDays = trialDisclosureDays {
+            return "\(cadence) after \(trialLengthAdjectiveText(for: trialDays)) trial"
+        }
+        return cadence
+    }
+
+    private func compactTrialReminderOption(
+        leadDays: Int,
+        title: String,
+        subtitle: String
+    ) -> some View {
+        let isSelected = selectedTrialReminderLeadDays == leadDays
+
+        return Button {
+            selectedTrialReminderLeadDays = leadDays
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 17, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.62))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(isSelected ? Color.primaryGreen : Color.white.opacity(0.35))
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.white.opacity(isSelected ? 0.1 : 0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? Color.primaryGreen.opacity(0.7) : Color.white.opacity(0.09),
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     private var compactTrialTimelineCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Trial timeline")
+                Text(trialDisclosureDays == nil ? "Plan timeline" : "Trial timeline")
                     .font(.system(size: 18, weight: .heavy, design: .rounded))
                     .foregroundColor(.white)
 
                 Spacer()
 
-                if let trialDays = selectedTrialDays {
+                if let trialDays = trialDisclosureDays {
                     Text("\(trialLengthText(for: trialDays))")
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
                         .foregroundColor(.black)
@@ -1086,7 +1549,7 @@ struct PayWallView: View {
             VStack(alignment: .leading, spacing: 0) {
                 trialConfidenceTimelineRow(
                     icon: "checkmark",
-                    title: "Today",
+                    title: trialConfidenceTodayTitle,
                     body: trialConfidenceTodayLine,
                     accent: Color.primaryGreen,
                     showsConnector: true
@@ -1102,7 +1565,7 @@ struct PayWallView: View {
 
                 trialConfidenceTimelineRow(
                     icon: "crown.fill",
-                    title: selectedTrialDays.map { "After \(trialLengthText(for: $0))" } ?? "When confirmed",
+                    title: trialDisclosureDays.map { "After \(trialLengthText(for: $0))" } ?? "When confirmed",
                     body: trialConfidenceRenewalLine,
                     accent: Color(hex: "FFB454"),
                     showsConnector: false
@@ -1179,7 +1642,7 @@ struct PayWallView: View {
 
     private var compactPriceDisclosureCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(selectedTrialDays == nil ? "Apple confirms the selected plan before it starts." : "No payment today.")
+            Text(compactPriceDisclosureTitle)
                 .font(.system(size: 15, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
 
@@ -1282,6 +1745,51 @@ struct PayWallView: View {
     }
 
     // MARK: - Conversion proof
+
+    private var hardPaywallValueAnchorCard: some View {
+        conversionCard(
+            eyebrow: "UNLOCK THE SYSTEM",
+            title: hardPaywallAnchorTitle,
+            body: hardPaywallAnchorBody,
+            accent: Color.primaryGreen
+        ) {
+            unlockHighlightRow(
+                icon: "target",
+                title: "Targets are already built",
+                body: "Your calories, protein, carbs, and fat become the lane for every meal decision.",
+                accent: Color.primaryGreen
+            )
+            unlockHighlightRow(
+                icon: "camera.viewfinder",
+                title: "Scan food into the plan",
+                body: "Use photos and labels to turn real meals into clear numbers.",
+                accent: Color.primaryBlue
+            )
+            unlockHighlightRow(
+                icon: "sparkles",
+                title: "Nora guides the next choice",
+                body: "Ask what fits before ordering, snacking, or adjusting dinner.",
+                accent: Color.secondaryPink
+            )
+        }
+        .onAppear {
+            trackPaywallValuePreviewViewedIfNeeded(previewType: "hard_paywall_value_anchor")
+        }
+    }
+
+    private var hardPaywallAnchorTitle: String {
+        if let struggle = onboardingCoordinator?.answers.biggestStruggle {
+            return "\(struggle.coachingFocusTitle). Unlock the plan now."
+        }
+        return "Your plan is ready. Unlock it now."
+    }
+
+    private var hardPaywallAnchorBody: String {
+        if let macros = onboardingCoordinator?.planMacros {
+            return "Macra has your \(macros.calories)-calorie target and macro split ready. Subscription unlocks the scanner, Nora, and meal decisions that make it usable today."
+        }
+        return "Subscription unlocks the scanner, Nora, macro targets, meal planning, and Fit With Pulse tools behind the plan you just built."
+    }
 
     private var firstWeekValueCard: some View {
         conversionCard(
@@ -1622,7 +2130,7 @@ struct PayWallView: View {
                     TierCard(
                         title: plan.displayTitle,
                         perPeriodPrice: plan.perPeriodDisplay,
-                        billingNote: plan.billingNote,
+                        billingNote: paywallBillingNote(for: plan),
                         badge: tierSavingsBadge(for: plan),
                         emphasized: index == 0,
                         isSelected: selectedPlan?.id == plan.id,
@@ -1631,6 +2139,32 @@ struct PayWallView: View {
                 }
             }
         }
+    }
+
+    private func paywallBillingNote(for plan: SubscriptionPlanOption) -> String {
+        if usesHardPaywallValueLayout {
+            if let trialDays = trialDisclosureDays(for: plan) {
+                return "Includes \(trialLengthAdjectiveText(for: trialDays)) trial. \(plan.billingNote)"
+            }
+            if plan.periodKind == .month {
+                return "No free trial. Billed monthly"
+            }
+            if plan.periodKind == .year {
+                return "No free trial. \(plan.billingNote)"
+            }
+            return plan.billingNote
+        }
+
+        guard usesTrialPrepCompactLayout else {
+            return plan.billingNote
+        }
+        if let trialDays = trialDisclosureDays(for: plan) {
+            return "Includes \(trialLengthAdjectiveText(for: trialDays)) trial. \(plan.billingNote)"
+        }
+        if plan.periodKind == .month {
+            return "No free trial. Billed monthly"
+        }
+        return plan.billingNote
     }
 
     private func planStatusCard(message: String) -> some View {
@@ -1723,7 +2257,7 @@ struct PayWallView: View {
             VStack(alignment: .leading, spacing: 0) {
                 trialConfidenceTimelineRow(
                     icon: "checkmark",
-                    title: "Today",
+                    title: trialConfidenceTodayTitle,
                     body: trialConfidenceTodayLine,
                     accent: Color.primaryGreen,
                     showsConnector: true
@@ -1739,7 +2273,7 @@ struct PayWallView: View {
 
                 trialConfidenceTimelineRow(
                     icon: "crown.fill",
-                    title: selectedTrialDays.map { "After \(trialLengthText(for: $0))" } ?? "When confirmed",
+                    title: trialDisclosureDays.map { "After \(trialLengthText(for: $0))" } ?? "When confirmed",
                     body: trialConfidenceRenewalLine,
                     accent: Color(hex: "FFB454"),
                     showsConnector: false
@@ -1781,15 +2315,80 @@ struct PayWallView: View {
         }
     }
 
+    private var hardPaywallPriceCommitmentCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(Color.primaryGreen)
+                    .frame(width: 30, height: 30)
+                    .background(Color.primaryGreen.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Unlock starts after Apple confirmation")
+                        .font(.system(size: 16, weight: .heavy, design: .rounded))
+                        .foregroundColor(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text(hardPaywallPriceCommitmentText)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white.opacity(0.72))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            if isDemoMode && !hardPaywallDirectPlansAvailable {
+                Text("Demo note: this preview is using the available StoreKit plans, so Apple may still show an eligible introductory offer.")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Color(hex: "FFB454"))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(hex: "FFB454").opacity(0.08)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color(hex: "FFB454").opacity(0.18), lineWidth: 1)
+                    )
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18).fill(Color.primaryGreen.opacity(0.055)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(Color.primaryGreen.opacity(0.22), lineWidth: 1)
+        )
+        .onAppear {
+            trackPricingDisclosureViewedIfNeeded()
+        }
+    }
+
+    private var hardPaywallPriceCommitmentText: String {
+        guard let plan = selectedPlan else {
+            return "Choose the plan that unlocks Macra when Apple confirms the purchase."
+        }
+
+        if let trialDays = trialDisclosureDays {
+            return "Apple will show the \(trialLengthText(for: trialDays)) trial and \(plan.priceLabel) renewal before anything starts."
+        }
+
+        return "Apple will show \(plan.priceLabel) \(renewalCadenceText(for: plan)) before the subscription starts."
+    }
+
     private var trialConfidenceIntro: String {
-        if let trialDays = selectedTrialDays {
+        if let trialDays = trialDisclosureDays {
             return "Start your \(trialLengthText(for: trialDays)) trial with no charge today. The selected plan only renews after the trial unless you cancel."
         }
         return "You can review the exact Apple confirmation sheet before the selected plan starts."
     }
 
+    private var trialConfidenceTodayTitle: String {
+        trialDisclosureDays == nil ? "Today" : "Free Today"
+    }
+
     private var trialConfidenceTodayLine: String {
-        if selectedTrialDays != nil {
+        if trialDisclosureDays != nil {
             return "Unlock scanner, Nora, targets, meal planning, and workouts. No payment today."
         }
         return "Review your Macra plan and confirm only if the selected price feels right."
@@ -1799,7 +2398,7 @@ struct PayWallView: View {
         guard let plan = selectedPlan else {
             return "Renews at the selected plan price unless canceled."
         }
-        if selectedTrialDays != nil {
+        if trialDisclosureDays != nil {
             return "Renews at \(plan.priceLabel) \(renewalCadenceText(for: plan)) unless canceled."
         }
         return "Starts at \(plan.priceLabel) \(renewalCadenceText(for: plan)) after Apple confirmation."
@@ -1916,7 +2515,7 @@ struct PayWallView: View {
                 .foregroundColor(.white.opacity(0.75))
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let trialDays = selectedTrialDays {
+            if let trialDays = trialDisclosureDays {
                 HStack {
                     Text("Trial")
                         .foregroundColor(.white.opacity(0.6))
@@ -1955,8 +2554,20 @@ struct PayWallView: View {
             return "Web checkout uses Stripe. Your subscription auto-renews until canceled and access is applied to this Macra account."
         }
 
-        if let trialDays = selectedTrialDays {
+        if usesHardPaywallValueLayout,
+           let plan = selectedPlan,
+           trialDisclosureDays == nil {
+            return "Macra unlocks after Apple confirms \(plan.priceLabel) \(renewalCadenceText(for: plan)). Auto-renews until canceled in Apple Subscriptions."
+        }
+
+        if let trialDays = trialDisclosureDays {
             return "Your \(trialLengthText(for: trialDays)) trial is free. After the trial, your selected plan auto-renews until canceled. Cancel anytime in Settings > [your name] > Subscriptions."
+        }
+
+        if usesTrialPrepCompactLayout,
+           let plan = selectedPlan,
+           plan.periodKind == .month {
+            return "Monthly does not include a free trial. It starts at \(plan.priceLabel) monthly after Apple confirmation. Choose annual if you want the 3-day trial."
         }
 
         return "Auto-renews at the price shown until canceled. Cancel anytime in Settings > [your name] > Subscriptions."
@@ -2037,25 +2648,28 @@ struct PayWallView: View {
             Color.black.opacity(0.72)
                 .ignoresSafeArea()
 
-            VStack(spacing: 18) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 48, weight: .bold))
-                    .foregroundColor(Color.primaryGreen)
+            VStack(spacing: 20) {
+                VStack(spacing: 10) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 46, weight: .bold))
+                        .foregroundColor(Color.primaryGreen)
 
-                VStack(spacing: 8) {
-                    Text("You're subscribed")
-                        .font(.system(size: 30, weight: .heavy, design: .rounded))
+                    Text("Your plan is active")
+                        .font(.system(size: 28, weight: .heavy, design: .rounded))
                         .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
 
-                    Text("Macra is unlocked. Your plan, scanner, and Nora are ready.")
+                    Text("Start with one meal so Nora can tune the rest of today.")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.white.opacity(0.72))
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                subscriptionActivationCard
+
                 MacraPrimaryButton(
-                    title: "Continue to Macra",
+                    title: "Start with one meal",
                     accent: Color.primaryGreen,
                     isLoading: false,
                     action: finishSubscriptionSuccessFlow
@@ -2072,6 +2686,174 @@ struct PayWallView: View {
                     .strokeBorder(Color.primaryGreen.opacity(0.35), lineWidth: 1)
             )
             .padding(.horizontal, 24)
+            .onAppear {
+                trackSubscriptionSuccessActivationViewedIfNeeded()
+            }
+        }
+    }
+
+    private var subscriptionActivationCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let macros = onboardingCoordinator?.planMacros {
+                HStack(spacing: 10) {
+                    activationMetric(label: "Calories", value: "\(macros.calories)", accent: Color.primaryGreen)
+                    activationMetric(label: "Protein", value: "\(macros.protein)g", accent: Color.primaryBlue)
+                }
+            }
+
+            if let meal = onboardingCoordinator?.suggestedMealPlan?.meals.first {
+                Divider().background(Color.white.opacity(0.08))
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "fork.knife")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Color.primaryGreen)
+                        .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("First meal to log")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .tracking(0.9)
+                            .foregroundColor(Color.primaryGreen)
+                        Text(meal.title)
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        Text("\(meal.totalCalories) calories planned")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.white.opacity(0.62))
+                    }
+                    Spacer(minLength: 0)
+                }
+            } else {
+                activationStepRow(icon: "camera.viewfinder", title: "Log your first meal", body: "Use a photo or quick entry. One real meal gives Nora the signal she needs.")
+            }
+
+            activationStepRow(icon: "sparkles", title: "Nora checks the fit", body: "After the first log, Macra compares the meal against your target and next meal.")
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 18).fill(Color.white.opacity(0.05)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .strokeBorder(Color.primaryGreen.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private func activationMetric(label: String, value: String, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .tracking(1.0)
+                .foregroundColor(accent)
+            Text(value)
+                .font(.system(size: 20, weight: .heavy, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 14).fill(accent.opacity(0.08)))
+    }
+
+    private func activationStepRow(icon: String, title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Color.primaryGreen)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.primaryGreen.opacity(0.12)))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                Text(body)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white.opacity(0.62))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var appleConfirmationBridgeOverlay: some View {
+        VStack(spacing: 18) {
+            VStack(spacing: 10) {
+                Image(systemName: "apple.logo")
+                    .font(.system(size: 34, weight: .bold))
+                    .foregroundColor(.white)
+
+                Text("Apple confirms the trial next")
+                    .font(.system(size: 24, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+
+                Text(appleConfirmationBridgeBody)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white.opacity(0.72))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(spacing: 10) {
+                appleConfirmationRow(label: "Today", value: appleConfirmationTodayText)
+                appleConfirmationRow(label: "After trial", value: appleConfirmationRenewalText)
+                appleConfirmationRow(label: "Cancel", value: "Apple Subscriptions")
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.05)))
+
+            MacraPrimaryButton(
+                title: "Continue to Apple",
+                accent: Color.primaryGreen,
+                isLoading: false,
+                action: continueFromAppleConfirmationBridge
+            )
+
+            Button("Not now") {
+                dismissAppleConfirmationBridge(reason: "not_now")
+            }
+            .font(.system(size: 14, weight: .bold))
+            .foregroundColor(.white.opacity(0.72))
+        }
+        .padding(22)
+        .background(
+            RoundedRectangle(cornerRadius: 24)
+                .fill(Color.secondaryCharcoal.opacity(0.98))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .strokeBorder(Color.primaryGreen.opacity(0.28), lineWidth: 1)
+        )
+        .padding(.horizontal, 24)
+    }
+
+    private var appleConfirmationBridgeBody: String {
+        if let trialDays = trialDisclosureDays {
+            return "The Apple sheet shows your \(trialLengthText(for: trialDays)) free trial, the renewal price, and the final approval button before anything starts."
+        }
+        return "The Apple sheet shows the selected price and the final approval button before anything starts."
+    }
+
+    private var appleConfirmationTodayText: String {
+        guard trialDisclosureDays == nil else { return "$0" }
+        return selectedPlan?.priceLabel ?? "Selected price"
+    }
+
+    private var appleConfirmationRenewalText: String {
+        guard let plan = selectedPlan else { return "Selected plan" }
+        if trialDisclosureDays == nil {
+            return "\(plan.priceLabel) \(renewalCadenceText(for: plan))"
+        }
+        return "\(plan.priceLabel) \(renewalCadenceText(for: plan)) unless canceled"
+    }
+
+    private func appleConfirmationRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.white.opacity(0.58))
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.white)
+                .multilineTextAlignment(.trailing)
         }
     }
 
@@ -2080,13 +2862,18 @@ struct PayWallView: View {
         if usesTrialPrepCompactLayout {
             switch compactPaywallStep {
             case .trialWorks: return "Continue"
-            case .firstSevenDays: return "See plans"
+            case .firstSevenDays: return "Set reminder"
+            case .trialReminder: return "See plans"
             case .plans: break
             }
         }
         if shouldUseWebCheckoutFallback { return "Unlock Macra" }
         if isRenewalFlow { return "Unlock Macra Pro" }
         if usesTrialConfidenceLayout, selectedTrialDays != nil { return "Continue for free" }
+        if usesTrialPrepCompactLayout, trialDisclosureDays != nil { return "Start my free trial" }
+        if usesTrialPrepCompactLayout, selectedPlan?.periodKind == .month { return "Start monthly plan" }
+        if usesHardPaywallValueLayout, trialDisclosureDays == nil { return "Unlock Macra today" }
+        if usesHardPaywallValueLayout { return "Continue with Apple" }
         if let trialDays = selectedTrialDays { return "Try \(trialLengthText(for: trialDays)) free" }
         if selectedPlan == nil, isLoadingPackages { return "Loading plans..." }
         if selectedPlan == nil { return "Unlock Macra" }
@@ -2106,14 +2893,23 @@ struct PayWallView: View {
             return "Subscribe securely through Stripe, then return to Macra automatically."
         }
         guard !hasExistingSubscriptionAccess, let plan = selectedPlan else { return nil }
-        if let trialDays = selectedTrialDays {
+        if let trialDays = trialDisclosureDays {
             if usesTrialConfidenceLayout {
                 return "No payment today. After \(trialLengthText(for: trialDays)), renews at \(plan.priceLabel) unless canceled."
             }
             if usesTrialPrepCompactLayout {
                 return "No payment today. After \(trialLengthText(for: trialDays)), renews at \(plan.priceLabel) unless canceled."
             }
+            if usesHardPaywallValueLayout {
+                return "Apple will show your eligible \(trialLengthText(for: trialDays)) trial and renewal price before anything starts."
+            }
             return "Free for \(trialLengthText(for: trialDays)), then \(plan.priceLabel). Cancel anytime."
+        }
+        if usesHardPaywallValueLayout {
+            return "Starts after Apple confirmation. Cancel anytime in Apple Subscriptions."
+        }
+        if usesTrialPrepCompactLayout, plan.periodKind == .month {
+            return "Monthly starts after Apple confirmation. Annual includes a 3-day trial."
         }
 
         return "\(plan.priceLabel). Cancel anytime in Apple Subscriptions."
@@ -2121,6 +2917,10 @@ struct PayWallView: View {
 
     private func trialLengthText(for days: Int) -> String {
         days == 1 ? "1 day" : "\(days) days"
+    }
+
+    private func trialLengthAdjectiveText(for days: Int) -> String {
+        days == 1 ? "1-day" : "\(days)-day"
     }
 
     // MARK: - Actions
@@ -2142,7 +2942,7 @@ struct PayWallView: View {
         } else if shouldUseWebCheckoutFallback {
             triggerWebCheckoutFallback()
         } else {
-            triggerPurchase()
+            presentAppleConfirmationBridge()
         }
     }
 
@@ -2275,6 +3075,7 @@ struct PayWallView: View {
 
         switch status {
         case "success", "succeeded", "verified", "complete", "completed":
+            scheduleTrialEndingReminderIfRequested()
             MacraPurchaseLogService.shared.markSuccess(
                 logID: activePurchaseLogID,
                 plan: selectedPlan,
@@ -2411,7 +3212,7 @@ struct PayWallView: View {
                                 metadata: paywallFunnelMetadata
                             )
                         }
-                        standalonePurchaseError = userError.localizedDescription
+                        standalonePurchaseError = MacraUserFacingError.purchase(userError)
                         return
                     }
 
@@ -2459,7 +3260,7 @@ struct PayWallView: View {
                                 metadata: paywallFunnelMetadata
                             )
                         }
-                        standalonePurchaseError = error.localizedDescription
+                        standalonePurchaseError = MacraUserFacingError.purchase(error)
                     case .success(true):
                         break
                     }
@@ -2503,6 +3304,49 @@ struct PayWallView: View {
         }
     }
 
+    private func presentAppleConfirmationBridge() {
+        guard selectedPlan != nil else {
+            triggerPurchase()
+            return
+        }
+
+        showAppleConfirmationBridge = true
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackPaywallPurchaseBridgeViewed(
+                source: paywallAnalyticsSource,
+                selectedPlan: selectedPlan,
+                ctaTitle: ctaTitle,
+                metadata: paywallFunnelMetadata
+            )
+        }
+    }
+
+    private func continueFromAppleConfirmationBridge() {
+        showAppleConfirmationBridge = false
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackPaywallPurchaseBridgeContinued(
+                source: paywallAnalyticsSource,
+                selectedPlan: selectedPlan,
+                ctaTitle: "Continue to Apple",
+                metadata: paywallFunnelMetadata
+            )
+        }
+        triggerPurchase()
+    }
+
+    private func dismissAppleConfirmationBridge(reason: String) {
+        showAppleConfirmationBridge = false
+        if shouldTrackPaywallAnalytics {
+            MacraAnalyticsService.shared.trackPaywallPurchaseBridgeDismissed(
+                source: paywallAnalyticsSource,
+                selectedPlan: selectedPlan,
+                ctaTitle: "Continue to Apple",
+                reason: reason,
+                metadata: paywallFunnelMetadata
+            )
+        }
+    }
+
     private func triggerExistingAccessContinue() {
         if let coordinator = onboardingCoordinator {
             coordinator.continueWithExistingSubscriptionAccess()
@@ -2541,6 +3385,7 @@ struct PayWallView: View {
             isStandalonePurchasing = false
             switch result {
             case .success:
+                scheduleTrialEndingReminderIfRequested()
                 MacraPurchaseLogService.shared.markSuccess(
                     logID: activePurchaseLogID,
                     plan: plan,
@@ -2594,11 +3439,22 @@ struct PayWallView: View {
                             metadata: paywallFunnelMetadata
                         )
                     }
-                    standalonePurchaseError = (error as NSError).localizedDescription
+                    standalonePurchaseError = MacraUserFacingError.purchase(error)
                     print("There was an error while purchasing \(error)")
                 }
             }
         }
+    }
+
+    private func scheduleTrialEndingReminderIfRequested() {
+        guard !isDemoMode,
+              let trialDays = trialDisclosureDays,
+              let leadDays = trialReminderLeadDaysForScheduling else { return }
+
+        NotificationService.sharedInstance.scheduleTrialEndingReminder(
+            trialDays: trialDays,
+            leadDays: leadDays
+        )
     }
 
     private func triggerRestore() {
@@ -2694,19 +3550,11 @@ struct PayWallView: View {
         standalonePurchaseError = nil
         onboardingCoordinator?.purchaseError = nil
         showSubscriptionSuccess = true
-
-        guard !didScheduleSubscriptionSuccessAdvance else { return }
-        didScheduleSubscriptionSuccessAdvance = true
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-            guard showSubscriptionSuccess else { return }
-            finishSubscriptionSuccessFlow()
-        }
     }
 
     private func finishSubscriptionSuccessFlow() {
+        trackSubscriptionSuccessActivationPrimaryIfNeeded(actionTitle: "Start with one meal")
         showSubscriptionSuccess = false
-        didScheduleSubscriptionSuccessAdvance = false
         finishStandalonePaywall()
     }
 
@@ -2729,6 +3577,7 @@ struct PayWallView: View {
         guard !shouldUseDemoPlans else { return }
 
         let assignment = await MacraPaywallExperimentService.fetchAndActivateAssignment()
+        paywallExperimentAssignment = assignment
         if defaultPlanSelectionOverride == nil,
            paywallDefaultPlanSelection != assignment.defaultPlanSelection {
             paywallDefaultPlanSelection = assignment.defaultPlanSelection
@@ -2803,6 +3652,27 @@ struct PayWallView: View {
             ctaDecision: primaryCTAAnalyticsDecision,
             usesWebCheckoutFallback: shouldUseWebCheckoutFallback,
             fallbackReason: shouldUseWebCheckoutFallback ? webCheckoutFallbackReason : nil,
+            metadata: paywallFunnelMetadata
+        )
+    }
+
+    private func trackSubscriptionSuccessActivationViewedIfNeeded() {
+        guard shouldTrackPaywallAnalytics, !didTrackSubscriptionSuccessActivationView else { return }
+        didTrackSubscriptionSuccessActivationView = true
+        MacraAnalyticsService.shared.trackTrialActivationScreenViewed(
+            source: paywallAnalyticsSource,
+            selectedPlan: selectedPlan,
+            metadata: paywallFunnelMetadata
+        )
+    }
+
+    private func trackSubscriptionSuccessActivationPrimaryIfNeeded(actionTitle: String) {
+        guard shouldTrackPaywallAnalytics, !didTrackSubscriptionSuccessActivationPrimary else { return }
+        didTrackSubscriptionSuccessActivationPrimary = true
+        MacraAnalyticsService.shared.trackTrialActivationPrimaryPressed(
+            source: paywallAnalyticsSource,
+            selectedPlan: selectedPlan,
+            actionTitle: actionTitle,
             metadata: paywallFunnelMetadata
         )
     }
@@ -3125,6 +3995,21 @@ struct PayWallView: View {
             .sorted { $0.periodKind.rawValue < $1.periodKind.rawValue }
     }
 
+    private static func hardPaywallPlans(from plans: [SubscriptionPlanOption]) -> [SubscriptionPlanOption] {
+        let directPlans = plans
+            .filter { [.month, .year].contains($0.periodKind) && ($0.trialDays ?? 0) <= 0 }
+            .sorted { left, right in
+                if left.periodKind == right.periodKind {
+                    return NSDecimalNumber(decimal: left.price).doubleValue < NSDecimalNumber(decimal: right.price).doubleValue
+                }
+                if left.periodKind == .month { return true }
+                if right.periodKind == .month { return false }
+                return left.periodKind.rawValue < right.periodKind.rawValue
+            }
+
+        return directPlans
+    }
+
     private static var demoPlanOptions: [SubscriptionPlanOption] {
         [
             .local(LocalSubscriptionPlanViewModel(
@@ -3142,7 +4027,7 @@ struct PayWallView: View {
                 localizedPriceString: "$4.99",
                 price: Decimal(4.99),
                 periodKind: .month,
-                trialDays: 3,
+                trialDays: nil,
                 product: nil
             ))
         ]

@@ -523,7 +523,7 @@ struct BuddyDayView: View {
                 case .success(let meals):
                     self.meals = meals
                 case .failure(let error):
-                    self.loadError = error.localizedDescription
+                    self.loadError = MacraUserFacingError.sync(error)
                 }
             }
         }

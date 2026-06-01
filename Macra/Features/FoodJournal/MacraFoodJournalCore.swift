@@ -1705,7 +1705,7 @@ final class MacraFoodJournalViewModel: ObservableObject {
                     case .failure(let error):
                         print("[Macra][Journal.addMealFromDraft] ❌ Photo upload failed: \(error.localizedDescription)")
                         self.isAnalyzing = false
-                        self.analysisError = "Couldn't upload photo: \(error.localizedDescription)"
+                        self.analysisError = MacraUserFacingError.upload(error)
                     }
                 }
             }
@@ -1912,7 +1912,7 @@ final class MacraFoodJournalViewModel: ObservableObject {
 
                 case .failure(let error):
                     print("[Macra][Journal.analyzeAndSaveMealFromDraft] ❌ Analysis failed: \(error.localizedDescription) — keeping draft so user can retry")
-                    self.analysisError = error.localizedDescription
+                    self.analysisError = MacraUserFacingError.analyzer(error)
                 }
             }
         }
@@ -1978,7 +1978,7 @@ final class MacraFoodJournalViewModel: ObservableObject {
                 case .success(let meals):
                     self.mealHistory = self.uniqueMeals(meals.map(MacraFoodJournalMeal.init(meal:)))
                 case .failure(let error):
-                    self.historyError = error.localizedDescription
+                    self.historyError = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -1994,7 +1994,7 @@ final class MacraFoodJournalViewModel: ObservableObject {
         let candidateUserIDs = labelScanHistoryUserIDs()
         guard !candidateUserIDs.isEmpty else {
             isLoadingLabelHistory = false
-            labelHistoryError = NutritionCoreError.missingUserId.localizedDescription
+            labelHistoryError = "Sign in to view label history. Code: AUTH_REQUIRED."
             return
         }
 
@@ -2013,7 +2013,7 @@ final class MacraFoodJournalViewModel: ObservableObject {
                 .getDocuments { snapshot, error in
                     lock.lock()
                     if let error {
-                        errors.append(error.localizedDescription)
+                        errors.append(MacraUserFacingError.sync(error))
                     } else {
                         let documents = snapshot?.documents ?? []
                         print("[Macra][LabelScanHistory] Found \(documents.count) scans for user \(userId)")
@@ -2091,7 +2091,7 @@ final class MacraFoodJournalViewModel: ObservableObject {
                     )
                 case .failure(let error):
                     self.isAnalyzingLabel = false
-                    self.labelAnalysisError = error.localizedDescription
+                    self.labelAnalysisError = MacraUserFacingError.analyzer(error)
                 }
             }
         }

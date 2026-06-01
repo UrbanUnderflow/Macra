@@ -99,7 +99,7 @@ final class LoginViewModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.isWorking = false
                 if let error {
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.auth(error)
                 } else {
                     self?.hasSentPasswordReset = true
                     self?.errorMessage = nil
@@ -156,7 +156,7 @@ final class LoginViewModel: ObservableObject {
                 case .success:
                     self?.appCoordinator.handleLogin()
                 case .failure(let error):
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.auth(error)
                 }
             }
         }
@@ -174,7 +174,7 @@ final class LoginViewModel: ObservableObject {
                 case .success:
                     self?.appCoordinator.handleLogin()
                 case .failure(let error):
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.auth(error)
                 }
             }
         }
@@ -195,7 +195,7 @@ final class LoginViewModel: ObservableObject {
                        nsError.code == ASAuthorizationError.canceled.rawValue {
                         return
                     }
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.auth(error)
                 }
             }
         }

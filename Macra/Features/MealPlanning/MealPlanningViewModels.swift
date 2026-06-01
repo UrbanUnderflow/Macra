@@ -89,7 +89,7 @@ final class NoraPlansViewModel: ObservableObject {
             guard let self else { return }
             self.isLoading = false
             if let error = loadError {
-                self.errorMessage = error.localizedDescription
+                self.errorMessage = MacraUserFacingError.sync(error)
                 return
             }
             self.plans = collected.sorted { $0.generatedAt > $1.generatedAt }
@@ -186,7 +186,7 @@ final class MealPlanningRootViewModel: ObservableObject {
                     self.reconcileActivePlanWithCurrent()
                 case .failure(let error):
                     print("[Macra][Playbook.load] ❌ Fetch failed: \(error.localizedDescription)")
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -237,7 +237,7 @@ final class MealPlanningRootViewModel: ObservableObject {
                 case .success(let meals):
                     self.recentMeals = meals.sorted { $0.createdAt > $1.createdAt }
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -261,7 +261,7 @@ final class MealPlanningRootViewModel: ObservableObject {
                     self.statusMessage = "Created \(plan.planName)."
                     completion?(.success(plan))
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                     completion?(.failure(error))
                 }
             }
@@ -273,7 +273,7 @@ final class MealPlanningRootViewModel: ObservableObject {
             switch result {
             case .failure(let error):
                 DispatchQueue.main.async {
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.sync(error)
                     completion?(.failure(error))
                 }
             case .success(let meals):
@@ -295,7 +295,7 @@ final class MealPlanningRootViewModel: ObservableObject {
                     self.statusMessage = "Renamed plan."
                     completion?(.success(updatedPlan))
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                     completion?(.failure(error))
                 }
             }
@@ -312,7 +312,7 @@ final class MealPlanningRootViewModel: ObservableObject {
                     self.statusMessage = "Deleted meal plan."
                     completion?(.success(()))
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                     completion?(.failure(error))
                 }
             }
@@ -420,7 +420,7 @@ final class MealPlanningRootViewModel: ObservableObject {
                     self.statusMessage = "Logged \(plannedMeal.name)."
                     completion?(.success(()))
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                     completion?(.failure(error))
                 }
             }
@@ -471,7 +471,7 @@ final class MealPlanningRootViewModel: ObservableObject {
         group.notify(queue: .main) { [weak self] in
             guard let self else { return }
             if let saveError {
-                self.errorMessage = saveError.localizedDescription
+                self.errorMessage = MacraUserFacingError.sync(saveError)
                 completion?(.failure(saveError))
                 return
             }
@@ -611,7 +611,7 @@ final class MealPlanningRootViewModel: ObservableObject {
                     }
                     completion?(.success(updatedPlan))
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                     completion?(.failure(error))
                 }
             }
@@ -738,7 +738,7 @@ final class MacroTargetsViewModel: ObservableObject {
                         UserService.sharedInstance.currentMacroTarget = recommendation
                     }
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
                 self.isLoading = false
             }
@@ -751,7 +751,7 @@ final class MacroTargetsViewModel: ObservableObject {
                 case .success(let recommendations):
                     self.recommendations = recommendations
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -821,7 +821,7 @@ final class MacroTargetsViewModel: ObservableObject {
                     }
                     self.statusMessage = "Saved macro targets."
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -888,7 +888,7 @@ final class MacroTargetsViewModel: ObservableObject {
                     self.fat = analysis.macros.fat
 
                 case .failure(let error):
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = MacraUserFacingError.mealPlan(error)
                 }
             }
         }
@@ -900,14 +900,14 @@ final class MacroTargetsViewModel: ObservableObject {
         print("[Macra][MacroTargets.applyNoraResult] Saving macros + meal plan")
         saveMacroTargets(from: result) { [weak self] macroError in
             if let macroError {
-                self?.errorMessage = macroError.localizedDescription
+                self?.errorMessage = MacraUserFacingError.sync(macroError)
                 onComplete()
                 return
             }
 
             self?.replaceActiveMealPlan(with: result) { [weak self] planError in
                 if let planError {
-                    self?.errorMessage = planError.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.mealPlan(planError)
                 }
                 onComplete()
             }
@@ -963,7 +963,7 @@ final class MacroTargetsViewModel: ObservableObject {
             self.isSaving = false
 
             if let saveError {
-                self.errorMessage = saveError.localizedDescription
+                self.errorMessage = MacraUserFacingError.sync(saveError)
                 completion(saveError)
                 return
             }

@@ -15,7 +15,7 @@ final class LabelScanHistoryViewModel: ObservableObject {
                 case .success(let labels):
                     self?.scannedLabels = labels
                 case .failure(let error):
-                    self?.errorMessage = error.localizedDescription
+                    self?.errorMessage = MacraUserFacingError.sync(error)
                 }
             }
         }
@@ -31,4 +31,3 @@ final class LabelScanHistoryViewModel: ObservableObject {
         }
     }
 }
-

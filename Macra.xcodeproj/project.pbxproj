@@ -13,6 +13,7 @@
 		15FC1E54934232053D9C7C87 /* MacraNotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3277F0D7BF0712FDDD61C1FC /* MacraNotificationSettingsView.swift */; };
 		16F5432EE3D175780A7793A1 /* SupplementService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2E1F83AF4CF6E2910F5541A /* SupplementService.swift */; };
 		18862A51E921780B030A4AAB /* MacraDailyInsightService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB0296153587DF3F118D9B81 /* MacraDailyInsightService.swift */; };
+		1A9F6B4D6A7B4C91A25E8D30 /* MacraUserFacingError.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2D4A6C8F0B14D36A981C2E7 /* MacraUserFacingError.swift */; };
 		1BD7D97174B77A2F71356B0D /* MacraFoodJournalNetCarbInfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D8338612294D092D0F0CCCD /* MacraFoodJournalNetCarbInfoView.swift */; };
 		1F4AB5051F4432571F19B212 /* MacraOnboardingComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14E3754760C219480E699CC /* MacraOnboardingComponents.swift */; };
 		20F0643DCBD930E7CC3C0796 /* LabelGradeResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AC591607953928EC733EEAE /* LabelGradeResult.swift */; };
@@ -271,6 +272,7 @@
 		21E8FBD02A9EE0D100671B49 /* GPTService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = GPTService.swift; sourceTree = "<group>"; };
 		21E8FBD12A9EE0D100671B49 /* FirebaseService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = FirebaseService.swift; sourceTree = "<group>"; };
 		21E8FBD22A9EE0D100671B49 /* PurchaseService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = PurchaseService.swift; sourceTree = "<group>"; };
+		E2D4A6C8F0B14D36A981C2E7 /* MacraUserFacingError.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MacraUserFacingError.swift; sourceTree = "<group>"; };
 		23135D3FB27204F4AE8F959C /* BuddyDayView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BuddyDayView.swift; path = Features/Buddies/BuddyDayView.swift; sourceTree = "<group>"; };
 		23E08F80A7CBA4F1904E0AF6 /* ConfigManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ConfigManager.swift; path = Services/ConfigManager.swift; sourceTree = "<group>"; };
 		23EC6FADC69951CE83A7073A /* MacraFoodJournalLabelViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MacraFoodJournalLabelViews.swift; path = Features/FoodJournal/MacraFoodJournalLabelViews.swift; sourceTree = "<group>"; };
@@ -786,6 +788,7 @@
 				21E8FBCE2A9EE0D100671B49 /* NotificationService.swift */,
 				21E8FBCF2A9EE0D100671B49 /* ServiceManager.swift */,
 				21E8FBD02A9EE0D100671B49 /* GPTService.swift */,
+				E2D4A6C8F0B14D36A981C2E7 /* MacraUserFacingError.swift */,
 				21E8FBD12A9EE0D100671B49 /* FirebaseService.swift */,
 				21E8FBD22A9EE0D100671B49 /* PurchaseService.swift */,
 			);
@@ -1125,6 +1128,7 @@
 				0E127F693AFD7E4902FFED32 /* MacraFoodJournalNutritionBreakdownCard.swift in Sources */,
 				E4E31F75F22228EAD9D340D3 /* MacraSportConfigService.swift in Sources */,
 				18862A51E921780B030A4AAB /* MacraDailyInsightService.swift in Sources */,
+				1A9F6B4D6A7B4C91A25E8D30 /* MacraUserFacingError.swift in Sources */,
 				4CAD6B30112102D823DF21D2 /* MacraFoodJournalAnalyzeLoaders.swift in Sources */,
 				3E41E3039543DFFA8F01CCAD /* CoachAssignedPlanStepView.swift in Sources */,
 				C6C755A47780A648572C2D84 /* BuddiesView.swift in Sources */,

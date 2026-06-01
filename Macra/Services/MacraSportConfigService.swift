@@ -36,7 +36,7 @@ final class MacraSportConfigService: ObservableObject {
                 self.hasFetched = true
 
                 if let error = error {
-                    self.loadError = error.localizedDescription
+                    self.loadError = MacraUserFacingError.sync(error)
                     return
                 }
 
