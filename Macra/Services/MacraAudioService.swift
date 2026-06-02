@@ -118,7 +118,20 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         static let configDocument = "ai-voice"
         static let narrationField = "macraOnboardingNarrations"
         static let diskCacheDirectoryName = "MacraNoraNarrationCache"
-        static let priorityOnboardingStepId = "welcome"
+        static let priorityOnboardingStepIds = [
+            "welcome",
+            "primary_focus",
+            "primary_focus_selection_loseBodyFat",
+            "primary_focus_selection_buildMuscle",
+            "primary_focus_selection_eatConsistently",
+            "primary_focus_selection_stopGuessing",
+            "primary_focus_selection_supportTraining",
+            "sex",
+            "age",
+            "height",
+            "current_weight",
+            "goal_weight"
+        ]
         static let generatedNarrationFunctionPath = "/.netlify/functions/generate-macra-onboarding-narration"
     }
 
@@ -130,6 +143,7 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
     private var narrationRunID = UUID()
     private var narrationTask: Task<Void, Never>?
     private var preloadTask: Task<Void, Never>?
+    private var priorityPreloadTask: Task<Void, Never>?
     private var meteringTimer: Timer?
     private var lastNarrationKey: String?
     private var lastLoggedFailureMessage: String?
@@ -156,6 +170,8 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         } else {
             preloadTask?.cancel()
             preloadTask = nil
+            priorityPreloadTask?.cancel()
+            priorityPreloadTask = nil
             stop(resetLastKey: false, markCompleted: true)
         }
     }
@@ -167,6 +183,24 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
             await self?.warmOnboardingNarrationCache()
             await MainActor.run {
                 self?.preloadTask = nil
+            }
+        }
+    }
+
+    func preloadOnboardingNarrations(stepIds: [String]) {
+        guard isEnabled else { return }
+        let normalizedStepIds = stepIds.reduce(into: [String]()) { result, stepId in
+            let trimmed = stepId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !result.contains(trimmed) else { return }
+            result.append(trimmed)
+        }
+        guard !normalizedStepIds.isEmpty else { return }
+
+        priorityPreloadTask?.cancel()
+        priorityPreloadTask = Task { [weak self] in
+            await self?.warmOnboardingNarrationCache(stepIds: normalizedStepIds)
+            await MainActor.run {
+                self?.priorityPreloadTask = nil
             }
         }
     }
@@ -239,27 +273,42 @@ final class MacraNoraVoiceService: NSObject, ObservableObject, AVAudioPlayerDele
         MacraAudioService.configurePlaybackSessionForNarration()
         let assets = await loadNarrationAssets(force: force)
         guard !Task.isCancelled else { return }
-        if let priorityAsset = assets[Constants.priorityOnboardingStepId] {
-            do {
-                _ = try await cacheAndPrepareAudio(for: priorityAsset, force: force)
-            } catch {
-                logNarrationFailureIfNeeded(error.localizedDescription)
-            }
+
+        for stepId in Constants.priorityOnboardingStepIds {
+            guard !Task.isCancelled else { return }
+            guard let asset = assets[stepId] else { continue }
+            await warm(asset: asset, force: force)
         }
 
         let uncachedAssets = assets
-            .filter { $0.key != Constants.priorityOnboardingStepId }
+            .filter { !Constants.priorityOnboardingStepIds.contains($0.key) }
             .map(\.value)
             .filter { force || audioDataCache[$0.downloadURL] == nil || preparedAudioPlayers[$0.downloadURL] == nil }
         guard !uncachedAssets.isEmpty else { return }
 
         for asset in uncachedAssets {
             guard !Task.isCancelled else { return }
-            do {
-                _ = try await cacheAndPrepareAudio(for: asset, force: force)
-            } catch {
-                logNarrationFailureIfNeeded(error.localizedDescription)
-            }
+            await warm(asset: asset, force: force)
+        }
+    }
+
+    private func warmOnboardingNarrationCache(stepIds: [String], force: Bool = false) async {
+        MacraAudioService.configurePlaybackSessionForNarration()
+        let assets = await loadNarrationAssets(force: force)
+        guard !Task.isCancelled else { return }
+
+        for stepId in stepIds {
+            guard !Task.isCancelled else { return }
+            guard let asset = assets[stepId] else { continue }
+            await warm(asset: asset, force: force)
+        }
+    }
+
+    private func warm(asset: NarrationAsset, force: Bool) async {
+        do {
+            _ = try await cacheAndPrepareAudio(for: asset, force: force)
+        } catch {
+            logNarrationFailureIfNeeded(error.localizedDescription)
         }
     }
 

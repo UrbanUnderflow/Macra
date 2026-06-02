@@ -1963,6 +1963,7 @@ struct MacraOnboardingFlowView: View {
             coordinator.existingSubscriptionAccessOverride = existingSubscriptionAccessOverride
             coordinator.trackCurrentOnboardingStepViewed(trigger: "flow_appeared")
             MacraNoraVoiceService.shared.preloadOnboardingNarrations()
+            preloadLikelyNarrations()
             narrateCurrentStep()
         }
         .onChange(of: existingSubscriptionAccessOverride) { newValue in
@@ -1973,6 +1974,7 @@ struct MacraOnboardingFlowView: View {
         }
         .onChange(of: coordinator.currentStep) { _ in
             coordinator.trackCurrentOnboardingStepViewed(trigger: "step_changed")
+            preloadLikelyNarrations()
             narrateCurrentStep()
         }
         .onChange(of: coordinator.answers.primaryFocus) { _ in
@@ -2000,6 +2002,22 @@ struct MacraOnboardingFlowView: View {
             key: "macra_onboarding_\(step.analyticsId)",
             force: force
         )
+    }
+
+    private func preloadLikelyNarrations() {
+        var stepIds = [coordinator.currentStep.analyticsId]
+
+        if let nextStep = MacraOnboardingCoordinator.Step(rawValue: coordinator.currentStep.rawValue + 1) {
+            stepIds.append(nextStep.analyticsId)
+        }
+
+        if coordinator.currentStep == .welcome || coordinator.currentStep == .primaryFocus {
+            stepIds.append(contentsOf: MacraPrimaryFocus.allCases.map {
+                "primary_focus_selection_\($0.rawValue)"
+            })
+        }
+
+        MacraNoraVoiceService.shared.preloadOnboardingNarrations(stepIds: stepIds)
     }
 
     private func narratePrimaryFocusSelectionIfNeeded() {

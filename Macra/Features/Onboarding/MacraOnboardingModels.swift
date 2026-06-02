@@ -236,12 +236,23 @@ enum BiggestStruggle: String, CaseIterable, Identifiable, Hashable {
 
     var paywallProofLine: String {
         switch self {
-        case .consistency: return "Daily targets, reminders, and Nora check-ins keep the plan from fading out."
-        case .cravings: return "Your plan keeps room for real life while protecting your calorie target."
-        case .portions: return "Photo logging and label scanning make food math visible before it turns into guesswork."
-        case .planning: return "Meal planning stays connected to your live macros, not a static PDF."
-        case .knowledge: return "Ask Nora what to change and get answers grounded in your own logs."
-        case .motivation: return "Macra keeps the next useful action close, from meal scans to daily coaching."
+        case .consistency: return "See what fits today and get a next step when the day gets messy."
+        case .cravings: return "Keep room for real cravings while protecting your calorie target."
+        case .portions: return "Scan meals and labels so portions stop feeling like a guess."
+        case .planning: return "Start with simple meals, then adjust them as your day changes."
+        case .knowledge: return "Ask Nora what to change and get answers grounded in your own food."
+        case .motivation: return "Get one useful next move instead of staring at a blank tracker."
+        }
+    }
+
+    var paywallProofTitle: String {
+        switch self {
+        case .consistency: return "Stay consistent on normal days"
+        case .cravings: return "Room for real cravings"
+        case .portions: return "Know what your portions mean"
+        case .planning: return "Meals that adjust with your day"
+        case .knowledge: return "Clear answers about what to eat"
+        case .motivation: return "A next step when motivation drops"
         }
     }
 }

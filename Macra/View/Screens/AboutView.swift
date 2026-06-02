@@ -56,7 +56,7 @@ struct AboutView: View {
                             .padding()
                             .multilineTextAlignment(.leading)
                         
-                        Text("With the AI-driven insights, QuickLifts offers personalized workout suggestions, specifically tailored to your needs and goals. It tracks your progress, calculating how much weight you've lifted over time and how many reps you've completed, then uses this data to make intelligent recommendations for your future workouts.")
+                        Text("With the AI-driven insights, QuickLifts offers personalized workout suggestions, specifically tailored to your needs and goals. It tracks your progress, calculating how much weight you've lifted over time and how many training movements you've completed, then uses this data to make intelligent recommendations for your future workouts.")
                             .foregroundColor(.secondaryWhite)
                             .padding()
                             .multilineTextAlignment(.leading)
@@ -66,7 +66,7 @@ struct AboutView: View {
                             .padding()
                             .multilineTextAlignment(.leading)
                         
-                        Text("QuickLifts doesn't just document your fitness journey - it optimizes it. Every set, rep, and weight you record is analyzed and used to help you grow stronger and reach your goals faster. Plus, you can jot down notes or feedback about each workout, helping both you and the AI understand your exercise experience better.")
+                        Text("QuickLifts doesn't just document your fitness journey - it optimizes it. Every set, exercise movement, and weight you record is analyzed and used to help you grow stronger and reach your goals faster. Plus, you can jot down notes or feedback about each workout, helping both you and the AI understand your exercise experience better.")
                             .foregroundColor(.secondaryWhite)
                             .padding()
                             .multilineTextAlignment(.leading)

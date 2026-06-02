@@ -11,6 +11,10 @@ final class MacroRecommendationService {
         self.db = Firestore.firestore()
     }
 
+    private static func defaultEffectiveFrom(for date: Date = Date()) -> Date {
+        Calendar.current.startOfDay(for: date)
+    }
+
     func saveMacroRecommendation(_ recommendation: MacroRecommendation, completion: @escaping (Result<MacroRecommendation, Error>) -> Void) {
         saveMacroRecommendation(recommendation, userId: recommendation.userId, completion: completion)
     }
@@ -24,6 +28,9 @@ final class MacroRecommendationService {
         var storedRecommendation = recommendation
         storedRecommendation.userId = resolvedUserId
         storedRecommendation.updatedAt = Date()
+        if storedRecommendation.effectiveFrom == nil {
+            storedRecommendation.effectiveFrom = Self.defaultEffectiveFrom()
+        }
 
         let docRef = db.collection(NutritionCoreConfiguration.macroProfileCollection)
             .document(resolvedUserId)
@@ -62,6 +69,9 @@ final class MacroRecommendationService {
             var stored = recommendation
             stored.userId = resolvedUserId
             stored.updatedAt = Date()
+            if stored.effectiveFrom == nil {
+                stored.effectiveFrom = Self.defaultEffectiveFrom()
+            }
             return stored
         }
 
@@ -112,7 +122,19 @@ final class MacroRecommendationService {
 
     func getMacroRecommendation(for date: Date, userId: String, completion: @escaping (Result<MacroRecommendation?, Error>) -> Void) {
         let dayOfWeek = date.dayOfWeekShort
-        getCurrentMacroRecommendation(for: userId, dayOfWeek: dayOfWeek, completion: completion)
+        let recommendationRef = db.collection(NutritionCoreConfiguration.macroProfileCollection)
+            .document(userId)
+            .collection(NutritionCoreConfiguration.macroRecommendationsCollection)
+
+        recommendationRef.getDocuments { snapshot, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+
+            let recommendations = snapshot?.documents.map { MacroRecommendation(dictionary: $0.data()) } ?? []
+            completion(.success(MacroRecommendationResolver.current(from: recommendations, dayOfWeek: dayOfWeek, on: date)))
+        }
     }
 
     func getAllMacroRecommendations(for userId: String, completion: @escaping (Result<[MacroRecommendation], Error>) -> Void) {
@@ -136,20 +158,56 @@ final class MacroRecommendationService {
 }
 
 enum MacroRecommendationResolver {
-    static func current(from recommendations: [MacroRecommendation], dayOfWeek: String? = nil) -> MacroRecommendation? {
-        let sorted = recommendations.sorted { lhs, rhs in
-            if lhs.updatedAt != rhs.updatedAt {
-                return lhs.updatedAt > rhs.updatedAt
+    static func current(from recommendations: [MacroRecommendation], dayOfWeek: String? = nil, on date: Date? = nil) -> MacroRecommendation? {
+        let candidates: [MacroRecommendation]
+        if let date {
+            let selectedDay = Calendar.current.startOfDay(for: date)
+            candidates = recommendations.filter { recommendation in
+                effectiveDay(for: recommendation) <= selectedDay
             }
-            return lhs.createdAt > rhs.createdAt
+        } else {
+            candidates = recommendations
         }
 
-        if let normalizedDay = normalizedDayOfWeek(dayOfWeek),
-           let daySpecific = sorted.first(where: { normalizedDayOfWeek($0.dayOfWeek) == normalizedDay }) {
-            return daySpecific
+        if let normalizedDay = normalizedDayOfWeek(dayOfWeek) {
+            let scoped = candidates.filter { recommendation in
+                let recommendationDay = normalizedDayOfWeek(recommendation.dayOfWeek)
+                return recommendationDay == nil || recommendationDay == normalizedDay
+            }
+            return scoped.sorted {
+                sortMostRecentFirst($0, $1, preferredDay: normalizedDay)
+            }.first
         }
 
+        let sorted = candidates.sorted(by: sortMostRecentFirst)
         return sorted.first(where: { normalizedDayOfWeek($0.dayOfWeek) == nil }) ?? sorted.first
+    }
+
+    private static func sortMostRecentFirst(_ lhs: MacroRecommendation, _ rhs: MacroRecommendation) -> Bool {
+        sortMostRecentFirst(lhs, rhs, preferredDay: nil)
+    }
+
+    private static func sortMostRecentFirst(_ lhs: MacroRecommendation, _ rhs: MacroRecommendation, preferredDay: String?) -> Bool {
+        let lhsEffective = effectiveDay(for: lhs)
+        let rhsEffective = effectiveDay(for: rhs)
+        if lhsEffective != rhsEffective {
+            return lhsEffective > rhsEffective
+        }
+        if lhs.updatedAt != rhs.updatedAt {
+            return lhs.updatedAt > rhs.updatedAt
+        }
+        if let preferredDay {
+            let lhsMatchesPreferredDay = normalizedDayOfWeek(lhs.dayOfWeek) == preferredDay
+            let rhsMatchesPreferredDay = normalizedDayOfWeek(rhs.dayOfWeek) == preferredDay
+            if lhsMatchesPreferredDay != rhsMatchesPreferredDay {
+                return lhsMatchesPreferredDay
+            }
+        }
+        return lhs.createdAt > rhs.createdAt
+    }
+
+    private static func effectiveDay(for recommendation: MacroRecommendation) -> Date {
+        Calendar.current.startOfDay(for: recommendation.effectiveFrom ?? recommendation.createdAt)
     }
 
     private static func normalizedDayOfWeek(_ value: String?) -> String? {

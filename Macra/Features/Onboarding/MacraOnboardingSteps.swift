@@ -907,15 +907,15 @@ struct GeneratingPlanStepView: View {
     }
 
     private var profileProgress: Double {
-        clamped(progress / 0.34)
+        clamped(progress / (1.0 / 3.0))
     }
 
     private var goalsProgress: Double {
-        clamped((progress - 0.18) / 0.42)
+        clamped((progress - (1.0 / 3.0)) / (1.0 / 3.0))
     }
 
     private var personalizationProgress: Double {
-        clamped((progress - 0.52) / 0.48)
+        clamped((progress - (2.0 / 3.0)) / (1.0 / 3.0))
     }
 
     private func clamped(_ value: Double) -> Double {

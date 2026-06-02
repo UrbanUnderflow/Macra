@@ -923,6 +923,7 @@ struct MacroRecommendation: Identifiable, Hashable {
     var carbs: Int
     var fat: Int
     var dayOfWeek: String?
+    var effectiveFrom: Date?
     var createdAt: Date
     var updatedAt: Date
 
@@ -934,6 +935,7 @@ struct MacroRecommendation: Identifiable, Hashable {
         carbs: Int,
         fat: Int,
         dayOfWeek: String? = nil,
+        effectiveFrom: Date? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -944,6 +946,7 @@ struct MacroRecommendation: Identifiable, Hashable {
         self.carbs = carbs
         self.fat = fat
         self.dayOfWeek = dayOfWeek
+        self.effectiveFrom = effectiveFrom
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -956,6 +959,7 @@ struct MacroRecommendation: Identifiable, Hashable {
         self.carbs = dictionary["carbs"] as? Int ?? 0
         self.fat = dictionary["fat"] as? Int ?? 0
         self.dayOfWeek = dictionary["dayOfWeek"] as? String
+        self.effectiveFrom = Self.date(from: dictionary["effectiveFrom"])
         self.createdAt = Date(timeIntervalSince1970: dictionary["createdAt"] as? Double ?? 0)
         self.updatedAt = Date(timeIntervalSince1970: dictionary["updatedAt"] as? Double ?? 0)
     }
@@ -975,8 +979,28 @@ struct MacroRecommendation: Identifiable, Hashable {
         if let dayOfWeek {
             dict["dayOfWeek"] = dayOfWeek
         }
+        if let effectiveFrom {
+            dict["effectiveFrom"] = effectiveFrom.timeIntervalSince1970
+        }
 
         return dict
+    }
+
+    private static func date(from value: Any?) -> Date? {
+        guard let value else { return nil }
+        if let doubleValue = value as? Double {
+            return Date(timeIntervalSince1970: doubleValue)
+        }
+        if let intValue = value as? Int {
+            return Date(timeIntervalSince1970: Double(intValue))
+        }
+        if let numberValue = value as? NSNumber {
+            return Date(timeIntervalSince1970: numberValue.doubleValue)
+        }
+        if let stringValue = value as? String, let doubleValue = Double(stringValue) {
+            return Date(timeIntervalSince1970: doubleValue)
+        }
+        return nil
     }
 }
 

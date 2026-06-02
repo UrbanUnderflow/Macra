@@ -223,16 +223,22 @@ final class FirestoreMealPlanningStore: MealPlanningStore {
     }
 
     func saveMacroRecommendation(_ recommendation: MacroRecommendation, completion: @escaping (Result<MacroRecommendation, Error>) -> Void) {
-        let ref = db.collection("macro-profile")
-            .document(recommendation.userId)
-            .collection("macro-recommendations")
-            .document(recommendation.id)
+        var storedRecommendation = recommendation
+        storedRecommendation.updatedAt = Date()
+        if storedRecommendation.effectiveFrom == nil {
+            storedRecommendation.effectiveFrom = Calendar.current.startOfDay(for: Date())
+        }
 
-        ref.setData(recommendation.toDictionary()) { error in
+        let ref = db.collection("macro-profile")
+            .document(storedRecommendation.userId)
+            .collection("macro-recommendations")
+            .document(storedRecommendation.id)
+
+        ref.setData(storedRecommendation.toDictionary()) { error in
             if let error {
                 completion(.failure(error))
             } else {
-                completion(.success(recommendation))
+                completion(.success(storedRecommendation))
             }
         }
     }
@@ -337,12 +343,18 @@ final class InMemoryMealPlanningStore: MealPlanningStore {
     }
 
     func saveMacroRecommendation(_ recommendation: MacroRecommendation, completion: @escaping (Result<MacroRecommendation, Error>) -> Void) {
-        if let index = recommendations.firstIndex(where: { $0.id == recommendation.id }) {
-            recommendations[index] = recommendation
-        } else {
-            recommendations.append(recommendation)
+        var storedRecommendation = recommendation
+        storedRecommendation.updatedAt = Date()
+        if storedRecommendation.effectiveFrom == nil {
+            storedRecommendation.effectiveFrom = Calendar.current.startOfDay(for: Date())
         }
-        completion(.success(recommendation))
+
+        if let index = recommendations.firstIndex(where: { $0.id == storedRecommendation.id }) {
+            recommendations[index] = storedRecommendation
+        } else {
+            recommendations.append(storedRecommendation)
+        }
+        completion(.success(storedRecommendation))
     }
 
     func fetchMacroRecommendations(userId: String, completion: @escaping (Result<[MacroRecommendation], Error>) -> Void) {

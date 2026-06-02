@@ -144,6 +144,7 @@ final class MealPlanningRootViewModel: ObservableObject {
 
     let userId: String
     let store: any MealPlanningStore
+    private static let planTargetSyncSource = "plan"
 
     init(userId: String, store: any MealPlanningStore) {
         self.userId = userId
@@ -259,6 +260,9 @@ final class MealPlanningRootViewModel: ObservableObject {
                 case .success(let plan):
                     self.mealPlans.append(plan)
                     self.statusMessage = "Created \(plan.planName)."
+                    if plan.isActive && !plan.plannedMeals.isEmpty {
+                        self.mirrorPlanAsCurrent(plan)
+                    }
                     completion?(.success(plan))
                 case .failure(let error):
                     self.errorMessage = MacraUserFacingError.sync(error)
@@ -502,21 +506,24 @@ final class MealPlanningRootViewModel: ObservableObject {
         let now = Date().timeIntervalSince1970 * 1000
         let suggestedDict = Self.suggestedPlanDict(from: plan)
         let mealCount = (suggestedDict["meals"] as? [[String: Any]])?.count ?? 0
+        let representativeTotals = Self.representativeTotals(from: plan)
 
-        print("[Macra][Playbook.mirror] ▶︎ Mirroring '\(plan.planName)' to macraSuggestedMealPlans/current — \(mealCount) meals, \(plan.totalCalories) cal")
+        print("[Macra][Playbook.mirror] ▶︎ Mirroring '\(plan.planName)' to macraSuggestedMealPlans/current — \(mealCount) meals, \(representativeTotals.calories) cal")
 
         let payload: [String: Any] = [
             "userId": userId,
             "plan": suggestedDict,
             "inputMacros": [
-                "calories": plan.totalCalories,
-                "protein": plan.totalProtein,
-                "carbs": plan.totalCarbs,
-                "fat": plan.totalFat
+                "calories": representativeTotals.calories,
+                "protein": representativeTotals.protein,
+                "carbs": representativeTotals.carbs,
+                "fat": representativeTotals.fat
             ],
             "generatedAt": now,
             "source": "user-selected",
-            "planName": plan.planName
+            "planName": plan.planName,
+            "targetSyncSource": Self.planTargetSyncSource,
+            "targetSyncedAt": now
         ]
 
         // Archive the current doc to history before overwriting, mirroring
@@ -536,15 +543,113 @@ final class MealPlanningRootViewModel: ObservableObject {
             } else {
                 print("[Macra][Playbook.mirror] No prior current doc to archive")
             }
-            currentRef.setData(payload, merge: false) { writeError in
+            currentRef.setData(payload, merge: false) { [weak self] writeError in
                 if let writeError {
                     print("[Macra][Playbook.mirror] ❌ Write failed: \(writeError.localizedDescription)")
                 } else {
-                    print("[Macra][Playbook.mirror] ✓ Wrote new current doc — broadcasting activePlanDidChange")
-                    DispatchQueue.main.async {
-                        NotificationCenter.default.post(name: NutritionCoreNotification.activePlanDidChange, object: nil)
+                    print("[Macra][Playbook.mirror] ✓ Wrote new current doc — syncing targets")
+                    self?.syncTargetsToMirroredPlan(plan) { targetError in
+                        if let targetError {
+                            print("[Macra][Playbook.mirror] ❌ Target sync failed: \(targetError.localizedDescription)")
+                        } else {
+                            print("[Macra][Playbook.mirror] ✓ Targets match mirrored plan")
+                        }
+                        DispatchQueue.main.async {
+                            NotificationCenter.default.post(name: NutritionCoreNotification.activePlanDidChange, object: nil)
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    private struct PlanMacroTotals {
+        let calories: Int
+        let protein: Int
+        let carbs: Int
+        let fat: Int
+    }
+
+    private static func representativeTotals(from plan: MealPlan) -> PlanMacroTotals {
+        if plan.hasDayVariants {
+            let day = plan.scopedDays.first ?? .mon
+            return totals(from: plan, for: day)
+        }
+        return PlanMacroTotals(
+            calories: plan.totalCalories,
+            protein: plan.totalProtein,
+            carbs: plan.totalCarbs,
+            fat: plan.totalFat
+        )
+    }
+
+    private static func totals(from plan: MealPlan, for day: Weekday) -> PlanMacroTotals {
+        PlanMacroTotals(
+            calories: plan.totalCalories(for: day),
+            protein: plan.totalProtein(for: day),
+            carbs: plan.totalCarbs(for: day),
+            fat: plan.totalFat(for: day)
+        )
+    }
+
+    private func syncTargetsToMirroredPlan(_ plan: MealPlan, completion: @escaping (Error?) -> Void) {
+        guard !userId.isEmpty else {
+            completion(nil)
+            return
+        }
+
+        let effectiveFrom = Calendar.current.startOfDay(for: Date())
+        if plan.hasDayVariants {
+            let today = Weekday.from(date: Date()).firestoreValue
+            let recommendations = Weekday.displayOrder.map { day -> MacroRecommendation in
+                let totals = Self.totals(from: plan, for: day)
+                return MacroRecommendation(
+                    userId: userId,
+                    calories: totals.calories,
+                    protein: totals.protein,
+                    carbs: totals.carbs,
+                    fat: totals.fat,
+                    dayOfWeek: day.firestoreValue,
+                    effectiveFrom: effectiveFrom
+                )
+            }
+
+            MacroRecommendationService.sharedInstance.saveMacroRecommendationsForDays(recommendations) { result in
+                switch result {
+                case .success(let saved):
+                    if let current = saved.first(where: { $0.dayOfWeek == today }) ?? saved.first {
+                        DispatchQueue.main.async {
+                            UserService.sharedInstance.currentMacroTarget = current
+                        }
+                    }
+                    completion(nil)
+                case .failure(let error):
+                    completion(error)
+                }
+            }
+            return
+        }
+
+        let totals = Self.representativeTotals(from: plan)
+        let recommendation = MacroRecommendation(
+            userId: userId,
+            calories: totals.calories,
+            protein: totals.protein,
+            carbs: totals.carbs,
+            fat: totals.fat,
+            dayOfWeek: nil,
+            effectiveFrom: effectiveFrom
+        )
+
+        MacroRecommendationService.sharedInstance.saveMacroRecommendation(recommendation) { result in
+            switch result {
+            case .success(let saved):
+                DispatchQueue.main.async {
+                    UserService.sharedInstance.currentMacroTarget = saved
+                }
+                completion(nil)
+            case .failure(let error):
+                completion(error)
             }
         }
     }
@@ -715,6 +820,7 @@ final class MacroTargetsViewModel: ObservableObject {
 
     let userId: String
     let store: any MealPlanningStore
+    private static let manualTargetSyncSource = "manual-targets"
 
     init(userId: String, store: any MealPlanningStore) {
         self.userId = userId
@@ -819,6 +925,7 @@ final class MacroTargetsViewModel: ObservableObject {
                         self.currentRecommendation = saved
                         UserService.sharedInstance.currentMacroTarget = saved
                     }
+                    self.markCurrentPlanTargetOverride()
                     self.statusMessage = "Saved macro targets."
                 case .failure(let error):
                     self.errorMessage = MacraUserFacingError.sync(error)
@@ -918,12 +1025,16 @@ final class MacroTargetsViewModel: ObservableObject {
     /// macro numbers but don't touch their plan.
     func applyNoraMacrosOnly(from result: GPTService.NoraMacroAnalysis, onComplete: (() -> Void)? = nil) {
         print("[Macra][MacroTargets.applyNoraMacrosOnly] Saving macros only")
-        saveMacroTargets(from: result) { _ in
+        saveMacroTargets(from: result, marksManualOverride: true) { _ in
             onComplete?()
         }
     }
 
-    private func saveMacroTargets(from analysis: GPTService.NoraMacroAnalysis, completion: @escaping (Error?) -> Void) {
+    private func saveMacroTargets(
+        from analysis: GPTService.NoraMacroAnalysis,
+        marksManualOverride: Bool = false,
+        completion: @escaping (Error?) -> Void
+    ) {
         let targets = Self.macroRecommendations(from: analysis, userId: userId)
         guard !targets.isEmpty else {
             completion(nil)
@@ -982,9 +1093,25 @@ final class MacroTargetsViewModel: ObservableObject {
             }
 
             self.recommendations = self.deduplicatedRecommendations
+            if marksManualOverride {
+                self.markCurrentPlanTargetOverride()
+            }
             self.statusMessage = Self.noraSaveStatus(for: analysis)
             completion(nil)
         }
+    }
+
+    private func markCurrentPlanTargetOverride() {
+        guard !userId.isEmpty else { return }
+        Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("macraSuggestedMealPlans")
+            .document("current")
+            .updateData([
+                "targetSyncSource": Self.manualTargetSyncSource,
+                "targetOverriddenAt": Date().timeIntervalSince1970 * 1000
+            ])
     }
 
     private static func macroRecommendations(from analysis: GPTService.NoraMacroAnalysis, userId: String) -> [MacroRecommendation] {

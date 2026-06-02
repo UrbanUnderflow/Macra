@@ -73,6 +73,13 @@ final class HomeViewModel: ObservableObject {
                 }
             }
             .store(in: &insightSubscriptions)
+
+        NotificationCenter.default.publisher(for: NutritionCoreNotification.activePlanDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.load()
+            }
+            .store(in: &insightSubscriptions)
     }
 
     var mealCalories: Int { todaysMeals.reduce(0) { $0 + $1.calories } }
@@ -350,13 +357,15 @@ final class HomeViewModel: ObservableObject {
         generation: Int,
         completion: @escaping () -> Void
     ) {
-        fetchCurrentSuggestedPlan(userId: userId) { [weak self] plan in
+        fetchCurrentSuggestedPlanTarget(userId: userId) { [weak self] source in
             guard let self else {
                 completion()
                 return
             }
 
-            if let planTarget = self.macroTarget(from: plan, date: date, userId: userId) {
+            if let source,
+               self.shouldUsePlanTarget(source, for: date),
+               let planTarget = self.macroTarget(from: source.plan, date: date, userId: userId) {
                 DispatchQueue.main.async {
                     if self.isCurrentLoad(generation, for: date) {
                         self.macroTarget = planTarget
@@ -386,7 +395,24 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
-    private func fetchCurrentSuggestedPlan(userId: String, completion: @escaping (MacraSuggestedMealPlan?) -> Void) {
+    private struct PlanTargetSource {
+        let plan: MacraSuggestedMealPlan
+        let effectiveFrom: Date?
+        let isManualTargetOverride: Bool
+    }
+
+    private func shouldUsePlanTarget(_ source: PlanTargetSource, for date: Date) -> Bool {
+        guard !source.isManualTargetOverride else { return false }
+
+        let selectedDay = Calendar.current.startOfDay(for: date)
+        guard let effectiveFrom = source.effectiveFrom else {
+            return Calendar.current.isDateInToday(selectedDay)
+        }
+
+        return selectedDay >= Calendar.current.startOfDay(for: effectiveFrom)
+    }
+
+    private func fetchCurrentSuggestedPlanTarget(userId: String, completion: @escaping (PlanTargetSource?) -> Void) {
         Firestore.firestore()
             .collection("users")
             .document(userId)
@@ -406,8 +432,36 @@ final class HomeViewModel: ObservableObject {
                     completion(nil)
                     return
                 }
-                completion(plan)
+
+                let targetSyncSource = data["targetSyncSource"] as? String
+                let effectiveFrom = Self.dateFromMillisOrSeconds(data["targetSyncedAt"])
+                    ?? Self.dateFromMillisOrSeconds(data["lastEditedAt"])
+                    ?? Self.dateFromMillisOrSeconds(data["generatedAt"])
+                completion(PlanTargetSource(
+                    plan: plan,
+                    effectiveFrom: effectiveFrom,
+                    isManualTargetOverride: targetSyncSource == "manual-targets"
+                ))
             }
+    }
+
+    private static func dateFromMillisOrSeconds(_ value: Any?) -> Date? {
+        let raw: Double?
+        if let doubleValue = value as? Double {
+            raw = doubleValue
+        } else if let intValue = value as? Int {
+            raw = Double(intValue)
+        } else if let numberValue = value as? NSNumber {
+            raw = numberValue.doubleValue
+        } else if let stringValue = value as? String {
+            raw = Double(stringValue)
+        } else {
+            raw = nil
+        }
+
+        guard let raw else { return nil }
+        let seconds = raw > 10_000_000_000 ? raw / 1000 : raw
+        return Date(timeIntervalSince1970: seconds)
     }
 
     private func macroTarget(from plan: MacraSuggestedMealPlan?, date: Date, userId: String) -> MacroRecommendation? {
@@ -422,7 +476,8 @@ final class HomeViewModel: ObservableObject {
             protein: activeMeals.reduce(0) { $0 + $1.totalProtein },
             carbs: activeMeals.reduce(0) { $0 + $1.totalCarbs },
             fat: activeMeals.reduce(0) { $0 + $1.totalFat },
-            dayOfWeek: dayKey
+            dayOfWeek: dayKey,
+            effectiveFrom: Calendar.current.startOfDay(for: date)
         )
     }
 
@@ -2940,10 +2995,13 @@ final class MacraPlanHubViewModel: ObservableObject {
     /// error inline without a sheet. Keyed by `MacraSuggestedMeal.id`.
     @Published var regeneratingMealIds: Set<String> = []
     @Published var mealEditErrors: [String: String] = [:]
+    @Published private var targetSyncSource: String?
 
     let userId: String
     private var lastTargetDate: Date = Date()
     private var cancellables = Set<AnyCancellable>()
+    private static let planTargetSyncSource = "plan"
+    private static let manualTargetSyncSource = "manual-targets"
 
     init(userId: String) {
         self.userId = userId
@@ -3032,6 +3090,10 @@ final class MacraPlanHubViewModel: ObservableObject {
             || abs(totals.protein - target.protein) > macroTolerance
             || abs(totals.carbs - target.carbs) > macroTolerance
             || abs(totals.fat - target.fat) > macroTolerance
+    }
+
+    func hasManualTargetOverride(for day: String?) -> Bool {
+        targetSyncSource == Self.manualTargetSyncSource && hasTargetMismatch(for: day)
     }
 
     /// Creates a new variant for the given slot, scoped to `days`. Items
@@ -3524,8 +3586,9 @@ final class MacraPlanHubViewModel: ObservableObject {
 
     /// Writes the updated plan back to `macraSuggestedMealPlans/current`.
     /// Keeps the doc's existing metadata (source, planName, generatedAt)
-    /// — only `plan.meals` actually changed — and broadcasts
-    /// `activePlanDidChange` so other surfaces refresh.
+    /// - only `plan.meals` actually changed - syncs targets from the
+    /// resulting plan totals, then broadcasts `activePlanDidChange` so
+    /// other surfaces refresh.
     private func persistPlanAfterEdit(_ plan: MacraSuggestedMealPlan) {
         guard !userId.isEmpty else { return }
         let db = Firestore.firestore()
@@ -3566,7 +3629,9 @@ final class MacraPlanHubViewModel: ObservableObject {
                 "notes": plan.notes ?? ""
             ] as [String: Any],
             "inputMacros": inputMacroTotals,
-            "lastEditedAt": Date().timeIntervalSince1970 * 1000
+            "lastEditedAt": Date().timeIntervalSince1970 * 1000,
+            "targetSyncSource": Self.planTargetSyncSource,
+            "targetSyncedAt": Date().timeIntervalSince1970 * 1000
         ]
 
         ref.setData(payload, merge: true) { [weak self] error in
@@ -3578,7 +3643,12 @@ final class MacraPlanHubViewModel: ObservableObject {
                 return
             }
             print("[Macra][PlanHub.regenerateMeal] ✓ wrote updated plan (\(plan.meals.count) meals)")
-            NotificationCenter.default.post(name: NutritionCoreNotification.activePlanDidChange, object: nil)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.syncTargetsToPlan(plan, selectedDay: self.lastTargetDate.dayOfWeekShort) {
+                    NotificationCenter.default.post(name: NutritionCoreNotification.activePlanDidChange, object: nil)
+                }
+            }
         }
     }
 
@@ -3676,34 +3746,64 @@ final class MacraPlanHubViewModel: ObservableObject {
     /// reappear when the app reloads or the user switches plan days.
     func adaptTargetsToPlan(for day: String? = nil, completion: (() -> Void)? = nil) {
         guard let plan = suggestedPlan else { completion?(); return }
-        guard !userId.isEmpty else { completion?(); return }
-        isAdaptingTargets = true
+        syncTargetsToPlan(plan, selectedDay: day, showProgress: true, completion: completion)
+    }
 
+    private func syncTargetsToPlan(
+        _ plan: MacraSuggestedMealPlan,
+        selectedDay: String? = nil,
+        showProgress: Bool = false,
+        completion: (() -> Void)? = nil
+    ) {
+        guard !userId.isEmpty else { completion?(); return }
+        if showProgress {
+            isAdaptingTargets = true
+        }
+
+        let effectiveFrom = Calendar.current.startOfDay(for: Date())
         if plan.hasDayVariants {
-            let selectedDay = Self.normalizedDayKey(day) ?? representativeDayKey(for: plan)
+            let resolvedSelectedDay = Self.normalizedDayKey(selectedDay)
+                ?? Self.normalizedDayKey(lastTargetDate.dayOfWeekShort)
+                ?? representativeDayKey(for: plan)
             let recommendations = Self.weekdayKeys.compactMap { dayKey -> MacroRecommendation? in
-                guard let totals = planTotals(for: dayKey) else { return nil }
+                let scoped = plan.meals(for: dayKey)
+                guard !scoped.isEmpty else { return nil }
+                let totals = PlanTotals(
+                    calories: scoped.reduce(0) { $0 + $1.totalCalories },
+                    protein: scoped.reduce(0) { $0 + $1.totalProtein },
+                    carbs: scoped.reduce(0) { $0 + $1.totalCarbs },
+                    fat: scoped.reduce(0) { $0 + $1.totalFat }
+                )
                 return MacroRecommendation(
                     userId: userId,
                     calories: totals.calories,
                     protein: totals.protein,
                     carbs: totals.carbs,
                     fat: totals.fat,
-                    dayOfWeek: dayKey
+                    dayOfWeek: dayKey,
+                    effectiveFrom: effectiveFrom
                 )
+            }
+
+            if let current = recommendations.first(where: { Self.normalizedDayKey($0.dayOfWeek) == resolvedSelectedDay }) ?? recommendations.first {
+                macroTarget = current
+                UserService.sharedInstance.currentMacroTarget = current
             }
 
             MacroRecommendationService.sharedInstance.saveMacroRecommendationsForDays(recommendations) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.isAdaptingTargets = false
+                    if showProgress {
+                        self.isAdaptingTargets = false
+                    }
                     switch result {
                     case .success(let saved):
-                        let current = saved.first { Self.normalizedDayKey($0.dayOfWeek) == selectedDay } ?? saved.first
+                        let current = saved.first { Self.normalizedDayKey($0.dayOfWeek) == resolvedSelectedDay } ?? saved.first
                         if let current {
                             self.macroTarget = current
                             UserService.sharedInstance.currentMacroTarget = current
                         }
+                        self.markTargetsSyncedToPlan()
                     case .failure(let error):
                         self.errorMessage = MacraUserFacingError.sync(error)
                     }
@@ -3713,11 +3813,7 @@ final class MacraPlanHubViewModel: ObservableObject {
             return
         }
 
-        guard let totals = planTotals(for: nil) else {
-            isAdaptingTargets = false
-            completion?()
-            return
-        }
+        let totals = representativeTotals(for: plan)
 
         let recommendation = MacroRecommendation(
             userId: userId,
@@ -3725,23 +3821,43 @@ final class MacraPlanHubViewModel: ObservableObject {
             protein: totals.protein,
             carbs: totals.carbs,
             fat: totals.fat,
-            dayOfWeek: nil
+            dayOfWeek: nil,
+            effectiveFrom: effectiveFrom
         )
+
+        macroTarget = recommendation
+        UserService.sharedInstance.currentMacroTarget = recommendation
 
         MacroRecommendationService.sharedInstance.saveMacroRecommendation(recommendation) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.isAdaptingTargets = false
+                if showProgress {
+                    self.isAdaptingTargets = false
+                }
                 switch result {
                 case .success(let saved):
                     self.macroTarget = saved
                     UserService.sharedInstance.currentMacroTarget = saved
+                    self.markTargetsSyncedToPlan()
                 case .failure(let error):
                     self.errorMessage = MacraUserFacingError.sync(error)
                 }
                 completion?()
             }
         }
+    }
+
+    private func markTargetsSyncedToPlan() {
+        targetSyncSource = Self.planTargetSyncSource
+        Firestore.firestore()
+            .collection("users")
+            .document(userId)
+            .collection("macraSuggestedMealPlans")
+            .document("current")
+            .setData([
+                "targetSyncSource": Self.planTargetSyncSource,
+                "targetSyncedAt": Date().timeIntervalSince1970 * 1000
+            ], merge: true)
     }
 
     func load(for date: Date? = nil) {
@@ -3763,10 +3879,11 @@ final class MacraPlanHubViewModel: ObservableObject {
         }
 
         group.enter()
-        fetchCachedPlan { [weak self] plan, label in
+        fetchCachedPlan { [weak self] plan, label, targetSyncSource in
             DispatchQueue.main.async {
                 self?.suggestedPlan = plan
                 self?.planLabel = label
+                self?.targetSyncSource = targetSyncSource
                 group.leave()
             }
         }
@@ -4175,7 +4292,7 @@ final class MacraPlanHubViewModel: ObservableObject {
         }
     }
 
-    private func fetchCachedPlan(completion: @escaping (MacraSuggestedMealPlan?, String) -> Void) {
+    private func fetchCachedPlan(completion: @escaping (MacraSuggestedMealPlan?, String, String?) -> Void) {
         let docRef = Firestore.firestore()
             .collection("users")
             .document(userId)
@@ -4186,12 +4303,12 @@ final class MacraPlanHubViewModel: ObservableObject {
         docRef.getDocument { snapshot, error in
             if let error {
                 print("[Macra][PlanHub.fetch] ❌ Read failed: \(error.localizedDescription)")
-                completion(nil, Self.defaultCustomPlanLabel())
+                completion(nil, Self.defaultCustomPlanLabel(), nil)
                 return
             }
             guard let data = snapshot?.data() else {
                 print("[Macra][PlanHub.fetch] No current doc found")
-                completion(nil, Self.defaultCustomPlanLabel())
+                completion(nil, Self.defaultCustomPlanLabel(), nil)
                 return
             }
             let source = data["source"] as? String ?? "<none>"
@@ -4202,7 +4319,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                   let jsonData = try? JSONSerialization.data(withJSONObject: planDict),
                   let plan = try? JSONDecoder().decode(MacraSuggestedMealPlan.self, from: jsonData) else {
                 print("[Macra][PlanHub.fetch] ❌ Failed to decode plan dict")
-                completion(nil, Self.defaultCustomPlanLabel())
+                completion(nil, Self.defaultCustomPlanLabel(), nil)
                 return
             }
             let label: String
@@ -4230,7 +4347,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                 }
             }
             print("[Macra][PlanHub.fetch] ✓ Resolved label='\(label)', \(plan.meals.count) meals")
-            completion(plan, label)
+            completion(plan, label, data["targetSyncSource"] as? String)
         }
     }
 
@@ -4268,6 +4385,7 @@ final class MacraPlanHubViewModel: ObservableObject {
                     self?.suggestedPlan = plan
                     self?.planLabel = label
                     self?.persistPlanLabel(label)
+                    self?.persistPlanAfterEdit(plan)
                     self?.isGenerating = false
                     completion?()
                 }
@@ -4717,7 +4835,7 @@ private struct MacraPlanHubSurface: View {
     @ViewBuilder
     private var macroMismatchBanner: some View {
         let day = (viewModel.suggestedPlan?.hasDayVariants ?? false) ? selectedDayKey : nil
-        if viewModel.hasTargetMismatch(for: day),
+        if viewModel.hasManualTargetOverride(for: day),
            let totals = viewModel.planTotals(for: day),
            let target = viewModel.macroTarget {
             let warn = Color(hex: "FFB454")
@@ -4727,9 +4845,13 @@ private struct MacraPlanHubSurface: View {
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(warn)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Macros don't match this plan")
+                        Text("Targets were manually changed")
                             .font(.system(size: 14, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
+                        Text("You overrode this plan by manually updating your targets.")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white.opacity(0.72))
+                            .fixedSize(horizontal: false, vertical: true)
                         Text("Plan: \(totals.calories) cal · \(totals.protein)P / \(totals.carbs)C / \(totals.fat)F")
                             .font(.system(size: 11, weight: .regular, design: .monospaced))
                             .foregroundColor(.white.opacity(0.7))

@@ -552,17 +552,17 @@ struct PayWallView: View {
     }
 
     private var displayedPlans: [SubscriptionPlanOption] {
-        if usesHardPaywallValueLayout {
-            let hardPaywallPlans = Self.hardPaywallPlans(from: availablePlans)
-            if !hardPaywallPlans.isEmpty {
-                return hardPaywallPlans
-            }
-        }
-
-        return Self.paywallPlans(
+        let fallbackPlans = Self.paywallPlans(
             from: availablePlans,
             preferMonthlyFirst: shouldPreferLowFrictionPlanDefault
         )
+
+        if usesHardPaywallValueLayout {
+            let hardPaywallPlans = Self.hardPaywallPlans(from: availablePlans)
+            return hardPaywallPlans
+        }
+
+        return fallbackPlans
     }
 
     private var hardPaywallDirectPlansAvailable: Bool {
@@ -574,6 +574,9 @@ struct PayWallView: View {
             if let current = coordinator.selectedPlan,
                displayedPlans.contains(where: { $0.id == current.id }) {
                 return current
+            }
+            if usesHardPaywallValueLayout {
+                return preferredDefaultVisiblePlan
             }
             return preferredDefaultVisiblePlan ?? coordinator.selectedPlan
         }
@@ -947,34 +950,26 @@ struct PayWallView: View {
     private var hardPaywallValueBody: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
-                heroSection
+                hardPaywallPlanFirstHeader
 
-                if showsPersonalizedPlan, let macros = onboardingCoordinator?.planMacros {
-                    planSummaryCard(macros: macros)
-                        .onAppear {
-                            trackPaywallValuePreviewViewedIfNeeded(previewType: "hard_paywall_personalized_plan")
-                        }
+                hardPaywallTopPlanCard
+
+                hardPaywallDeliveredValueCard
+
+                if shouldUseWebCheckoutFallback {
+                    compactWebCheckoutFallbackCard
+                } else {
+                    hardPaywallPriceCommitmentCard
+                    priceDisclosureCard
                 }
-
-                hardPaywallValueAnchorCard
-
-                firstWeekValueCard
 
                 outcomeProofCard
 
                 noraDecisionCard
 
-                eatingOutCard
+                firstWeekValueCard
 
                 unlockHighlightsCard
-
-                if shouldUseWebCheckoutFallback {
-                    compactWebCheckoutFallbackCard
-                } else {
-                    tierPickerSection
-                    hardPaywallPriceCommitmentCard
-                    priceDisclosureCard
-                }
 
                 purchaseErrorText
             }
@@ -1173,6 +1168,183 @@ struct PayWallView: View {
         .padding(.vertical, 6)
         .background(Capsule().fill(color.opacity(0.1)))
         .overlay(Capsule().strokeBorder(color.opacity(0.25), lineWidth: 1))
+    }
+
+    // MARK: - Hard paywall plan-first page
+
+    private var hardPaywallPlanFirstHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("YOUR MACRA PLAN")
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .tracking(1.4)
+                .foregroundColor(.primaryGreen)
+
+            Text("Your plan is ready.")
+                .font(.system(size: 30, weight: .heavy, design: .rounded))
+                .foregroundColor(.white)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(hardPaywallPlanLeadCopy)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.white.opacity(0.68))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var hardPaywallPlanLeadCopy: String {
+        if let plan = selectedPlan {
+            return "You have targets, macros, and meal ideas waiting. Macra Monthly is \(plan.priceLabel) \(renewalCadenceText(for: plan)) and gives you the scanner, Nora, labels, and meal planning to use them today."
+        }
+
+        return "You have targets, macros, and meal ideas waiting. Macra Monthly gives you the scanner, Nora, labels, and meal planning to use them today."
+    }
+
+    @ViewBuilder
+    private var hardPaywallTopPlanCard: some View {
+        if shouldUseWebCheckoutFallback {
+            EmptyView()
+        } else if isLoadingPackages && displayedPlans.isEmpty {
+            planStatusCard(message: "Loading the monthly plan...")
+        } else if displayedPlans.isEmpty {
+            planStatusCard(message: packageLoadError ?? "No monthly plan is available right now.")
+        } else if let plan = selectedPlan {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Macra Monthly")
+                            .font(.system(size: 19, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                        Text("Use your plan today")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.62))
+                    }
+
+                    Spacer(minLength: 12)
+
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(plan.perPeriodDisplay)
+                            .font(.system(size: 34, weight: .heavy, design: .rounded))
+                            .foregroundColor(.white)
+                            .minimumScaleFactor(0.78)
+                            .lineLimit(1)
+                        Text("Apple confirms first")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(Color.primaryGreen)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+
+                Divider()
+                    .background(Color.white.opacity(0.08))
+
+                VStack(alignment: .leading, spacing: 10) {
+                    hardPaywallPlanDetailRow(
+                        icon: "checkmark.seal.fill",
+                        title: "Ready for you",
+                        value: "Your targets, scanner, meal plan, Nora, labels, and Fit With Pulse"
+                    )
+                    hardPaywallPlanDetailRow(
+                        icon: "creditcard.fill",
+                        title: "Monthly price",
+                        value: "\(plan.priceLabel) \(renewalCadenceText(for: plan))"
+                    )
+                    hardPaywallPlanDetailRow(
+                        icon: "apple.logo",
+                        title: "Apple confirmation",
+                        value: "Review the price before you approve"
+                    )
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.primaryGreen.opacity(0.07)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.primaryGreen.opacity(0.55), lineWidth: 2)
+            )
+            .onAppear {
+                trackPricingDisclosureViewedIfNeeded()
+            }
+        }
+    }
+
+    private func hardPaywallPlanDetailRow(icon: String, title: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(Color.primaryGreen)
+                .frame(width: 26, height: 26)
+                .background(Color.primaryGreen.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white.opacity(0.58))
+                Text(value)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.86))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var hardPaywallDeliveredValueCard: some View {
+        conversionCard(
+            eyebrow: "READY TO USE",
+            title: hardPaywallDeliveredValueTitle,
+            body: hardPaywallDeliveredValueBody,
+            accent: Color.primaryGreen
+        ) {
+            if let macros = onboardingCoordinator?.planMacros {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        planSummaryChip(label: "KCAL", value: "\(macros.calories)", color: Color.primaryGreen)
+                        planSummaryChip(label: "P", value: "\(macros.protein)g", color: Color.primaryBlue)
+                    }
+                    HStack(spacing: 8) {
+                        planSummaryChip(label: "C", value: "\(macros.carbs)g", color: Color(hex: "FFB454"))
+                        planSummaryChip(label: "F", value: "\(macros.fat)g", color: Color.secondaryPink)
+                    }
+                }
+            }
+
+            if let plan = onboardingCoordinator?.suggestedMealPlan, !plan.meals.isEmpty {
+                unlockHighlightRow(
+                    icon: "fork.knife",
+                    title: "\(plan.meals.count) meals ready to start",
+                    body: "Open the plan and pick a first meal that fits your numbers.",
+                    accent: Color.primaryBlue
+                )
+            }
+
+            if let struggle = onboardingCoordinator?.answers.biggestStruggle {
+                unlockHighlightRow(
+                    icon: "sparkles",
+                    title: struggle.paywallProofTitle,
+                    body: struggle.paywallProofLine,
+                    accent: Color.secondaryPink
+                )
+            }
+        }
+        .onAppear {
+            trackPaywallValuePreviewViewedIfNeeded(previewType: "hard_paywall_delivered_value")
+        }
+    }
+
+    private var hardPaywallDeliveredValueTitle: String {
+        if onboardingCoordinator?.planMacros != nil {
+            return "Your targets and meals are already waiting."
+        }
+        return "Your first plan is already waiting."
+    }
+
+    private var hardPaywallDeliveredValueBody: String {
+        if let macros = onboardingCoordinator?.planMacros {
+            return "Start with \(macros.calories) calories plus protein, carbs, and fat targets. Then use Macra to scan meals, adjust choices, and ask Nora what fits."
+        }
+        return "Start with the goal and food direction you chose. Then use Macra to scan meals, adjust choices, and ask Nora what fits."
     }
 
     // MARK: - Compact trial prep variant
@@ -1786,9 +1958,9 @@ struct PayWallView: View {
 
     private var hardPaywallAnchorBody: String {
         if let macros = onboardingCoordinator?.planMacros {
-            return "Macra has your \(macros.calories)-calorie target and macro split ready. Subscription unlocks the scanner, Nora, and meal decisions that make it usable today."
+            return "Start with \(macros.calories) calories plus protein, carbs, and fat targets. Use scans, labels, and Nora to make those numbers work with real meals."
         }
-        return "Subscription unlocks the scanner, Nora, macro targets, meal planning, and Fit With Pulse tools behind the plan you just built."
+        return "Use scans, labels, Nora, meal planning, and Fit With Pulse with the plan you just built."
     }
 
     private var firstWeekValueCard: some View {
@@ -2143,14 +2315,8 @@ struct PayWallView: View {
 
     private func paywallBillingNote(for plan: SubscriptionPlanOption) -> String {
         if usesHardPaywallValueLayout {
-            if let trialDays = trialDisclosureDays(for: plan) {
-                return "Includes \(trialLengthAdjectiveText(for: trialDays)) trial. \(plan.billingNote)"
-            }
             if plan.periodKind == .month {
-                return "No free trial. Billed monthly"
-            }
-            if plan.periodKind == .year {
-                return "No free trial. \(plan.billingNote)"
+                return "Billed monthly. Cancel anytime"
             }
             return plan.billingNote
         }
@@ -2326,7 +2492,7 @@ struct PayWallView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Unlock starts after Apple confirmation")
+                    Text("Apple confirms before anything starts")
                         .font(.system(size: 16, weight: .heavy, design: .rounded))
                         .foregroundColor(.white)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2366,7 +2532,11 @@ struct PayWallView: View {
 
     private var hardPaywallPriceCommitmentText: String {
         guard let plan = selectedPlan else {
-            return "Choose the plan that unlocks Macra when Apple confirms the purchase."
+            return "Choose Macra Monthly, then review the price with Apple before anything starts."
+        }
+
+        if usesHardPaywallValueLayout {
+            return "You will see \(plan.priceLabel) \(renewalCadenceText(for: plan)) on the Apple sheet before you approve."
         }
 
         if let trialDays = trialDisclosureDays {
@@ -2515,7 +2685,7 @@ struct PayWallView: View {
                 .foregroundColor(.white.opacity(0.75))
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let trialDays = trialDisclosureDays {
+            if !usesHardPaywallValueLayout, let trialDays = trialDisclosureDays {
                 HStack {
                     Text("Trial")
                         .foregroundColor(.white.opacity(0.6))
@@ -2555,9 +2725,8 @@ struct PayWallView: View {
         }
 
         if usesHardPaywallValueLayout,
-           let plan = selectedPlan,
-           trialDisclosureDays == nil {
-            return "Macra unlocks after Apple confirms \(plan.priceLabel) \(renewalCadenceText(for: plan)). Auto-renews until canceled in Apple Subscriptions."
+           let plan = selectedPlan {
+            return "Macra starts after you approve \(plan.priceLabel) \(renewalCadenceText(for: plan)) with Apple. It renews monthly until canceled in Apple Subscriptions."
         }
 
         if let trialDays = trialDisclosureDays {
@@ -2779,7 +2948,7 @@ struct PayWallView: View {
                     .font(.system(size: 34, weight: .bold))
                     .foregroundColor(.white)
 
-                Text("Apple confirms the trial next")
+                Text(appleConfirmationBridgeTitle)
                     .font(.system(size: 24, weight: .heavy, design: .rounded))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
@@ -2793,7 +2962,7 @@ struct PayWallView: View {
 
             VStack(spacing: 10) {
                 appleConfirmationRow(label: "Today", value: appleConfirmationTodayText)
-                appleConfirmationRow(label: "After trial", value: appleConfirmationRenewalText)
+                appleConfirmationRow(label: appleConfirmationRenewalLabel, value: appleConfirmationRenewalText)
                 appleConfirmationRow(label: "Cancel", value: "Apple Subscriptions")
             }
             .padding(14)
@@ -2825,10 +2994,20 @@ struct PayWallView: View {
     }
 
     private var appleConfirmationBridgeBody: String {
+        if usesHardPaywallValueLayout {
+            return "The Apple sheet shows the selected monthly price and the final approval button before anything starts."
+        }
         if let trialDays = trialDisclosureDays {
             return "The Apple sheet shows your \(trialLengthText(for: trialDays)) free trial, the renewal price, and the final approval button before anything starts."
         }
         return "The Apple sheet shows the selected price and the final approval button before anything starts."
+    }
+
+    private var appleConfirmationBridgeTitle: String {
+        if usesHardPaywallValueLayout || trialDisclosureDays == nil {
+            return "Apple confirms your plan next"
+        }
+        return "Apple confirms the trial next"
     }
 
     private var appleConfirmationTodayText: String {
@@ -2842,6 +3021,10 @@ struct PayWallView: View {
             return "\(plan.priceLabel) \(renewalCadenceText(for: plan))"
         }
         return "\(plan.priceLabel) \(renewalCadenceText(for: plan)) unless canceled"
+    }
+
+    private var appleConfirmationRenewalLabel: String {
+        trialDisclosureDays == nil ? "Renews" : "After trial"
     }
 
     private func appleConfirmationRow(label: String, value: String) -> some View {
@@ -2893,6 +3076,9 @@ struct PayWallView: View {
             return "Subscribe securely through Stripe, then return to Macra automatically."
         }
         guard !hasExistingSubscriptionAccess, let plan = selectedPlan else { return nil }
+        if usesHardPaywallValueLayout {
+            return "Apple asks you to confirm first. Cancel anytime in Apple Subscriptions."
+        }
         if let trialDays = trialDisclosureDays {
             if usesTrialConfidenceLayout {
                 return "No payment today. After \(trialLengthText(for: trialDays)), renews at \(plan.priceLabel) unless canceled."
@@ -2900,13 +3086,7 @@ struct PayWallView: View {
             if usesTrialPrepCompactLayout {
                 return "No payment today. After \(trialLengthText(for: trialDays)), renews at \(plan.priceLabel) unless canceled."
             }
-            if usesHardPaywallValueLayout {
-                return "Apple will show your eligible \(trialLengthText(for: trialDays)) trial and renewal price before anything starts."
-            }
             return "Free for \(trialLengthText(for: trialDays)), then \(plan.priceLabel). Cancel anytime."
-        }
-        if usesHardPaywallValueLayout {
-            return "Starts after Apple confirmation. Cancel anytime in Apple Subscriptions."
         }
         if usesTrialPrepCompactLayout, plan.periodKind == .month {
             return "Monthly starts after Apple confirmation. Annual includes a 3-day trial."
@@ -3709,7 +3889,9 @@ struct PayWallView: View {
             source: paywallAnalyticsSource,
             selectedPlan: selectedPlan,
             availablePlans: availablePlans,
-            disclosureText: (usesTrialConfidenceLayout || usesTrialPrepCompactLayout) ? trialConfidenceIntro : purchaseExpectationBody,
+            disclosureText: usesHardPaywallValueLayout
+                ? priceDisclosureText
+                : ((usesTrialConfidenceLayout || usesTrialPrepCompactLayout) ? trialConfidenceIntro : purchaseExpectationBody),
             metadata: paywallFunnelMetadata
         )
     }
@@ -3997,14 +4179,9 @@ struct PayWallView: View {
 
     private static func hardPaywallPlans(from plans: [SubscriptionPlanOption]) -> [SubscriptionPlanOption] {
         let directPlans = plans
-            .filter { [.month, .year].contains($0.periodKind) && ($0.trialDays ?? 0) <= 0 }
+            .filter { $0.periodKind == .month && ($0.trialDays ?? 0) <= 0 }
             .sorted { left, right in
-                if left.periodKind == right.periodKind {
-                    return NSDecimalNumber(decimal: left.price).doubleValue < NSDecimalNumber(decimal: right.price).doubleValue
-                }
-                if left.periodKind == .month { return true }
-                if right.periodKind == .month { return false }
-                return left.periodKind.rawValue < right.periodKind.rawValue
+                NSDecimalNumber(decimal: left.price).doubleValue < NSDecimalNumber(decimal: right.price).doubleValue
             }
 
         return directPlans
