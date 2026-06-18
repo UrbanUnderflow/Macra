@@ -1298,7 +1298,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Macra/Macra.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Macra/Preview Content\"";
 				DEVELOPMENT_TEAM = ZG887P86D5;
 				ENABLE_PREVIEWS = YES;
@@ -1320,7 +1320,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.14;
+				MARKETING_VERSION = 1.15;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -1340,7 +1340,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Macra/Macra.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"Macra/Preview Content\"";
 				DEVELOPMENT_TEAM = ZG887P86D5;
 				ENABLE_PREVIEWS = YES;
@@ -1362,7 +1362,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.14;
+				MARKETING_VERSION = 1.15;
 				PRODUCT_BUNDLE_IDENTIFIER = Tremaine.Macra;
 				PRODUCT_NAME = MacraFoodJournal;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

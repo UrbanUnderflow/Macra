@@ -185,6 +185,10 @@ final class MacraOnboardingCoordinator: ObservableObject {
     }
 
     @Published var currentStep: Step = .welcome
+    /// Set when an under-16 user is detected at the age step. Drives the
+    /// terminal age-gate block — Macra is a weight-management product, so
+    /// under-16s are blocked entirely (16–17 are forced to maintenance-only).
+    @Published var ageGateBlocked: Bool = false
     @Published var answers = MacraOnboardingAnswers()
     @Published var isFinishing: Bool = false
     @Published var selectedPackageId: String?
@@ -1172,7 +1176,30 @@ final class MacraOnboardingCoordinator: ObservableObject {
         return "\(direction) \(lbs) lbs"
     }
 
+    /// Age in whole years derived from the onboarding birthdate, if entered.
+    var currentAge: Int? {
+        guard let birthdate = answers.birthdate else { return nil }
+        return Calendar.current.dateComponents([.year], from: birthdate, to: Date()).year
+    }
+
     func advance() {
+        // Hard age gate: block under-16 the moment we know their age (the
+        // `.age` step). 16–17 continue but are forced to maintenance-only in
+        // the macro engine (see MacraOnboardingPrediction.compute).
+        if currentStep == .age, let age = currentAge, age < 16 {
+            ageGateBlocked = true
+            trackCurrentOnboardingStepCompleted(action: "age_gate_blocked", destination: nil)
+            return
+        }
+
+        // 16–17 are maintenance-only: pre-set goal weight = current so the plan
+        // is maintenance, then skip the goal-weight + pace steps (see
+        // shouldSkip) so the UI matches what they'll actually receive.
+        if currentStep == .currentWeight, let age = currentAge, age < 18,
+           let current = answers.currentWeightKg {
+            answers.goalWeightKg = current
+        }
+
         let next = currentStep.rawValue + 1
         guard let nextStep = Step(rawValue: next) else {
             trackCurrentOnboardingStepCompleted(action: "flow_finished", destination: nil)
@@ -1320,6 +1347,10 @@ final class MacraOnboardingCoordinator: ObservableObject {
         switch step {
         case .primaryFocus:
             return onboardingExperienceVariant != .noraGuided
+        case .goalWeight, .pace:
+            // 16–17 are maintenance-only — no goal-weight target or pace.
+            if let age = currentAge, age < 18 { return true }
+            return false
         default:
             return false
         }
@@ -1959,6 +1990,13 @@ struct MacraOnboardingFlowView: View {
             .padding(.top, 8)
             .padding(.trailing, 20)
         }
+        .overlay {
+            if coordinator.ageGateBlocked {
+                MacraAgeGateBlockedView()
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: coordinator.ageGateBlocked)
         .onAppear {
             coordinator.existingSubscriptionAccessOverride = existingSubscriptionAccessOverride
             coordinator.trackCurrentOnboardingStepViewed(trigger: "flow_appeared")
@@ -2031,5 +2069,48 @@ struct MacraOnboardingFlowView: View {
             key: "macra_onboarding_primary_focus_\(focus.rawValue)",
             force: true
         )
+    }
+}
+
+/// Terminal block shown when an under-16 user reaches the age step. Macra builds
+/// calorie/weight-management plans, so under-16s cannot proceed (COPPA + eating-
+/// disorder safety). 16–17 pass through but are forced to maintenance-only macros.
+private struct MacraAgeGateBlockedView: View {
+    var body: some View {
+        ZStack {
+            MacraChromaticBackground()
+                .ignoresSafeArea()
+
+            VStack(spacing: 18) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 44, weight: .bold))
+                    .foregroundColor(.primaryGreen)
+
+                Text("Macra is for ages 16 and up")
+                    .font(.system(size: 26, weight: .heavy, design: .rounded))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text("Thanks for your interest! Macra builds calorie and nutrition plans designed for older users, so we can’t set you up just yet. Please check back when you’re a little older.")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white.opacity(0.72))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    try? Auth.auth().signOut()
+                } label: {
+                    Text("Sign out")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                }
+                .padding(.top, 8)
+            }
+            .padding(28)
+        }
     }
 }

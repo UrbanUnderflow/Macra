@@ -168,6 +168,57 @@ class UserService: ObservableObject {
 
         saveMacraPushToken(pending)
     }
+
+    func saveMacraExperimentAssignment(
+        _ assignment: MacraPaywallExperimentAssignment,
+        salt: String,
+        collectionName: String,
+        documentId: String,
+        completion: ((Error?) -> Void)? = nil
+    ) {
+        let assignedAt = Date().timeIntervalSince1970
+        let basePath = "macraExperiments.\(assignment.experimentId)"
+        let assignmentPayload: [String: Any] = [
+            "variantId": assignment.variantId,
+            "variantName": assignment.variantName,
+            "assignmentSource": assignment.assignmentSource,
+            "assignmentSalt": salt,
+            "assignedAt": assignedAt,
+            "parameters": assignment.parameters,
+            "defaultPlan": assignment.defaultPlanSelection.rawValue,
+            "layoutVariant": assignment.layoutVariant.rawValue,
+            "onboardingVariant": assignment.onboardingVariant.rawValue,
+            "collectionName": collectionName,
+            "documentId": documentId
+        ]
+
+        updateRootUserPatch([
+            "\(basePath).variantId": assignment.variantId,
+            "\(basePath).variantName": assignment.variantName,
+            "\(basePath).assignmentSource": assignment.assignmentSource,
+            "\(basePath).assignmentSalt": salt,
+            "\(basePath).assignedAt": assignedAt,
+            "\(basePath).parameters": assignment.parameters,
+            "\(basePath).collectionName": collectionName,
+            "\(basePath).documentId": documentId,
+            "experimentAssignments.\(assignment.experimentId).variantId": assignment.variantId,
+            "experimentAssignments.\(assignment.experimentId).variantName": assignment.variantName,
+            "experimentAssignments.\(assignment.experimentId).parameters": assignment.parameters,
+            "macraExperimentAssignments.\(assignment.experimentId).variantId": assignment.variantId,
+            "macraExperimentAssignments.\(assignment.experimentId).variantName": assignment.variantName,
+            "macraExperimentAssignments.\(assignment.experimentId).parameters": assignment.parameters,
+            "macraExperiment": assignmentPayload,
+            "macraExperimentVariantId": assignment.variantId,
+            "macraExperimentVariantName": assignment.variantName,
+            "macraExperimentAssignedAt": assignedAt,
+            "macraExperimentParameters": assignment.parameters,
+            "macra_paywall_default_plan": assignment.defaultPlanSelection.rawValue,
+            "macra_paywall_layout_variant": assignment.layoutVariant.rawValue,
+            "onboarding_experience_variant": assignment.onboardingVariant.rawValue,
+            "macraPaywallLayoutVariant": assignment.layoutVariant.rawValue,
+            "macraOnboardingExperienceVariant": assignment.onboardingVariant.rawValue
+        ], completion: completion)
+    }
     
     func deleteAccount(email: String, password: String, completion: @escaping (Result<Bool, Error>) -> Void) {
         // Re-authenticate the user using their username and password
@@ -259,6 +310,12 @@ class UserService: ObservableObject {
         updateMacraOwnedFields([
             "hasCompletedMacraOnboarding": true,
             "macraOnboardingCompletedAt": Date().timeIntervalSince1970,
+            // Finishing Macra onboarding IS completing registration for this
+            // account. The platform-wide `registrationComplete` flag (read by
+            // web AuthWrapper, admin, and segmentation) was never written by
+            // iOS, so every Macra-origin user looked half-registered. Promote
+            // it here so the shared User doc matches reality.
+            "registrationComplete": true,
         ]) { [weak self] error in
             if var cached = self?.user, error == nil {
                 cached.hasCompletedMacraOnboarding = true

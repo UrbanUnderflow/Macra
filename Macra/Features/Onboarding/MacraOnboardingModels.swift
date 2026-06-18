@@ -435,14 +435,19 @@ struct MacraOnboardingPrediction {
         let tdee = bmr * activityLevel.multiplier
 
         let delta = goalWeightKg - currentWeightKg
-        let direction: MacraGoalDirection = abs(delta) < 1 ? .maintain : (delta < 0 ? .lose : .gain)
+        let computedDirection: MacraGoalDirection = abs(delta) < 1 ? .maintain : (delta < 0 ? .lose : .gain)
+        // Minors (16–17; under-16 is blocked at onboarding) are never prescribed
+        // a deficit or surplus. Force maintenance regardless of their stated goal
+        // — a safety net so no minor ever gets a weight-loss target even if the
+        // onboarding age gate is somehow bypassed.
+        let direction: MacraGoalDirection = age < 18 ? .maintain : computedDirection
 
-        let dailyTarget: Int
+        let rawDailyTarget: Int
         let goalDate: Date
         let weeklyChange: Double
 
         if direction == .maintain {
-            dailyTarget = Int(tdee.rounded())
+            rawDailyTarget = Int(tdee.rounded())
             goalDate = Date()
             weeklyChange = 0
         } else {
@@ -451,16 +456,22 @@ struct MacraOnboardingPrediction {
             let weeklyKg = max(0.25, currentWeightKg * paceFraction)
             weeklyChange = isLoss ? -weeklyKg : weeklyKg
             let deficitPerDay = (weeklyKg * 7700) / 7 * (isLoss ? -1 : 1)
-            dailyTarget = Int((tdee + deficitPerDay).rounded())
+            rawDailyTarget = Int((tdee + deficitPerDay).rounded())
 
             let weeksToGoal = abs(delta) / weeklyKg
             let daysToGoal = Int((weeksToGoal * 7).rounded())
             goalDate = Calendar.current.date(byAdding: .day, value: daysToGoal, to: Date()) ?? Date()
         }
 
+        // Safety floor: never prescribe below a sustainable minimum. Without
+        // this, heavy users on an aggressive pace (or garbage height/weight
+        // inputs) were handed sub-BMR crash-diet targets like 775 kcal.
+        let dailyTarget = max(minimumDailyCalories(for: sex), rawDailyTarget)
+
         let (protein, carbs, fat) = macroSplit(
             calories: dailyTarget,
-            bodyWeightKg: currentWeightKg,
+            currentWeightKg: currentWeightKg,
+            goalWeightKg: goalWeightKg,
             direction: direction
         )
 
@@ -476,26 +487,56 @@ struct MacraOnboardingPrediction {
         )
     }
 
-    private static func macroSplit(
+    /// Minimum sustainable daily calories. Below this we never prescribe — it
+    /// protects heavy/aggressive (and garbage-input) users from sub-BMR plans.
+    /// Mirrors the common 1,200 (female) / 1,500 (male) "do not go below" floors.
+    static func minimumDailyCalories(for sex: BiologicalSex) -> Int {
+        sex == .male ? 1500 : 1200
+    }
+
+    /// Protein is never allowed to consume more than this share of the calorie
+    /// budget — this is what guarantees carbs can't collapse to zero.
+    private static let maxProteinCalorieShare = 0.40
+    private static let fatCalorieShare = 0.28
+    private static let minimumFatGrams = 40
+
+    static func macroSplit(
         calories: Int,
-        bodyWeightKg: Double,
+        currentWeightKg: Double,
+        goalWeightKg: Double,
         direction: MacraGoalDirection
     ) -> (protein: Int, carbs: Int, fat: Int) {
-        let bodyWeightLbs = bodyWeightKg * 2.20462
+        // Anchor protein to the *target* physique for fat loss, so a 106 kg
+        // person cutting to 77 kg isn't prescribed 1 g/lb of their starting
+        // weight (which produced 234 g / 936 kcal of protein alone). Floor the
+        // reference at 70% of current so an absurd goal can't crater protein.
+        let referenceKg: Double
+        switch direction {
+        case .lose: referenceKg = max(goalWeightKg, currentWeightKg * 0.7)
+        case .maintain, .gain: referenceKg = currentWeightKg
+        }
+        let referenceLbs = referenceKg * 2.20462
+
         let proteinPerLb: Double
         switch direction {
         case .lose: proteinPerLb = 1.0
         case .maintain: proteinPerLb = 0.8
         case .gain: proteinPerLb = 0.9
         }
-        let proteinGrams = Int((bodyWeightLbs * proteinPerLb).rounded())
 
-        let fatCalories = Double(calories) * 0.28
-        let fatGrams = Int((fatCalories / 9.0).rounded())
+        // Clamp protein so its calories never exceed maxProteinCalorieShare of
+        // the budget — this is what keeps room for fat + carbs.
+        let maxProteinGrams = max(0, Int((Double(calories) * maxProteinCalorieShare / 4.0).rounded()))
+        let proteinGrams = min(Int((referenceLbs * proteinPerLb).rounded()), maxProteinGrams)
 
+        // Fat: fixed share with a hard floor for hormonal health.
+        let fatGrams = max(minimumFatGrams, Int((Double(calories) * fatCalorieShare / 9.0).rounded()))
+
+        // Carbs: the remainder. With protein capped at 40% and fat ~28-30%,
+        // this is always positive — no more 0-carb prescriptions.
         let proteinCalories = Double(proteinGrams) * 4.0
-        let carbsCalories = max(0, Double(calories) - proteinCalories - fatCalories)
-        let carbsGrams = Int((carbsCalories / 4.0).rounded())
+        let fatCalories = Double(fatGrams) * 9.0
+        let carbsGrams = max(0, Int(((Double(calories) - proteinCalories - fatCalories) / 4.0).rounded()))
 
         return (proteinGrams, carbsGrams, fatGrams)
     }

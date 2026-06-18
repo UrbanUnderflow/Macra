@@ -858,6 +858,84 @@ final class MacraTests: XCTestCase {
         }
     }
 
+    // MARK: - Macro safety (regression for sub-1000 cal / 0-carb plans)
+
+    func testMinimumDailyCaloriesFloors() {
+        XCTAssertEqual(MacraOnboardingPrediction.minimumDailyCalories(for: .female), 1200)
+        XCTAssertEqual(MacraOnboardingPrediction.minimumDailyCalories(for: .male), 1500)
+    }
+
+    func testMacroSplitNeverZeroesCarbsForHeavyAggressiveCut() {
+        // Regression: 106 kg → 77 kg female at 1200 kcal previously produced
+        // 234 g protein / 0 g carbs because protein anchored to current weight.
+        let split = MacraOnboardingPrediction.macroSplit(
+            calories: 1200,
+            currentWeightKg: 106,
+            goalWeightKg: 77,
+            direction: .lose
+        )
+
+        XCTAssertGreaterThan(split.carbs, 0, "Carbs must never collapse to zero")
+        XCTAssertGreaterThanOrEqual(split.fat, 40, "Fat must respect the hormonal-health floor")
+        // Protein calories must stay within the 40% clamp (+1 g rounding slack).
+        XCTAssertLessThanOrEqual(split.protein, 1200 * 40 / 100 / 4 + 1)
+        // Macros must actually reconstitute the calorie budget.
+        let total = split.protein * 4 + split.carbs * 4 + split.fat * 9
+        XCTAssertEqual(Double(total), 1200, accuracy: 12)
+    }
+
+    func testMacroSplitLeavesNormalCutBalanced() {
+        // A typical 80 kg → 75 kg cut at 2000 kcal should stay sane.
+        let split = MacraOnboardingPrediction.macroSplit(
+            calories: 2000,
+            currentWeightKg: 80,
+            goalWeightKg: 75,
+            direction: .lose
+        )
+        XCTAssertGreaterThan(split.protein, 120)
+        XCTAssertGreaterThan(split.carbs, 80)
+        XCTAssertGreaterThanOrEqual(split.fat, 40)
+        let total = split.protein * 4 + split.carbs * 4 + split.fat * 9
+        XCTAssertEqual(Double(total), 2000, accuracy: 20)
+    }
+
+    func testComputeFloorsHeavyAggressiveFemaleAndKeepsCarbs() throws {
+        let answers = MacraOnboardingAnswers(
+            sex: .female,
+            birthdate: Calendar.current.date(byAdding: .year, value: -25, to: Date()),
+            heightCm: 165,
+            currentWeightKg: 106,
+            goalWeightKg: 77,
+            pace: .aggressive,
+            activityLevel: .sedentary
+        )
+
+        let prediction = try XCTUnwrap(MacraOnboardingPrediction.compute(from: answers))
+
+        XCTAssertGreaterThanOrEqual(prediction.dailyCalorieTarget, 1200, "Never below the 1200 kcal floor")
+        XCTAssertGreaterThan(prediction.carbsGrams, 0, "No 0-carb prescriptions")
+        // Protein alone must never exceed the calorie budget.
+        XCTAssertLessThan(prediction.proteinGrams * 4, prediction.dailyCalorieTarget)
+    }
+
+    func testComputeGainStaysAboveMaintenanceWithBalancedMacros() throws {
+        let answers = MacraOnboardingAnswers(
+            sex: .male,
+            birthdate: Calendar.current.date(byAdding: .year, value: -28, to: Date()),
+            heightCm: 180,
+            currentWeightKg: 75,
+            goalWeightKg: 82,
+            pace: .moderate,
+            activityLevel: .veryActive
+        )
+
+        let prediction = try XCTUnwrap(MacraOnboardingPrediction.compute(from: answers))
+
+        XCTAssertGreaterThan(prediction.dailyCalorieTarget, prediction.tdee, "Surplus should exceed TDEE")
+        XCTAssertGreaterThan(prediction.carbsGrams, 0)
+        XCTAssertGreaterThanOrEqual(prediction.fatGrams, 40)
+    }
+
     private static func testSubscriptionPlan(id: String) -> SubscriptionPlanOption {
         .local(LocalSubscriptionPlanViewModel(
             id: id,

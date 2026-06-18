@@ -152,7 +152,7 @@ enum MacraPaywallExperimentService {
         await fetchAndActivateAssignment().defaultPlanSelection
     }
 
-    static func fetchAndActivateAssignment() async -> MacraPaywallExperimentAssignment {
+    static func fetchAndActivateAssignment(trackExposure: Bool = true) async -> MacraPaywallExperimentAssignment {
         guard FirebaseApp.app() != nil else {
             return cachedAssignment()
         }
@@ -174,20 +174,28 @@ enum MacraPaywallExperimentService {
                 source: "firestore_experiment"
             )
             cacheAssignment(assignment, salt: config.salt)
-            MacraAnalyticsService.shared.trackMacraExperimentAssignment(
-                experimentId: assignment.experimentId,
-                variantId: assignment.variantId,
-                variantName: assignment.variantName,
-                defaultPlan: assignment.defaultPlanSelection.rawValue,
-                layoutVariant: assignment.layoutVariant.rawValue,
-                onboardingVariant: assignment.onboardingVariant.rawValue,
-                source: assignment.assignmentSource,
-                metadata: [
-                    "experiment_collection": collectionName,
-                    "experiment_document_id": documentId,
-                    "experiment_salt": config.salt
-                ]
-            )
+            if trackExposure {
+                persistAssignment(
+                    assignment,
+                    salt: config.salt,
+                    collectionName: collectionName,
+                    documentId: documentId
+                )
+                MacraAnalyticsService.shared.trackMacraExperimentAssignment(
+                    experimentId: assignment.experimentId,
+                    variantId: assignment.variantId,
+                    variantName: assignment.variantName,
+                    defaultPlan: assignment.defaultPlanSelection.rawValue,
+                    layoutVariant: assignment.layoutVariant.rawValue,
+                    onboardingVariant: assignment.onboardingVariant.rawValue,
+                    source: assignment.assignmentSource,
+                    metadata: [
+                        "experiment_collection": collectionName,
+                        "experiment_document_id": documentId,
+                        "experiment_salt": config.salt
+                    ]
+                )
+            }
             return assignment
         } catch {
             print("[Macra][Experiment] Firestore assignment fetch failed: \(error.localizedDescription)")
@@ -197,7 +205,25 @@ enum MacraPaywallExperimentService {
 
     static func prefetch() {
         Task {
-            _ = await fetchAndActivateAssignment()
+            _ = await fetchAndActivateAssignment(trackExposure: false)
+        }
+    }
+
+    private static func persistAssignment(
+        _ assignment: MacraPaywallExperimentAssignment,
+        salt: String,
+        collectionName: String,
+        documentId: String
+    ) {
+        UserService.sharedInstance.saveMacraExperimentAssignment(
+            assignment,
+            salt: salt,
+            collectionName: collectionName,
+            documentId: documentId
+        ) { error in
+            if let error {
+                print("[Macra][Experiment] Assignment persistence failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -459,7 +485,7 @@ private enum CompactPaywallStep: String {
 struct PayWallView: View {
     @ObservedObject private var offeringViewModel = PurchaseService.sharedInstance.offering
     @ObservedObject var viewModel: PayWallViewModel
-    private static let webCheckoutAnnualPriceID = "price_1PDq3LRobSf56MUOng0UxhCC"
+    private static let webCheckoutAnnualPriceID = "price_1TfN8cIkArZc741WskOfYXhL"
     @State private var paywallDefaultPlanSelection: MacraPaywallDefaultPlanSelection
     @State private var paywallLayoutVariant: MacraPaywallLayoutVariant
     @State private var paywallExperimentAssignment: MacraPaywallExperimentAssignment
@@ -756,15 +782,21 @@ struct PayWallView: View {
     }
 
     private func trialDisclosureDays(for plan: SubscriptionPlanOption?) -> Int? {
+        // The hard-paywall value layout is intentionally trial-free.
+        if usesHardPaywallValueLayout { return nil }
+
         guard let plan else {
             return usesTrialPrepCompactLayout ? 3 : nil
         }
-        guard plan.periodKind == .year else { return nil }
+        // Honor the StoreKit intro trial on whichever plan is selected. Both
+        // monthly and annual now carry a 3-day free trial, so trial framing is
+        // no longer gated to the annual plan.
         if let trialDays = plan.trialDays, trialDays > 0 {
             return trialDays
         }
-        guard usesTrialPrepCompactLayout else { return nil }
-        return 3
+        // Compact layout assumes the standard trial even before StoreKit
+        // resolves the intro offer.
+        return usesTrialPrepCompactLayout ? 3 : nil
     }
 
     private var trialReminderLeadDaysForScheduling: Int? {
